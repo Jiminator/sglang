@@ -39,10 +39,13 @@ def forward(self, hidden_states):
     hidden_states = hidden_states * torch.rsqrt(variance + eps)    # fp32
     return self.weight * hidden_states.to(input_dtype)             # MULTIPLY IN FP16
 ```
+```
+ TLDR: cast the input to fp32, compute the RMS normalization in fp32, cast the normalized activations back to fp16, THEN multiply by the weight in fp16
+ ```
 
 **SGLang `sgl_kernel.rmsnorm`** (new path):
 ```
-internally: normalize in fp32, multiply weight in fp32, THEN cast result to fp16
+TLDR: normalize in fp32, multiply weight in fp32, THEN cast result to fp16
 ```
 
 | Step | Transformers Python | SGLang CUDA kernel |
