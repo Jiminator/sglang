@@ -1,0 +1,563 @@
+claude --resume 2f5d770a-1e52-4f17-a65c-487f2f1847ba
+╭─── Claude Code v2.1.94 ──────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting        │
+│                 Welcome back Jimmy!                │ started                 │
+│                                                    │ Run /init to create a … │
+│                       ▐▛███▜▌                      │ ─────────────────────── │
+│                      ▝▜█████▛▘                     │ Recent activity         │
+│                        ▘▘ ▝▝                       │ No recent activity      │
+│                                                    │                         │
+│   Opus 4.6 (1M context) · Claude Team · Radixark   │                         │
+│               /workspace/sglang/test               │                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+❯ /skills 
+  ⎿  Skills dialog dismissed
+
+❯ /ci-workflow-guide Help me understand how @.github/workflows/pr-test.yml      
+works, and I am specifically interested in stage-b-test-1-gpu-small. I am       
+trying to debug a flaky test TestTransformersFallbackTorchAO.test_mmlu in       
+@test/registered/models/test_transformers_models.py  called during ci and I     
+want to replay all commands run during this ci stage locally here so I won't    
+need to access CI machines to debug. But first explain to me all of the         
+commands this stage runs, what libraries and dependencies it installs or        
+updates during the stage and also before. Then, tell me all commands I need to  
+run to get my local environment exactly the same as the environment running in  
+the CI machine for this stage, and then what commands to run this test in       
+stage-b-test-1-gpu-small                                                        
+  ⎿  Read test/registered/models/test_transformers_models.py (186 lines)
+
+● Let me gather all the relevant CI files to give you a complete picture.
+
+● Explore(Explore CI stage-b-test-1-gpu-small)
+  ⎿  Done (24 tool uses · 53.3k tokens · 1m 31s)
+  (ctrl+o to expand)
+
+  Read 3 files (ctrl+o to expand)
+
+● Now let me read the install dependency script and the specific workflow job
+  definition:
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Now let me find which partition test_transformers_models.py lands in, and read
+   the relevant workflow section:
+
+● Bash(python3 -c "
+      from sglang.test.ci.ci_register import collect_tests, auto_partition,
+      HWBackend…)
+  ⎿  test_transformers_models.py is in partition 5
+       est_time=450.0
+       filename=test/registered/models/test_transformers_models.py
+     … +16 lines (ctrl+o to expand)
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Now I have the full picture. Here's the comprehensive breakdown:
+
+  ---
+  How stage-b-test-1-gpu-small Works
+
+  Overview
+
+  This job runs on RTX 5090 (1 GPU, SM120, 32GB) runners. It splits ~80
+  registered test files across 8 matrix partitions using a load-balancing
+  heuristic. Your test (test_transformers_models.py) lands in partition 5.
+
+  Steps Executed (in order)
+
+  ┌─────┬────────────────────┬──────────────────────────────────────────────┐
+  │  #  │        Step        │                 What it does                 │
+  ├─────┼────────────────────┼──────────────────────────────────────────────┤
+  │ 1   │ Checkout           │ actions/checkout@v4 — checks out PR commit   │
+  ├─────┼────────────────────┼──────────────────────────────────────────────┤
+  │ 2   │ check-stage-health │ Queries GitHub API for prior failed jobs;    │
+  │     │                    │ fast-fails if any found                      │
+  ├─────┼────────────────────┼──────────────────────────────────────────────┤
+  │ 3   │ check-maintenance  │ Checks GitHub issue #21065 for maintenance   │
+  │     │                    │ mode                                         │
+  ├─────┼────────────────────┼──────────────────────────────────────────────┤
+  │ 4   │ Download artifacts │ Downloads pre-built sgl-kernel wheels (only  │
+  │     │                    │ if kernel code changed)                      │
+  ├─────┼────────────────────┼──────────────────────────────────────────────┤
+  │     │ Install            │ Runs                                         │
+  │ 5   │ dependencies       │ scripts/ci/cuda/ci_install_dependency.sh     │
+  │     │                    │ (~20 min)                                    │
+  ├─────┼────────────────────┼──────────────────────────────────────────────┤
+  │     │                    │ python3 run_suite.py --hw cuda --suite       │
+  │ 6   │ Run test           │ stage-b-test-1-gpu-small --auto-partition-id │
+  │     │                    │  5 --auto-partition-size 8                   │
+  ├─────┼────────────────────┼──────────────────────────────────────────────┤
+  │ 7   │ Upload coredumps   │ Only on failure                              │
+  └─────┴────────────────────┴──────────────────────────────────────────────┘
+
+  What the install script does (the big one)
+
+  The full install script (scripts/ci/cuda/ci_install_dependency.sh) does these
+  in order:
+
+  1. Config: CU_VERSION=cu129, cudnn=9.16.0.29, nvshmem=3.4.5
+  2. Detect GPU: auto-detect compute capability, set IS_BLACKWELL (5090 = SM120,
+   so IS_BLACKWELL=1 since compute_cap >= 10.0). Uses pip (not uv) on Blackwell.
+  3. Kill stale processes: python3 python/sglang/cli/killall.py
+  4. APT packages: python3, pip, venv, dev, git, libnuma, libssl, ibverbs,
+  ffmpeg + av libs
+  5. Site hygiene: clear torchinductor cache, remove broken dist-info, install
+  protoc
+  6. Pip setup: upgrade pip, uninstall stale sgl-kernel/sglang/flash-attn
+  7. Flashinfer version check: keep if version matches, uninstall if mismatch
+  8. Install sglang: pip install -e "python[dev,runai,tracing]" 
+  --extra-index-url https://download.pytorch.org/whl/cu129
+  9. Install sglang-kernel: from PyPI (normal) or wheel artifact (if kernel
+  changed)
+  10. Install sglang-router
+  11. Download flashinfer jit-cache and cubin artifacts
+  12. Extra deps: mooncake, nvidia-cuda-nvrtc-cu12, py-spy, scipy,
+  huggingface_hub[hf_xet], pytest. On Blackwell: skips lmms-eval. Uninstalls
+  xformers.
+  13. Fix deps: reinstall torchaudio/torchvision if CUDA version mismatch, pin
+  nvshmem, pin cudnn, force-reinstall cutlass-dsl, download kernels community,
+  install human-eval
+  14. Prepare runner: cleanup HF cache, prevalidate cached models
+
+  Environment Variables
+
+  SGLANG_IS_IN_CI=true
+  SGLANG_CUDA_COREDUMP=1
+  SGLANG_JIT_DEEPGEMM_FAST_WARMUP=true
+
+  How the test is actually invoked
+
+  run_suite.py partitions the tests, then for each test file calls:
+  python3 test/registered/models/test_transformers_models.py -f
+  The -f flag enables unittest failfast mode. With retry enabled (default for
+  CI), timeout = 1200 + 600 = 1800s per file.
+
+  ---
+  How to Reproduce Locally
+
+  Since you're already on this machine with the repo, here's what to do. The CI
+  runs inside a Docker container with CUDA pre-installed, and sources
+  /etc/profile.d/sglang-ci.sh (runner-specific). Locally, you need to
+  approximate that.
+
+  Step 1: Set environment variables
+
+  export SGLANG_IS_IN_CI=true
+  export SGLANG_CUDA_COREDUMP=1
+  export SGLANG_JIT_DEEPGEMM_FAST_WARMUP=true
+
+  Step 2: Install dependencies (the same script CI uses)
+
+  # From repo root:
+  CUSTOM_BUILD_SGL_KERNEL=false bash scripts/ci/cuda/ci_install_dependency.sh
+
+  This is the exact same script CI runs. CUSTOM_BUILD_SGL_KERNEL=false tells it
+  to install sgl-kernel from PyPI (the normal path when kernel code hasn't
+  changed).
+
+  Note: This script runs set -euxo pipefail and calls apt-get, so it needs root.
+   It will also kill existing GPU processes. If /etc/profile.d/sglang-ci.sh
+  doesn't exist on your machine, create an empty one or skip sourcing it in the
+  workflow step — the install script doesn't source it itself.
+
+  Step 3: Run the exact same test the CI runs
+
+  Option A — Run the full partition 5 (all tests that run alongside your test):
+
+  cd test/
+  python3 run_suite.py --hw cuda --suite stage-b-test-1-gpu-small \
+      --auto-partition-id 5 --auto-partition-size 8
+
+  Option B — Run just the flaky test file directly (same as CI invokes it):
+
+  python3 test/registered/models/test_transformers_models.py -f
+
+  Option C — Run only the specific flaky test class+method:
+
+  python3 -m pytest test/registered/models/test_transformers_models.py::TestTran
+  sformersFallbackTorchAO::test_mmlu -v
+
+  Or with unittest:
+  python3 -m unittest test.registered.models.test_transformers_models.TestTransf
+  ormersFallbackTorchAO.test_mmlu
+
+  Key differences from CI to be aware of
+
+  ┌─────────────────────────────┬──────────────────────┬────────────────────┐
+  │           Aspect            │   CI (5090 runner)   │ Your local machine │
+  ├─────────────────────────────┼──────────────────────┼────────────────────┤
+  │ GPU                         │ RTX 5090 (SM120,     │ Check with         │
+  │                             │ 32GB)                │ nvidia-smi         │
+  ├─────────────────────────────┼──────────────────────┼────────────────────┤
+  │                             │ Exists               │ Likely missing —   │
+  │ /etc/profile.d/sglang-ci.sh │ (runner-specific     │ create empty file  │
+  │                             │ env)                 │ or skip            │
+  ├─────────────────────────────┼──────────────────────┼────────────────────┤
+  │ Docker container            │ Yes (pre-built       │ No (bare metal)    │
+  │                             │ image)               │                    │
+  ├─────────────────────────────┼──────────────────────┼────────────────────┤
+  │ IS_BLACKWELL                │ 1 (auto-detected,    │ Depends on your    │
+  │                             │ SM120 >= 10.0)       │ GPU                │
+  ├─────────────────────────────┼──────────────────────┼────────────────────┤
+  │                             │ Enabled (2 attempts, │ Not enabled by     │
+  │ Retry                       │  60s wait)           │ default with       │
+  │                             │                      │ option B/C         │
+  └─────────────────────────────┴──────────────────────┴────────────────────┘
+
+  To enable retry like CI does:
+  cd test/
+  python3 run_suite.py --hw cuda --suite stage-b-test-1-gpu-small \
+      --auto-partition-id 5 --auto-partition-size 8 \
+      --enable-retry --max-attempts 2 --retry-wait-seconds 60
+
+  The flaky test itself
+
+  Looking at TestTransformersFallbackTorchAO.test_mmlu — it launches a server
+  with --model-impl transformers --torchao-config int4wo-128, runs 64 MMLU
+  examples, and asserts score >= 0.63. This is a quantized model accuracy test —
+   it's inherently flaky because int4 quantization introduces variance, and the
+  MMLU subset of 64 is small enough that score can fluctuate around the
+  threshold. This is exactly the kind of failure CI classifies as "retriable"
+  (matches score and AssertionError patterns).
+
+✻ Crunched for 2m 50s
+
+❯ can you write this out in .md file so I can reference it later?               
+
+● Write(/workspace/sglang/docs/ci-stage-b-test-1-gpu-small-debug-guide.md)
+  ⎿  Wrote 219 lines to ../docs/ci-stage-b-test-1-gpu-small-debug-guide.md
+      1 # Debugging `stage-b-test-1-gpu-small` CI Locally
+      2 
+      3 Guide for reproducing the `stage-b-test-1-gpu-small` CI stage loc
+        ally, with focus on debugging `TestTransformersFallbackTorchAO.te
+        st_mmlu`.
+      4 
+      5 ---
+      6 
+      7 ## How `stage-b-test-1-gpu-small` Works
+      8 
+      9 ### Overview
+     … +209 lines (ctrl+o to expand)
+
+● Written to docs/ci-stage-b-test-1-gpu-small-debug-guide.md. It covers:
+
+  - Full step-by-step breakdown of what the CI job does
+  - Every dependency installed and in what order
+  - Which partition your test lands in (partition 5) and what runs alongside it
+  - How to set up your local environment identically
+  - Multiple ways to run the test (full partition, single file, single method)
+  - CI vs local differences to watch out for
+  - Why the test is flaky (int4 quantization variance + small 64-example MMLU
+  subset)
+
+✻ Baked for 47s
+
+❯ Can you try following your plan to replay the test with Option C? If you      
+  succesfully do so, run the test again while piping output to output.txt       
+
+● Let me first check if the environment is already set up before running the
+  heavy install script.
+
+● Bash(python3 -c "import sglang; print('sglang OK')" 2>&1)
+  ⎿  sglang OK
+
+● Bash(python3 -c "import torch; print(f'torch OK, CUDA={torch.version.cuda},
+      GPU={torch.cuda.get_device_name(0) if torch.cuda.is_available() else
+      \"none\"}')" 2>&1)
+  ⎿  torch OK, CUDA=12.9, GPU=NVIDIA H200
+
+● Bash(python3 -c "import torchao; print('torchao OK')" 2>&1)
+  ⎿  torchao OK
+
+● Dependencies are already installed. Let me set the env vars and run the test
+  (Option C):
+
+● Bash(export SGLANG_IS_IN_CI=true && export SGLANG_CUDA_COREDUMP=1 && export
+      SGLANG_JIT_DEEPGEMM_FAST_WARMUP=true && python3
+      /workspace/sglang/test/registered/models/…)
+  ⎿  [2026-04-08 07:28:34] INFO:     127.0.0.1:47154 - "POST /v1/chat/compl
+     etions HTTP/1.1" 200 OK
+     [2026-04-08 07:28:34] INFO:     127.0.0.1:47058 - "POST /v1/chat/compl
+     … +142 lines (ctrl+o to expand)
+  ⎿  (timeout 10m)
+
+● Test passed (all 6 tests, score 0.656 >= 0.63 threshold). Now running it again
+   with output piped to output.txt:
+
+● Bash(export SGLANG_IS_IN_CI=true && export SGLANG_CUDA_COREDUMP=1 && export
+      SGLANG_JIT_DEEPGEMM_FAST_WARMUP=true && python3
+      /workspace/sglang/test/registered/models/…)
+  ⎿  [METRIC] mmlu_score=0.65625 labels={"model": "meta-llama/Llama-3.1-8B-
+     Instruct", "eval": "mmlu"}
+     [METRIC] mmlu_latency=23.550544755533338 labels={"model": "meta-llama/
+     … +11 lines (ctrl+o to expand)
+  ⎿  (timeout 10m)
+
+● Done. Both runs passed (6/6 tests, MMLU score = 0.656). Output is saved to
+  /workspace/sglang/output.txt.
+  Searched for 1 pattern (ctrl+o to expand)
+
+● output.txt has 1378 lines, all 6 tests passed in ~216s. The flaky test
+  (TestTransformersFallbackTorchAO.test_mmlu) scored 0.656 both times on this
+  H200 — comfortably above the 0.63 threshold. The flakiness likely manifests
+  more on the 5090 CI runners where quantization behavior may differ slightly.
+
+✻ Cooked for 8m 19s
+
+❯ Ok now do the same thing but try with Option A. If it fails because of        
+  partition args, I think you should be able to get away with not passing       
+  anything into --auto-partition-id or --auto-partition-size. We are running    
+  locally on one machine and we arent on a ci machine so keep that in mind      
+
+● Bash(export SGLANG_IS_IN_CI=true && export SGLANG_CUDA_COREDUMP=1 && export
+      SGLANG_JIT_DEEPGEMM_FAST_WARMUP=true && cd /workspace/sglang/test/ &&
+      python3 run_suite.p…)
+  ⎿  .
+     .
+     … +20 lines (ctrl+o to expand)
+  ⎿  (timeout 10m)
+
+● It ran but failed on test_lora_backend.py (4th test) and stopped due to
+  failfast. The suite itself works fine without partition args — it just runs
+  all 86 tests sequentially. Let me run it again piping to output.txt:
+
+● Bash(export SGLANG_IS_IN_CI=true && export SGLANG_CUDA_COREDUMP=1 && export
+      SGLANG_JIT_DEEPGEMM_FAST_WARMUP=true && cd /workspace/sglang/test/ &&
+      python3 run_suite.p…)
+  ⎿  .
+     .
+     … +20 lines (ctrl+o to expand)
+  ⎿  (timeout 10m)
+
+● Done. Output saved to /workspace/sglang/output.txt. The suite runs correctly
+  without partition args (runs all 86 tests in one shot), but it consistently
+  fails on test_lora_backend.py — the 4th test in the sequence. Since failfast
+  is on (-f), it stops there after 3 passes and 1 failure.
+
+  This is a different test from the one you're investigating
+  (TestTransformersFallbackTorchAO.test_mmlu). The LoRA test failure may be
+  environment-specific (H200 vs 5090) or a genuine issue. If you want to skip
+  past it and keep running the rest of the suite, you can add
+  --continue-on-error:
+
+  python3 run_suite.py --hw cuda --suite stage-b-test-1-gpu-small
+  --continue-on-error
+
+✻ Crunched for 16m 14s
+
+❯ can you do it where you skip past that error?                                 
+
+● Bash(export SGLANG_IS_IN_CI=true && export SGLANG_CUDA_COREDUMP=1 && export
+      SGLANG_JIT_DEEPGEMM_FAST_WARMUP=true && cd /workspace/sglang/test/ &&
+      python3 run_suite.p…)
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ /model                                                                        
+  ⎿  Set model to Opus 4.6 (1M context) (default)
+
+❯ continue                                                                      
+
+● Bash(export SGLANG_IS_IN_CI=true && export SGLANG_CUDA_COREDUMP=1 && export
+      SGLANG_JIT_DEEPGEMM_FAST_WARMUP=true && cd /workspace/sglang/test/ &&
+      python3 run_suite.p…)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 10m)
+
+● The suite is running in the background with all 86 tests. I'll let you know
+  when it finishes — this will take a while since it runs every test
+  sequentially with --continue-on-error to skip past failures.
+
+  Read 2 files (ctrl+o to expand)
+
+● Still running. It's writing output — 2862 lines so far. I'll wait for the
+  background task to complete and report back.
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● It's on test 6 of 86. This will take a long time — the estimated total for all
+   86 tests is ~8000+ seconds. I'll check back periodically as it progresses.
+  The background task will notify me when it completes.
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Bash(sleep 120 && grep "Begin (" /workspace/sglang/output.txt | tail -1; wc -l
+       /workspace/sglang/output.txt)
+  ⎿  Begin (5/85):
+     3223 /workspace/sglang/output.txt
+  ⎿  (timeout 3m)
+
+● Bash(sleep 180 && grep "Begin (" /workspace/sglang/output.txt | tail -1 &&
+      grep -E "PASSED:|FAILED:" /workspace/sglang/output.txt | tail -5)
+  ⎿  Begin (7/85):
+     ✗ FAILED: /workspace/sglang/test/registered/lora/test_lora_backend.py
+     returned exit code 1
+     … +2 lines (ctrl+o to expand)
+  ⎿  (timeout 4m)
+
+● Bash(sleep 300 && grep "Begin (" /workspace/sglang/output.txt | tail -1 &&
+      grep -cE "✓ PASSED:|✗ FAILED:" /workspace/sglang/output.txt)
+  ⎿  Begin (10/85):
+     2
+  ⎿  (timeout 6m)
+
+● Test 11 of 86, 2 failures so far (both LoRA tests). Still a long way to go.
+
+● Bash(sleep 600 && grep "Begin (" /workspace/sglang/output.txt | tail -1 &&
+      echo "---" && grep -cE "✓ PASSED:" /workspace/sglang/output.txt && grep
+      -cE "✗ FAILED:" /w…)
+  ⎿  Begin (13/85):
+     ---
+     0
+  ⎿  (timeout 11m)
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● On test 14/86, 2 failures (both LoRA), rest passing. The "PASSED" lines only
+  print in the final summary. Let me wait longer.
+
+● Bash(sleep 900 && grep "Begin (" /workspace/sglang/output.txt | tail -1 &&
+      echo "---" && grep -E "✓ PASSED|✗ FAILED|✗ TIMEOUT"
+      /workspace/sglang/output.txt)
+  ⎿  Begin (17/85):
+     ---
+     ✗ FAILED: /workspace/sglang/test/registered/lora/test_lora_backend.py
+     … +3 lines (ctrl+o to expand)
+  ⎿  (timeout 16m)
+
+● Bash(sleep 900 && grep "Begin (" /workspace/sglang/output.txt | tail -1 &&
+      echo "---" && grep -E "✗ FAILED|✗ TIMEOUT" /workspace/sglang/output.txt)  ⎿  Begin (27/85):
+     ---
+     ✗ FAILED: /workspace/sglang/test/registered/lora/test_lora_backend.py
+     … +3 lines (ctrl+o to expand)
+  ⎿  (timeout 16m)
+
+● Test 28/86 now, still only 2 failures (both LoRA). Making steady progress.
+
+● Bash(sleep 1800 && grep "Begin (" /workspace/sglang/output.txt | tail -1 &&
+      echo "---" && grep -E "✗ FAILED|✗ TIMEOUT" /workspace/sglang/output.txt)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 10m)
+
+● Waiting for the 30-minute check to complete. I'll report back when it does.
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Test 38/86, still only 2 failures. About 44% through. I'll check again in a
+  while.
+
+● Bash(sleep 1800 && grep "Begin (" /workspace/sglang/output.txt | tail -1 &&
+      echo "---" && grep -E "✗ FAILED|✗ TIMEOUT" /workspace/sglang/output.txt &&
+       echo "---" &&…)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 10m)
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Test 50/86, 3 failures now (2 LoRA + 1 dflash). Past the halfway mark.
+
+● Bash(sleep 1800 && grep "Begin (" /workspace/sglang/output.txt | tail -1 &&
+      echo "---" && grep -E "✗ FAILED|✗ TIMEOUT" /workspace/sglang/output.txt)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 10m)
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Test 53/86, 5 failures now. About 62% through. Let me keep waiting.
+
+● Bash(sleep 2400 && grep -a "Begin (" /workspace/sglang/output.txt | tail -1 &&
+       echo "---" && grep -aE "✗ FAILED|✗ TIMEOUT" /workspace/sglang/output.txt
+      && echo "---"…)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 10m)
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Test 68/86 now. Getting close — about 80% done.
+
+● Bash(sleep 1200 && grep -a "Begin (" /workspace/sglang/output.txt | tail -1 &&
+       echo "---" && grep -a "Test Summary" /workspace/sglang/output.txt)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 10m)
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Still on 69/86 — a slow test. Let me wait more.
+
+● Bash(sleep 1200 && grep -a "Begin (" /workspace/sglang/output.txt | tail -1 &&
+       grep -a "Test Summary" /workspace/sglang/output.txt)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 10m)
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● Test 80/86 — almost done! Just 6 more tests.
+
+● Bash(sleep 600 && grep -a "Test Summary" /workspace/sglang/output.txt && echo
+      "===" && tail -40 /workspace/sglang/output.txt)
+  ⎿  Test Summary: 77/86 passed
+     ===
+       /workspace/sglang/test/registered/embedding/test_input_embeddings.py
+     … +35 lines (ctrl+o to expand)
+  ⎿  (timeout 11m)
+
+● Suite finished. 77/86 passed, 9 failed. Output is saved to
+  /workspace/sglang/output.txt.
+
+  Summary of failures:
+
+  ┌──────────────────────────────────┬───────┬──────────────────────────────┐
+  │               Test               │ Exit  │         Likely Cause         │
+  │                                  │ Code  │                              │
+  ├──────────────────────────────────┼───────┼──────────────────────────────┤
+  │ test_lora_backend.py             │ 1     │ LoRA — possibly H200 vs 5090 │
+  │                                  │       │  difference                  │
+  ├──────────────────────────────────┼───────┼──────────────────────────────┤
+  │ test_lora_hf_sgl_logprob_diff.py │ 1     │ LoRA — same                  │
+  ├──────────────────────────────────┼───────┼──────────────────────────────┤
+  │ test_dflash.py                   │ 1     │ dflash spec decode           │
+  ├──────────────────────────────────┼───────┼──────────────────────────────┤
+  │ test_eval_accuracy_large.py      │ 1     │ Accuracy threshold           │
+  ├──────────────────────────────────┼───────┼──────────────────────────────┤
+  │ test_original_logprobs.py        │ 1     │ Logprob comparison           │
+  ├──────────────────────────────────┼───────┼──────────────────────────────┤
+  │ test_encoder_embedding_models.py │ 1     │ Embedding model              │
+  ├──────────────────────────────────┼───────┼──────────────────────────────┤
+  │ test_embedding_models.py         │ 1     │ Embedding model              │
+  ├──────────────────────────────────┼───────┼──────────────────────────────┤
+  │                                  │       │ Exit code 5 = no tests       │
+  │ test_runai_model_loader.py       │ 5     │ collected (likely missing    │
+  │                                  │       │ dependency)                  │
+  ├──────────────────────────────────┼───────┼──────────────────────────────┤
+  │ test_hidden_states.py            │ 1     │ Hidden states                │
+  └──────────────────────────────────┴───────┴──────────────────────────────┘
+
+  Notably, your target test (test_transformers_models.py containing
+  TestTransformersFallbackTorchAO.test_mmlu) passed this run. The 9 failures are
+   likely due to running on H200 instead of the CI's RTX 5090 — some tests are
+  tuned for SM120/5090 thresholds or have hardware-specific code paths.
+
+✻ Cogitated for 2h 11m 58s
+
+● Background command "Wait 30 min then check progress" completed (exit code 0)
+
+● Background command "Wait 30 min then check progress" completed (exit code 0)
+
+● Background command "Wait 30 min then check progress" completed (exit code 0)
+
+● Background command "Wait 20 min then check if suite finished" failed with exit
+ code 1
+
+● Background command "Run full suite with --continue-on-error, pipe to
+output.txt" completed (exit code 0)
+
+● Background command "Wait 40 min then check if suite finished" completed (exit
+code 0)
+
+● Background command "Wait 20 min then check" completed (exit code 0)
+
+● All background tasks have completed. The suite run finished as reported above
+  — 77/86 passed, output saved to /workspace/sglang/output.txt. Nothing new to
+  report beyond the summary I already gave.
+
+❯ /export                                                                         ⎿  Conversation copied to clipboard

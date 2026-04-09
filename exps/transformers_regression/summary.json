@@ -1,0 +1,76 @@
+{
+  "summary_rows": [
+    {
+      "below_bound_count": 0,
+      "benchmark": "gsm8k",
+      "bound_used": 0.65,
+      "commit_label": "cb1e63",
+      "max": 0.74,
+      "mean": 0.71,
+      "min": 0.7,
+      "sample_std": 0.010882143751650185,
+      "sample_variance": 0.00011842105263157916,
+      "trials": 20
+    },
+    {
+      "below_bound_count": 0,
+      "benchmark": "mmlu",
+      "bound_used": 0.65,
+      "commit_label": "cb1e63",
+      "max": 0.703125,
+      "mean": 0.703125,
+      "min": 0.703125,
+      "sample_std": 0.0,
+      "sample_variance": 0.0,
+      "trials": 20
+    },
+    {
+      "below_bound_count": 0,
+      "benchmark": "gsm8k",
+      "bound_used": 0.65,
+      "commit_label": "d1e95af",
+      "max": 0.725,
+      "mean": 0.716,
+      "min": 0.715,
+      "sample_std": 0.003077935056255465,
+      "sample_variance": 9.473684210526332e-06,
+      "trials": 20
+    },
+    {
+      "below_bound_count": 0,
+      "benchmark": "mmlu",
+      "bound_used": 0.65,
+      "commit_label": "d1e95af",
+      "max": 0.703125,
+      "mean": 0.703125,
+      "min": 0.703125,
+      "sample_std": 0.0,
+      "sample_variance": 0.0,
+      "trials": 20
+    },
+    {
+      "below_bound_count": 0,
+      "benchmark": "gsm8k",
+      "bound_used": 0.65,
+      "commit_label": "main",
+      "max": 0.725,
+      "mean": 0.725,
+      "min": 0.725,
+      "sample_std": 0.0,
+      "sample_variance": 0.0,
+      "trials": 20
+    },
+    {
+      "below_bound_count": 0,
+      "benchmark": "mmlu",
+      "bound_used": 0.63,
+      "commit_label": "main",
+      "max": 0.65625,
+      "mean": 0.65625,
+      "min": 0.65625,
+      "sample_std": 0.0,
+      "sample_variance": 0.0,
+      "trials": 20
+    }
+  ]
+}
