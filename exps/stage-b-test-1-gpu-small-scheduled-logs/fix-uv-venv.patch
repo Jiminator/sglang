@@ -1,7 +1,10 @@
 diff --git a/scripts/ci/cuda/ci_install_dependency.sh b/scripts/ci/cuda/ci_install_dependency.sh
+index c10a79e622..d433a086b0 100755
 --- a/scripts/ci/cuda/ci_install_dependency.sh
 +++ b/scripts/ci/cuda/ci_install_dependency.sh
-@@ -164,7 +164,11 @@
+@@ -164,7 +164,11 @@ if [ "$USE_UV" = "0" ]; then
+     PIP_UNINSTALL_SUFFIX="--break-system-packages"
+ else
      pip install uv
 -    export UV_SYSTEM_PYTHON=true
 +    # Only set UV_SYSTEM_PYTHON when no virtualenv is active; otherwise uv
@@ -9,5 +12,6 @@ diff --git a/scripts/ci/cuda/ci_install_dependency.sh b/scripts/ci/cuda/ci_insta
 +    if [ -z "${VIRTUAL_ENV:-}" ]; then
 +        export UV_SYSTEM_PYTHON=true
 +    fi
-
+ 
      PIP_CMD="uv pip"
+     PIP_INSTALL_SUFFIX="--index-strategy unsafe-best-match --prerelease allow"
