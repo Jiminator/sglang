@@ -64,6 +64,7 @@ if _is_cuda or _is_xpu:
         gemma_fused_add_rmsnorm,
         gemma_rmsnorm,
         rmsnorm,
+        rmsnorm_hf,
     )
 _has_aiter_layer_norm = False
 _has_vllm_rms_norm = False
@@ -82,6 +83,208 @@ elif _is_hip:
     except ImportError:
         # Fallback: vllm not available, will use forward_native
         _has_vllm_rms_norm = False
+
+if _is_cuda:
+    import triton
+    import triton.language as tl
+
+    from sglang.srt.utils.custom_op import register_custom_op
+
+    @triton.jit
+    def _rmsnorm_fp16_weight_kernel(
+        y_ptr,
+        x_ptr,
+        w_ptr,
+        DIM,
+        EPS,
+        BLOCK_N: tl.constexpr,
+    ):
+        """RMSNorm: normalize in fp32, cast to fp16, multiply weight in fp16 (HF semantics)."""
+        row = tl.program_id(0)
+        offs = tl.arange(0, BLOCK_N)
+        mask = offs < DIM
+        x_fp32 = tl.load(x_ptr + row * DIM + offs, mask=mask, other=0.0).to(tl.float32)
+        var = tl.sum(x_fp32 * x_fp32, axis=0) / DIM
+        rstd = tl.rsqrt(var + EPS)
+        x_normed_fp16 = (x_fp32 * rstd).to(tl.float16)  # cast before weight mul
+        w = tl.load(w_ptr + offs, mask=mask, other=1.0)  # fp16 weight
+        tl.store(y_ptr + row * DIM + offs, x_normed_fp16 * w, mask=mask)
+
+    @register_custom_op(op_name="sglang_rmsnorm_fp16_weight", out_shape="x")
+    def _rmsnorm_fp16_weight(
+        x: torch.Tensor, w: torch.Tensor, eps: float
+    ) -> torch.Tensor:
+        shape = x.shape
+        x = x.contiguous()
+        y = torch.empty_like(x)
+        x_view = x.reshape(-1, shape[-1])
+        y_view = y.reshape(-1, shape[-1])
+        M, N = x_view.shape
+        with torch.get_device_module().device(x.device):
+            _rmsnorm_fp16_weight_kernel[(M,)](
+                y_view, x_view, w, N, eps, BLOCK_N=triton.next_power_of_2(N)
+            )
+        return y
+
+    # torch.compile'd HF-semantics RMSNorm: Inductor fuses into a single Triton kernel.
+    # Supports fp16 and bf16 (dtype-generic). Used as fallback when CUDA ext is unavailable.
+    @torch.compile(dynamic=True, fullgraph=True)
+    def _rmsnorm_hf_compiled(
+        x: torch.Tensor, w: torch.Tensor, eps: float
+    ) -> torch.Tensor:
+        """HF-semantics RMSNorm: cast normalized x to dtype BEFORE multiplying weight."""
+        orig_dtype = x.dtype
+        x_f32 = x.to(torch.float32)
+        variance = x_f32.pow(2).mean(dim=-1, keepdim=True)
+        x_normed = x_f32 * torch.rsqrt(variance + eps)
+        return w * x_normed.to(orig_dtype)
+
+    # CUDA C++ kernel: 512-thread warp-reduction RMSNorm with half-precision weight multiply.
+    # Supports both fp16 and bf16.  Compiled JIT at first use; falls back to Triton/native.
+    _RMSNORM_FP16W_CUDA_SRC = r"""
+#include <cuda_fp16.h>
+#include <cuda_bf16.h>
+#include <cuda_runtime.h>
+#include <ATen/cuda/CUDAContext.h>
+
+// Shared warp+block reduction helper — identical for fp16 and bf16 paths.
+static __device__ __forceinline__ float _block_reduce_sum(float val, int threads) {
+    for (int m = 16; m > 0; m >>= 1)
+        val += __shfl_xor_sync(0xffffffff, val, m);
+    __shared__ float sm[32];
+    int ln = threadIdx.x & 31, wp = threadIdx.x >> 5;
+    if (ln == 0) sm[wp] = val;
+    __syncthreads();
+    float tot = 0.f;
+    if (threadIdx.x < 32) {
+        float v = (threadIdx.x < (threads + 31) / 32) ? sm[threadIdx.x] : 0.f;
+        for (int m = 16; m > 0; m >>= 1)
+            v += __shfl_xor_sync(0xffffffff, v, m);
+        tot = v;
+    }
+    __shared__ float rstd_s;
+    if (threadIdx.x == 0) rstd_s = tot;
+    __syncthreads();
+    return rstd_s;
+}
+
+// fp16 kernel: normalize in fp32, cast to fp16, multiply weight in fp16 (HF semantics)
+__global__ void _sglang_rmsnorm_fp16w_kernel(
+    __half* __restrict__ y, const __half* __restrict__ x,
+    const __half* __restrict__ w, int N, float eps
+) {
+    const __half* xr = x + blockIdx.x * N;
+    __half* yr = y + blockIdx.x * N;
+    float lsq = 0.f;
+    for (int i = threadIdx.x; i < N; i += blockDim.x) {
+        float xi = __half2float(xr[i]); lsq += xi * xi;
+    }
+    float rstd = rsqrtf(_block_reduce_sum(lsq, blockDim.x) / N + eps);
+    for (int i = threadIdx.x; i < N; i += blockDim.x) {
+        __half xn = __float2half(__half2float(xr[i]) * rstd);
+        yr[i] = __hmul(xn, w[i]);
+    }
+}
+
+// bf16 kernel: identical semantics, bfloat16 precision (HF semantics for bf16 models)
+__global__ void _sglang_rmsnorm_bf16w_kernel(
+    __nv_bfloat16* __restrict__ y, const __nv_bfloat16* __restrict__ x,
+    const __nv_bfloat16* __restrict__ w, int N, float eps
+) {
+    const __nv_bfloat16* xr = x + blockIdx.x * N;
+    __nv_bfloat16* yr = y + blockIdx.x * N;
+    float lsq = 0.f;
+    for (int i = threadIdx.x; i < N; i += blockDim.x) {
+        float xi = __bfloat162float(xr[i]); lsq += xi * xi;
+    }
+    float rstd = rsqrtf(_block_reduce_sum(lsq, blockDim.x) / N + eps);
+    for (int i = threadIdx.x; i < N; i += blockDim.x) {
+        // Cast normalized x to bf16 BEFORE multiplying by weight (HF double-rounding semantics)
+        __nv_bfloat16 xn = __float2bfloat16(__bfloat162float(xr[i]) * rstd);
+        yr[i] = __float2bfloat16(__bfloat162float(xn) * __bfloat162float(w[i]));
+    }
+}
+
+torch::Tensor sglang_rmsnorm_fp16w_impl(torch::Tensor x, torch::Tensor w, float eps) {
+    auto y = torch::empty_like(x);
+    int M = x.size(0), N = x.size(1);
+    auto stream = at::cuda::getCurrentCUDAStream().stream();
+    if (x.scalar_type() == at::kHalf) {
+        _sglang_rmsnorm_fp16w_kernel<<<M, 512, 0, stream>>>(
+            (__half*)y.data_ptr<at::Half>(),
+            (const __half*)x.data_ptr<at::Half>(),
+            (const __half*)w.data_ptr<at::Half>(), N, eps);
+    } else {
+        _sglang_rmsnorm_bf16w_kernel<<<M, 512, 0, stream>>>(
+            (__nv_bfloat16*)y.data_ptr<at::BFloat16>(),
+            (const __nv_bfloat16*)x.data_ptr<at::BFloat16>(),
+            (const __nv_bfloat16*)w.data_ptr<at::BFloat16>(), N, eps);
+    }
+    return y;
+}
+"""
+    _RMSNORM_FP16W_CPP_SRC = r"""
+torch::Tensor sglang_rmsnorm_fp16w_impl(torch::Tensor x, torch::Tensor w, float eps);
+torch::Tensor sglang_rmsnorm_fp16w(torch::Tensor x, torch::Tensor w, float eps) {
+    TORCH_CHECK(x.is_contiguous(), "x must be contiguous");
+    TORCH_CHECK(x.scalar_type() == at::kHalf || x.scalar_type() == at::kBFloat16,
+                "x must be fp16 or bf16");
+    return sglang_rmsnorm_fp16w_impl(x, w, eps);
+}
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("sglang_rmsnorm_fp16w", &sglang_rmsnorm_fp16w);
+}
+"""
+    _rmsnorm_fp16w_ext = None  # None = not yet loaded; False = failed to load
+
+    def _load_rmsnorm_fp16w_ext():
+        """Lazily compile and load the CUDA C++ RMSNorm kernel (fp16 weight multiply).
+
+        Returns the loaded extension module, or None if unavailable.  Thread-safe
+        enough for SGLang's single-process server startup: at worst the module is
+        compiled twice (second call loads from cache instantly).
+        """
+        global _rmsnorm_fp16w_ext
+        if _rmsnorm_fp16w_ext is not None:
+            return _rmsnorm_fp16w_ext if _rmsnorm_fp16w_ext is not False else None
+        try:
+            import os
+            import shutil
+
+            # Ensure nvcc is on PATH (common location when not in default PATH)
+            _cuda_bin = "/usr/local/cuda/bin"
+            for _candidate in (
+                "/usr/local/cuda/bin",
+                "/usr/local/cuda-12.9/bin",
+                "/usr/local/cuda-12/bin",
+            ):
+                if os.path.isfile(os.path.join(_candidate, "nvcc")):
+                    _cuda_bin = _candidate
+                    break
+            if shutil.which("nvcc") is None and os.path.isfile(
+                os.path.join(_cuda_bin, "nvcc")
+            ):
+                os.environ["PATH"] = _cuda_bin + ":" + os.environ.get("PATH", "")
+
+            from torch.utils.cpp_extension import load_inline as _load_inline
+
+            _ext = _load_inline(
+                name="sglang_rmsnorm_fp16w",
+                cpp_sources=_RMSNORM_FP16W_CPP_SRC,
+                cuda_sources=_RMSNORM_FP16W_CUDA_SRC,
+                extra_cuda_cflags=["-O3", "--use_fast_math"],
+                verbose=False,
+            )
+            _rmsnorm_fp16w_ext = _ext
+        except Exception:
+            _rmsnorm_fp16w_ext = False  # mark permanently unavailable
+        return _rmsnorm_fp16w_ext if _rmsnorm_fp16w_ext is not False else None
+
+    # Eagerly attempt to load at import time so forward_cuda can access the module
+    # directly as a global (no per-call function overhead).  Cache is warm after the
+    # first compile (~22 s on cold nvcc, <1 s thereafter).
+    _load_rmsnorm_fp16w_ext()
+
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +406,27 @@ class RMSNorm(MultiPlatformOp):
                 self.weight.data,
                 self.variance_epsilon,
             )
+        if self.cast_x_before_out_mul and residual is None:
+            if x.dtype in (torch.float16, torch.bfloat16):
+                x_c = x.contiguous()
+                # Primary: sgl_kernel.rmsnorm_hf (HF semantics, properly built kernel)
+                # Falls back to load_inline CUDA ext if rmsnorm_hf is unavailable,
+                # then to torch.compile'd path, then to pure-Python forward_native.
+                try:
+                    out = rmsnorm_hf(x_c, self.weight.data, self.variance_epsilon)
+                except Exception:
+                    ext = _rmsnorm_fp16w_ext
+                    if ext is not None:
+                        out = ext.sglang_rmsnorm_fp16w(
+                            x_c, self.weight.data, self.variance_epsilon
+                        )
+                    else:
+                        out = _rmsnorm_hf_compiled(x_c, self.weight.data, self.variance_epsilon)
+            else:
+                out = self.forward_native(x, None, None)
+            if needs_reshape:
+                out = out.reshape(original_shape)
+            return out
         if residual is not None:
             # TODO: Ideally we want to have (hidden_states+residual)+post_residual_addition.
             # but right now we can only have hidden_states+(residual+post_residual_addition).

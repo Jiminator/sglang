@@ -27,6 +27,7 @@ from sgl_kernel.elementwise import (
     gemma_fused_add_rmsnorm,
     gemma_rmsnorm,
     rmsnorm,
+    rmsnorm_hf,
     rotary_embedding,
     silu_and_mul,
 )
@@ -157,6 +158,7 @@ _DEBUG_EXPORT_NAMES = [
     "qserve_w4a8_per_group_gemm",
     "reconstruct_indices_from_tree_mask",
     "rmsnorm",
+    "rmsnorm_hf",
     "rotary_embedding",
     "segment_packbits",
     "sgl_per_token_group_quant_8bit",

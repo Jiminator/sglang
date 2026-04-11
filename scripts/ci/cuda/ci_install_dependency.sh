@@ -164,7 +164,11 @@ if [ "$USE_UV" = "0" ]; then
     PIP_UNINSTALL_SUFFIX="--break-system-packages"
 else
     pip install uv
-    export UV_SYSTEM_PYTHON=true
+    # Only set UV_SYSTEM_PYTHON when no virtualenv is active; otherwise uv
+    # ignores the venv and targets the externally-managed system Python.
+    if [ -z "${VIRTUAL_ENV:-}" ]; then
+        export UV_SYSTEM_PYTHON=true
+    fi
 
     PIP_CMD="uv pip"
     PIP_INSTALL_SUFFIX="--index-strategy unsafe-best-match --prerelease allow"

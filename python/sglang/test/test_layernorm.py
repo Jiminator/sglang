@@ -181,5 +181,52 @@ class TestLayerNorm(CustomTestCase):
                 self._run_layer_norm_test(*params)
 
 
+class TestRMSNormCastXBeforeOutMul(CustomTestCase):
+    """Verify cast_x_before_out_mul=True matches HF fp16-weight-multiply semantics."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not torch.cuda.is_available():
+            raise unittest.SkipTest("CUDA is not available")
+        torch.set_default_device("cuda")
+
+    def test_rmsnorm_cast_x_before_out_mul(self):
+        torch.manual_seed(42)
+        hidden_size = 4096
+        eps = 1e-5
+        x = torch.randn(4, hidden_size, dtype=torch.float16)
+        w = torch.randn(hidden_size, dtype=torch.float16)
+
+        # Reference: HF LlamaRMSNorm semantics — normalize fp32, cast back to fp16, multiply weight in fp16
+        x_fp32 = x.to(torch.float32)
+        variance = x_fp32.pow(2).mean(-1, keepdim=True)
+        x_normed = x_fp32 * torch.rsqrt(variance + eps)
+        ref = w * x_normed.to(torch.float16)
+
+        # 1. End-to-end path: RMSNorm(x) dispatches through forward_cuda → Triton kernel
+        norm = RMSNorm(hidden_size, eps=eps, cast_x_before_out_mul=True, weight_dtype=torch.float16)
+        norm.weight.data.copy_(w)
+        with torch.inference_mode():
+            out = norm(x)
+        max_diff = (out - ref).abs().max().item()
+        self.assertEqual(
+            max_diff,
+            0.0,
+            msg=f"end-to-end path differs from HF reference: max_diff={max_diff}",
+        )
+
+        # 2. Direct kernel call: proves the Triton kernel itself, not just the dispatch
+        from sglang.srt.layers.layernorm import _rmsnorm_fp16_weight
+
+        with torch.inference_mode():
+            out_direct = _rmsnorm_fp16_weight(x, w, eps)
+        max_diff_direct = (out_direct - ref).abs().max().item()
+        self.assertEqual(
+            max_diff_direct,
+            0.0,
+            msg=f"direct Triton kernel differs from HF reference: max_diff={max_diff_direct}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
