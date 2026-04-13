@@ -1,0 +1,53 @@
+[
+  {
+    "model_path": "zai-org/GLM-4.6-FP8",
+    "run_name": "TP8+MTP",
+    "batch_size": 1,
+    "input_len": 4096,
+    "output_len": 512,
+    "latency": 8.017093563452363,
+    "input_throughput": 16623.762006247172,
+    "output_throughput": 65.88853613263473,
+    "overall_throughput": 574.7718875337259,
+    "last_ttft": 0.24639428779482841,
+    "last_gen_throughput": 64.06204212444051,
+    "acc_length": 1.0541666666666667,
+    "profile_link_extend": "/sgl-workspace/sglang/performance_profiles_glm_4_6_fp8/zai-org_GLM-4.6-FP8_TP8+MTP_1776066305/1776066385.4179168/bs-1-il-4096-1776066385.4249897-TP-0-EXTEND.trace.json.gz",
+    "profile_link_decode": "/sgl-workspace/sglang/performance_profiles_glm_4_6_fp8/zai-org_GLM-4.6-FP8_TP8+MTP_1776066305/1776066385.4179168/bs-1-il-4096-1776066385.4249897-TP-0-DECODE.trace.json.gz",
+    "server_args": []
+  },
+  {
+    "model_path": "zai-org/GLM-4.6-FP8",
+    "run_name": "TP8+MTP",
+    "batch_size": 8,
+    "input_len": 4096,
+    "output_len": 512,
+    "latency": 12.759648408740759,
+    "input_throughput": 24547.055394995616,
+    "output_throughput": 358.52010356738685,
+    "overall_throughput": 2889.107820145499,
+    "last_ttft": 1.3349055303260684,
+    "last_gen_throughput": 210.32021307709803,
+    "acc_length": 1.1271373414230557,
+    "profile_link_extend": "/sgl-workspace/sglang/performance_profiles_glm_4_6_fp8/zai-org_GLM-4.6-FP8_TP8+MTP_1776066305/1776066401.8587928/bs-8-il-4096-1776066401.8653011-TP-0-EXTEND.trace.json.gz",
+    "profile_link_decode": "/sgl-workspace/sglang/performance_profiles_glm_4_6_fp8/zai-org_GLM-4.6-FP8_TP8+MTP_1776066305/1776066401.8587928/bs-8-il-4096-1776066401.8653011-TP-0-DECODE.trace.json.gz",
+    "server_args": []
+  },
+  {
+    "model_path": "zai-org/GLM-4.6-FP8",
+    "run_name": "TP8+MTP",
+    "batch_size": 16,
+    "input_len": 4096,
+    "output_len": 512,
+    "latency": 16.720280394889414,
+    "input_throughput": 24645.91827397869,
+    "output_throughput": 582.5969573800387,
+    "overall_throughput": 4409.495430622987,
+    "last_ttft": 2.659101570956409,
+    "last_gen_throughput": 431.56017190366845,
+    "acc_length": 1.1197464517018052,
+    "profile_link_extend": "/sgl-workspace/sglang/performance_profiles_glm_4_6_fp8/zai-org_GLM-4.6-FP8_TP8+MTP_1776066305/1776066430.5374398/bs-16-il-4096-1776066430.5439079-TP-0-EXTEND.trace.json.gz",
+    "profile_link_decode": "/sgl-workspace/sglang/performance_profiles_glm_4_6_fp8/zai-org_GLM-4.6-FP8_TP8+MTP_1776066305/1776066430.5374398/bs-16-il-4096-1776066430.5439079-TP-0-DECODE.trace.json.gz",
+    "server_args": []
+  }
+]
