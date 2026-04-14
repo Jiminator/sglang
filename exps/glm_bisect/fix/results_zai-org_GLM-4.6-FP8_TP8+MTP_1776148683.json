@@ -1,0 +1,19 @@
+[
+  {
+    "model_path": "zai-org/GLM-4.6-FP8",
+    "run_name": "TP8+MTP",
+    "batch_size": 1,
+    "input_len": 4096,
+    "output_len": 512,
+    "latency": 5.156063484027982,
+    "input_throughput": 4049.864046317542,
+    "output_throughput": 123.532105981867,
+    "overall_throughput": 893.7050550820938,
+    "last_ttft": 1.011391975916922,
+    "last_gen_throughput": 123.60744919935463,
+    "acc_length": 2.0,
+    "profile_link_extend": "/sgl-workspace/sglang/performance_profiles_glm_4_6_fp8/zai-org_GLM-4.6-FP8_TP8+MTP_1776148683/1776148708.6184435/bs-1-il-4096-1776148708.626147-TP-0-EXTEND.trace.json.gz",
+    "profile_link_decode": "/sgl-workspace/sglang/performance_profiles_glm_4_6_fp8/zai-org_GLM-4.6-FP8_TP8+MTP_1776148683/1776148708.6184435/bs-1-il-4096-1776148708.626147-TP-0-DECODE.trace.json.gz",
+    "server_args": []
+  }
+]
