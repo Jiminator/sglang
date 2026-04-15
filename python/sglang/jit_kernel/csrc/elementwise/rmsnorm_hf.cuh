@@ -295,6 +295,85 @@ __global__ void rmsnorm_hf_warp(const RMSNormHFParams __grid_constant__ params) 
 }
 
 // ---------------------------------------------------------------------------
+// Scalar-strided kernel: matches sgl_kernel.rmsnorm_hf reduction order exactly.
+// 512 threads per block, each thread scans indices [tid, tid+512, tid+1024, ...]
+// with scalar loads. This produces bit-identical output to the AOT sgl_kernel
+// implementation, which is important for MMLU accuracy stability under
+// int4wo-128 quantization where 1-ULP differences can flip borderline questions.
+//
+// Optimization vs sgl_kernel.rmsnorm_hf: caches xi values in registers between
+// pass 1 (sum-of-squares) and pass 2 (output compute). This halves global
+// memory reads of xr (N=4096 → 8192 bytes saved per row) while preserving
+// bit-identity: the reduction order is unchanged, and each output element
+// gets the same per-element computation.
+// ---------------------------------------------------------------------------
+template <int64_t kDim, bool kUsePDL, typename Float>
+__global__ __launch_bounds__(512) void rmsnorm_hf_scalar(const RMSNormHFParams __grid_constant__ params) {
+  using namespace device;
+  constexpr int kNumThreads = 512;
+  constexpr int kNumWarps = kNumThreads / kWarpThreads;
+  // Per-thread element count: N/512 = 8 for N=4096, 4 for N=2048, 16 for N=8192.
+  // All fit in registers (each element = 4 bytes fp32 cache).
+  constexpr int kElemsPerThread = (kDim + kNumThreads - 1) / kNumThreads;
+
+  const auto& [input, weight_ptr_v, output, input_stride, output_stride, num_tokens, eps] = params;
+  const auto xr = static_cast<const Float*>(pointer::offset<Float>(input, blockIdx.x * input_stride));
+  const auto yr = static_cast<Float*>(pointer::offset<Float>(output, blockIdx.x * output_stride));
+  const auto wr = static_cast<const Float*>(weight_ptr_v);
+
+  PDLWaitPrimary<kUsePDL>();
+
+  // Pass 1: scalar strided load + square + accumulate.
+  // Cache xi in registers so pass 2 does not need to re-read xr from global memory.
+  float xi_cache[kElemsPerThread];
+  float lsq = 0.f;
+#pragma unroll
+  for (int k = 0; k < kElemsPerThread; ++k) {
+    const int i = threadIdx.x + k * kNumThreads;
+    if (i < kDim) {
+      xi_cache[k] = static_cast<float>(xr[i]);
+      lsq += xi_cache[k] * xi_cache[k];
+    } else {
+      xi_cache[k] = 0.f;
+    }
+  }
+
+  // Warp reduce
+  lsq = warp::reduce_sum(lsq);
+
+  // Block reduce via shared memory
+  __shared__ float smem[32];
+  const int warp_id = threadIdx.x / kWarpThreads;
+  const int lane_id = threadIdx.x & (kWarpThreads - 1);
+  if (lane_id == 0) smem[warp_id] = lsq;
+  __syncthreads();
+
+  __shared__ float rstd_s;
+  if (threadIdx.x < kWarpThreads) {
+    float v = (threadIdx.x < kNumWarps) ? smem[threadIdx.x] : 0.f;
+    v = warp::reduce_sum(v);
+    if (threadIdx.x == 0) rstd_s = math::rsqrt(v / kDim + eps);
+  }
+  __syncthreads();
+  const float rstd = rstd_s;
+
+  // Pass 2: HF semantics — cast (x*rstd) to dtype, then multiply weight in dtype.
+  // xi_cache is reused from pass 1; only wr is loaded from global memory.
+#pragma unroll
+  for (int k = 0; k < kElemsPerThread; ++k) {
+    const int i = threadIdx.x + k * kNumThreads;
+    if (i < kDim) {
+      const Float xn = cast<Float>(xi_cache[k] * rstd);
+      const float xn_f = static_cast<float>(xn);
+      const float w_f = static_cast<float>(wr[i]);
+      yr[i] = cast<Float>(xn_f * w_f);
+    }
+  }
+
+  PDLTriggerSecondary<kUsePDL>();
+}
+
+// ---------------------------------------------------------------------------
 // Launcher structs: identical structure to rmsnorm.cuh
 // ---------------------------------------------------------------------------
 
@@ -381,6 +460,46 @@ struct RMSNormHFKernel {
     static const uint32_t kNumSM = runtime::get_sm_count(device.unwrap().device_id);
     const auto num_blocks = std::min<uint32_t>(num_tokens, max_occupancy * kNumSM);
     LaunchKernel(num_blocks, kNumThreads, device.unwrap())  //
+        .enable_pdl(kUsePDL)(kernel, params);
+  }
+};
+
+template <int64_t kDim, bool kUsePDL, typename DType>
+struct RMSNormHFScalarKernel {
+  static_assert(sizeof(DType) == 2, "Scalar kernel is fp16/bf16 only");
+  static constexpr auto kernel = rmsnorm_hf_scalar<kDim, kUsePDL, DType>;
+  static constexpr uint32_t kBlockSize = 512;
+
+  static void
+  run(const tvm::ffi::TensorView input,
+      const tvm::ffi::TensorView weight,
+      const tvm::ffi::TensorView output,
+      float eps) {
+    using namespace host;
+    auto N = SymbolicSize{"num_tokens"};
+    auto D = SymbolicSize{"hidden_size"};
+    auto SI = SymbolicSize{"input_stride"};
+    auto SO = SymbolicSize{"output_stride"};
+    auto device = SymbolicDevice{};
+    D.set_value(kDim);
+    device.set_options<kDLCUDA>();
+
+    TensorMatcher({N, D}).with_strides({SI, 1}).with_dtype<DType>().with_device(device).verify(input);
+    TensorMatcher({D}).with_dtype<DType>().with_device(device).verify(weight);
+    TensorMatcher({N, D}).with_strides({SO, 1}).with_dtype<DType>().with_device(device).verify(output);
+
+    const auto num_tokens = static_cast<uint32_t>(N.unwrap());
+    const auto params = RMSNormHFParams{
+        .input = input.data_ptr(),
+        .weight = weight.data_ptr(),
+        .output = output.data_ptr(),
+        .input_stride = SI.unwrap(),
+        .output_stride = SO.unwrap(),
+        .num_tokens = num_tokens,
+        .eps = eps,
+    };
+
+    LaunchKernel(num_tokens, kBlockSize, device.unwrap())  //
         .enable_pdl(kUsePDL)(kernel, params);
   }
 };

@@ -43,18 +43,25 @@ def _is_supported_rmsnorm_hf_hidden_size(d: int) -> bool:
 def _rmsnorm_hf_kernel_class(hidden_size: int) -> str:
     if hidden_size in _RMSNORM_WARP_SIZES:
         return "RMSNormHFWarpKernel"
-    if hidden_size >= _RMSNORM_HALF_BLOCK_MIN_SIZE:
-        if hidden_size % 512 == 0:
-            return "RMSNormHFHalfKernel"
+    # Use the scalar-strided 512-thread kernel for hidden >= 512: it matches
+    # sgl_kernel.rmsnorm_hf's reduction order bit-identically, which is
+    # required to keep MMLU accuracy stable under int4wo-128 quantization.
+    # The half-block vectorized kernel is faster on paper but has a
+    # different reduction order, producing 1-ULP drift that can flip
+    # borderline MMLU questions after 32+ layers of accumulation.
+    if hidden_size >= 512 and hidden_size % 512 == 0:
+        return "RMSNormHFScalarKernel"
     return "RMSNormHFKernel"
 
 
 @cache_once
-def _jit_rmsnorm_hf_module(hidden_size: int, dtype: torch.dtype) -> Module:
+def _jit_rmsnorm_hf_module(
+    hidden_size: int, dtype: torch.dtype, kernel_class_name: str
+) -> Module:
     args = make_cpp_args(hidden_size, is_arch_support_pdl(), dtype)
-    kernel_class = f"{_rmsnorm_hf_kernel_class(hidden_size)}<{args}>"
+    kernel_class = f"{kernel_class_name}<{args}>"
     return load_jit(
-        "rmsnorm_hf",
+        f"rmsnorm_hf_{kernel_class_name}",
         *args,
         cuda_files=["elementwise/rmsnorm_hf.cuh"],
         cuda_wrappers=[("rmsnorm_hf", f"{kernel_class}::run")],
@@ -66,6 +73,7 @@ def rmsnorm_hf(
     weight: torch.Tensor,
     eps: float = 1e-6,
     out: Optional[torch.Tensor] = None,
+    kernel_class_override: Optional[str] = None,
 ) -> torch.Tensor:
     """
     RMSNorm with HuggingFace semantics: cast normalized x to dtype BEFORE weight multiply.
@@ -101,6 +109,7 @@ def rmsnorm_hf(
     if out is None:
         out = torch.empty_like(input)
 
-    module = _jit_rmsnorm_hf_module(hidden_size, input.dtype)
+    kernel_class_name = kernel_class_override or _rmsnorm_hf_kernel_class(hidden_size)
+    module = _jit_rmsnorm_hf_module(hidden_size, input.dtype, kernel_class_name)
     module.rmsnorm_hf(input, weight, out, eps)
     return out
