@@ -90,6 +90,19 @@ if _is_cuda:
 
     from sglang.srt.utils.custom_op import register_custom_op
 
+    # JIT-compiled HF-semantics RMSNorm (preferred for transformers backend)
+    _jit_rmsnorm_hf_available = False
+    try:
+        from sglang.jit_kernel.rmsnorm_hf import (
+            _is_supported_rmsnorm_hf_hidden_size,
+            rmsnorm_hf as _jit_rmsnorm_hf,
+        )
+
+        _jit_rmsnorm_hf_available = True
+    except ImportError:
+        _is_supported_rmsnorm_hf_hidden_size = lambda d: False
+        _jit_rmsnorm_hf = None
+
     @triton.jit
     def _rmsnorm_fp16_weight_kernel(
         y_ptr,
@@ -413,19 +426,22 @@ class RMSNorm(MultiPlatformOp):
         if self.cast_x_before_out_mul and residual is None:
             if x.dtype in (torch.float16, torch.bfloat16):
                 x_c = x.contiguous()
-                # Primary: sgl_kernel.rmsnorm_hf (HF semantics, properly built kernel)
-                # Falls back to load_inline CUDA ext if rmsnorm_hf is unavailable,
-                # then to torch.compile'd path, then to pure-Python forward_native.
-                try:
-                    out = rmsnorm_hf(x_c, self.weight.data, self.variance_epsilon)
-                except Exception:
-                    ext = _rmsnorm_fp16w_ext
-                    if ext is not None:
-                        out = ext.sglang_rmsnorm_fp16w(
-                            x_c, self.weight.data, self.variance_epsilon
-                        )
-                    else:
-                        out = _rmsnorm_hf_compiled(x_c, self.weight.data, self.variance_epsilon)
+                # Primary: jit_kernel.rmsnorm_hf (HF semantics, JIT-compiled)
+                # Falls back to sgl_kernel.rmsnorm_hf, then load_inline ext,
+                # then torch.compile'd path.
+                if _jit_rmsnorm_hf_available and _is_supported_rmsnorm_hf_hidden_size(x_c.shape[-1]):
+                    out = _jit_rmsnorm_hf(x_c, self.weight.data, self.variance_epsilon)
+                else:
+                    try:
+                        out = rmsnorm_hf(x_c, self.weight.data, self.variance_epsilon)
+                    except Exception:
+                        ext = _rmsnorm_fp16w_ext
+                        if ext is not None:
+                            out = ext.sglang_rmsnorm_fp16w(
+                                x_c, self.weight.data, self.variance_epsilon
+                            )
+                        else:
+                            out = _rmsnorm_hf_compiled(x_c, self.weight.data, self.variance_epsilon)
             else:
                 out = self.forward_native(x, None, None)
             if needs_reshape:
