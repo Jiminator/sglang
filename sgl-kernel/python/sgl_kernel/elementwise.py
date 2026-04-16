@@ -123,41 +123,6 @@ def rmsnorm(
         return _flashinfer_norm.rmsnorm(input, weight, eps, out, enable_pdl)
 
 
-def rmsnorm_hf(
-    input: torch.Tensor,
-    weight: torch.Tensor,
-    eps: float = 1e-6,
-    out: Optional[torch.Tensor] = None,
-) -> torch.Tensor:
-    r"""RMSNorm with HuggingFace semantics: cast normalized x to dtype BEFORE weight multiply.
-
-    ``out[i] = weight[i] * cast_dtype(input[i] / RMS(input))``
-
-    This differs from ``rmsnorm`` which computes in fp32 then casts.
-    Supports fp16 and bf16 inputs/weights.
-
-    Parameters
-    ----------
-    input: torch.Tensor
-        Input tensor, shape (batch_size, hidden_size). Must be fp16 or bf16.
-    weight: torch.Tensor
-        Weight tensor, shape (hidden_size,). Must match input dtype.
-    eps: float
-        Epsilon for numerical stability.
-    out: Optional[torch.Tensor]
-        The output tensor, if specified, the kernel will update this tensor inplace.
-
-    Returns
-    -------
-    output: torch.Tensor
-        Normalized tensor, shape (batch_size, hidden_size).
-    """
-    if out is None:
-        out = torch.empty_like(input)
-    torch.ops.sgl_kernel.rmsnorm_hf.default(out, input, weight, eps)
-    return out
-
-
 def fused_add_rmsnorm(
     input: torch.Tensor,
     residual: torch.Tensor,

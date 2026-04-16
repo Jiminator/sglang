@@ -182,7 +182,13 @@ class TestLayerNorm(CustomTestCase):
 
 
 class TestRMSNormCastXBeforeOutMul(CustomTestCase):
-    """Verify cast_x_before_out_mul=True matches HF fp16-weight-multiply semantics."""
+    """Verify cast_x_before_out_mul=True matches HF LlamaRMSNorm semantics.
+
+    HF semantics (used by the transformers backend): cast the normalized x to
+    the activation dtype BEFORE the weight multiply, so the multiply is done
+    in fp16/bf16 rather than fp32. The JIT `rmsnorm_hf` kernel must reproduce
+    this exactly (bit-level) for both fp16 and bf16 inputs.
+    """
 
     @classmethod
     def setUpClass(cls):
@@ -190,42 +196,48 @@ class TestRMSNormCastXBeforeOutMul(CustomTestCase):
             raise unittest.SkipTest("CUDA is not available")
         torch.set_default_device("cuda")
 
-    def test_rmsnorm_cast_x_before_out_mul(self):
-        torch.manual_seed(42)
-        hidden_size = 4096
-        eps = 1e-5
-        x = torch.randn(4, hidden_size, dtype=torch.float16)
-        w = torch.randn(hidden_size, dtype=torch.float16)
-
-        # Reference: HF LlamaRMSNorm semantics — normalize fp32, cast back to fp16, multiply weight in fp16
+    def _reference(self, x: torch.Tensor, w: torch.Tensor, eps: float) -> torch.Tensor:
+        """HF LlamaRMSNorm reference: normalize in fp32, cast, multiply weight in dtype."""
         x_fp32 = x.to(torch.float32)
         variance = x_fp32.pow(2).mean(-1, keepdim=True)
         x_normed = x_fp32 * torch.rsqrt(variance + eps)
-        ref = w * x_normed.to(torch.float16)
+        return w * x_normed.to(x.dtype)
 
-        # 1. End-to-end path: RMSNorm(x) dispatches through forward_cuda → Triton kernel
-        norm = RMSNorm(hidden_size, eps=eps, cast_x_before_out_mul=True, weight_dtype=torch.float16)
+    def _run(self, dtype: torch.dtype) -> None:
+        torch.manual_seed(42)
+        hidden_size = 4096
+        eps = 1e-5
+        x = torch.randn(4, hidden_size, dtype=dtype)
+        w = torch.randn(hidden_size, dtype=dtype)
+        ref = self._reference(x, w, eps)
+
+        # 1. End-to-end path: RMSNorm(x) dispatches through forward_cuda → jit_kernel.rmsnorm_hf.
+        norm = RMSNorm(hidden_size, eps=eps, cast_x_before_out_mul=True, weight_dtype=dtype)
         norm.weight.data.copy_(w)
         with torch.inference_mode():
             out = norm(x)
-        max_diff = (out - ref).abs().max().item()
         self.assertEqual(
-            max_diff,
+            (out - ref).abs().max().item(),
             0.0,
-            msg=f"end-to-end path differs from HF reference: max_diff={max_diff}",
+            msg=f"end-to-end path differs from HF reference (dtype={dtype})",
         )
 
-        # 2. Direct kernel call: proves the Triton kernel itself, not just the dispatch
-        from sglang.srt.layers.layernorm import _rmsnorm_fp16_weight
+        # 2. Direct kernel call — exercises the JIT kernel without the RMSNorm dispatch.
+        from sglang.jit_kernel.rmsnorm_hf import rmsnorm_hf
 
         with torch.inference_mode():
-            out_direct = _rmsnorm_fp16_weight(x, w, eps)
-        max_diff_direct = (out_direct - ref).abs().max().item()
+            out_direct = rmsnorm_hf(x, w, eps)
         self.assertEqual(
-            max_diff_direct,
+            (out_direct - ref).abs().max().item(),
             0.0,
-            msg=f"direct Triton kernel differs from HF reference: max_diff={max_diff_direct}",
+            msg=f"direct JIT kernel differs from HF reference (dtype={dtype})",
         )
+
+    def test_rmsnorm_cast_x_before_out_mul_fp16(self):
+        self._run(torch.float16)
+
+    def test_rmsnorm_cast_x_before_out_mul_bf16(self):
+        self._run(torch.bfloat16)
 
 
 if __name__ == "__main__":
