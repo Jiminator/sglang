@@ -108,7 +108,55 @@
 
 ## Candidate Commit Range / Environment Boundary
 
-**None justified.** The commit window `5cb4ea1d..0011d2ae` contains FA3-adjacent perf commits (#21104, #22051), but the same HEAD and later HEADs pass the test, so there is no supportable commit boundary. The correct "boundary" here is the stochastic draw of a single server run — not a SHA.
+**None justified.**
+
+### Narrow window (last-pass → first-fail): `5cb4ea1d..0011d2ae`
+Adjacent commits include FA3-adjacent perf changes (#21104, #22051) but the same HEAD and later HEADs pass the test. No supportable commit boundary.
+
+### Expanded window (3 days back): `2026-04-07 18:00 UTC → 2026-04-11 00:30 UTC` (head `0011d2ae`)
+
+Full set of commits in the expanded window that plausibly touch the paths exercised by `TestAutoRound.test_mmlu` (FA3 attention backend, AutoRound quantization, Qwen2 arch, sampling, eval utilities):
+
+| SHA | PR | Subsystem | Relevance to failing config |
+|---|---|---|---|
+| `6af34b95b6` | #21104 | **FA3 attention (CUDA)** — precompute scheduler_metadata | **In narrow window; technical candidate** — refuted below |
+| `1a8eb890f6` | #20796 | FA3 attention (CUDA) — Kernels community fa3 | Already in last-pass SHA `5cb4ea1d` and earlier passing SHA `8ba96460` — not a candidate |
+| `f7a1740101` | #22051 | MUSA FA3 backend | MUSA path only; CI runs on CUDA H100/H200 — not a candidate |
+| `cd373667cd` | #21692 | NPU Qwen3.5 quantization fix | NPU path only; bug is on CUDA — not a candidate |
+| `8ba9646044` | #22312 | GDN non-continuous B/A (Qwen3.5-27B) | Mamba/GDN path, not dense Qwen2.5 — not a candidate |
+| `0668a7f51a` | #22444 | GDN extend verify path | GDN, not Qwen2.5 — not a candidate |
+| `5638d40f3a` | #22079 | Gemma4 nvfp4 fix | Gemma4, not Qwen2.5 — not a candidate |
+| `c554dc5c64` | #21339 | FlashInfer CuteDslMoE FP4 | MoE path, not dense Qwen2.5-0.5B — not a candidate |
+| `7546d04c81` | #21240 | FP4 flashinfer trtllm routed MoE | MoE only — not a candidate |
+| `18f41ac427` | #22316 | DeepSeek FP8 DeepEP dispatch | DeepSeek/DeepEP — not a candidate |
+| `6d79c60995` | #22381 | LoRA Kimi | LoRA, not AutoRound — not a candidate |
+| `28ef6de091` | #22323 | LoRA DeepSeek MLA refactor | LoRA, not AutoRound — not a candidate |
+| `60acdc31f2` | #22430 | DSA models fix | Sparse attention, not Qwen2.5-0.5B — not a candidate |
+| `dd41764487` | #22258 | AMD HIP NSA | AMD path — not a candidate |
+| `599cce4d82` | #22438 | Intel GPU flash_attn imports | Intel GPU — not a candidate |
+| `628df31d08` | #22424 | AMD aiter NSA | AMD — not a candidate |
+| `de441ac6bb` / `1e3f6ebea6` | #22389, #22384 | Memory pool refactor | Plumbing refactor, no numeric change — not a candidate |
+| `2ab141547d` | #22413 | CPU biased_grouped_topk fusion | CPU MoE — not a candidate |
+| `493ec91cbe` | #22292 | Test utils — LoRA reorder, tokenizer cache | Only touches `run_bench_serving` branch, not `run_eval` path used here — not a candidate |
+| `f08726fd56` | #22077 | DFLASH speculative decoding | Adds new defaults; AutoRound test sets `speculative_algorithm=None` — not a candidate |
+
+**Refutation of the one narrow-window candidate (#21104, `6af34b95b6`, FA3 `precompute_varlen_num_blocks`):**
+
+| Passing SHA after fail | Contains #21104? | OPEA score |
+|---|---|---|
+| `3ce72252` (24276607632, 2026-04-11 06:25) | yes | 0.28125 PASS |
+| `78043d44` (24282233192, 2026-04-11 12:13) | yes | 0.28125 PASS |
+| `8da1cfb3` (24295023865, 2026-04-12 00:33) | yes | 0.28125 PASS |
+| `9a4e8089` (24300594353, 2026-04-12 06:35) | yes | 0.28125 PASS |
+| `bcc0c65a` (24306511798, 2026-04-12 12:14) | yes | 0.25 PASS |
+| `5f7aee72` (24592599796, 2026-04-18 00:31) | yes | **0.21875 FAIL** |
+| `6a3c070e` (24771471590, 2026-04-22 09:41) | yes | 0.25 PASS |
+| `de962f32` (24792732403, 2026-04-22 17:27) | yes | 0.25 PASS |
+
+If #21104 introduced a deterministic accuracy regression on the AutoRound path, the test would fail consistently after it landed; instead we see ~93% pass and the second failure 7 days / hundreds of commits later. Additionally, the PR is scoped to caching `scheduler_metadata` (a perf-only precompute) and does not touch kernel math. Pass-rate evidence refutes it.
+
+### Conclusion
+No commit in the 3-day expanded window is consistent with the observed failure pattern. The correct "boundary" is the stochastic draw of a single server run — not a SHA.
 
 ---
 
