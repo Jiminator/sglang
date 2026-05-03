@@ -363,6 +363,99 @@ User said legacy is out of scope. **Flagging only:** if audio evals come into sc
 
 ---
 
+## Source-coverage scorecard
+
+The "implementations" view above is one lens. The other — and arguably
+more useful for "is this benchmark *actually* migrated?" — is to count
+**upstream data sources**. Several sglang benchmarks pull from more
+than one upstream (gsm8k pulls from four, mmlu from five). For sgl-eval
+to be a drop-in replacement, every upstream sglang touches needs to be
+reachable through sgl-eval.
+
+By that bar: **none of the 12 benchmarks are source-complete today.**
+
+### Strict count — different upstream URL/dataset = different source
+
+| benchmark | upstream sources sglang pulls from | sgl-eval covers | gap |
+|---|---|---|---|
+| **gsm8k** | (1) raw GitHub `openai/grade-school-math` test.jsonl, (2) `madrylab/gsm8k-platinum` HF, (3) `meta-llama/Llama-3.1-405B-Instruct-evals` HF, (4) lm-eval-harness's bundled gsm8k data | **1 of 4** (#1, via NS's `prepare.py`) | platinum variant, Meta's eval set, lm-eval's variant |
+| **mmlu** | (1) `openaipublic.blob.core.windows.net/simple-evals/mmlu.csv`, (2) `meta-llama/Llama-3.1-405B-Instruct-evals` mmlu config, (3) same dataset's mmlu_cot config, (4) Hendrycks tarball `https://people.eecs.berkeley.edu/~hendrycks/data.tar`, (5) lm-eval's bundled mmlu | **1 of 5** (#4, via NS) | the **CI-active source is #1**, which sgl-eval doesn't have. Meta's two and lm-eval's also uncovered |
+| **gpqa** | (1) `openaipublic.blob.core.windows.net/simple-evals/gpqa_diamond.csv` | **0 of 1 by literal source** — sgl-eval pulls `Idavidrein/gpqa` HF (the canonical original; the CSV is OpenAI's repackaging of the same diamond subset) | same 198 questions, different upstream URL |
+| **aime25** | (1) `opencompass/AIME2025` HF (`AIME2025-I` + `AIME2025-II`) | **0 of 1 by literal source** — sgl-eval ships its own bundled `test.txt` curated by NS | same 30 problems, different package; verify with checksum |
+| **aime24** | (none — not in sglang) | n/a — vacuously complete (forward-compat addition) |
+| **math** (Hendrycks) | (1) `openaipublic.blob.core.windows.net/simple-evals/math_test.csv` | not registered. NS upstream uses Hendrycks's original GitHub release | different package, same 5000 questions; needs registration |
+| **mgsm / mgsm_en** | (1)-(11) `openaipublic.blob.core.windows.net/simple-evals/mgsm_{lang}.tsv` for 11 languages | not registered. **NS doesn't have mgsm at any source** | requires second vendor source (lm-eval-harness) or SE-authored |
+| **humaneval** | (1) `human_eval.data.read_problems()` (pip package's bundled JSONL) | not registered. NS upstream uses evalplus's HumanEval | different package, same 164 problems; needs `code` runner |
+| **longbench_v2** | (1) `THUDM/LongBench-v2` HF default, (2) local file path via `--dataset-path` | not registered. NS upstream **pulls the same HF dataset** | source-equivalent once registered |
+| **mmmu** | (1) `MMMU/MMMU` HF (val split, used by `simple_eval_mmmu_vlm` + legacy), (2) `lmms-lab--MMMU` parquet cache (lmms-eval shellout), (3) NS's prepared `mmmu-pro` data (NS shellout) | not registered | needs VLM sampler + new runner; NS only has mmmu-pro variant |
+| **mmlu_pro** | (1) `meta-llama/Llama-3.1-405B-Instruct-evals` mmlu_pro config (only path) | not registered. NS upstream pulls `TIGER-Lab/MMLU-Pro` HF | different package; needs registration |
+| **LooGLE** | (1) `bigai-nlco/LooGLE` HF | not registered | low signal, defer |
+
+### "Same-questions-different-package" relaxation
+
+For four benchmarks (gpqa, aime25, math, longbench_v2), sgl-eval points
+at a *different upstream URL* but the underlying canonical question set
+should be the same. Concretely:
+
+- **gpqa**: `Idavidrein/gpqa` (NS) is the dataset authors' own HF
+  release. `gpqa_diamond.csv` (sglang) is OpenAI's flat repackaging.
+  Same 198 questions; permutation seeds differ, which is the score-affecting
+  divergence — not the upstream choice itself.
+- **aime25**: 30 problems (15 AIME-I + 15 AIME-II). Both `opencompass/AIME2025`
+  and NS's bundled `test.txt` should be the same 30. **Worth a checksum
+  verification before declaring equivalent.**
+- **math**: 5000 rows of MATH test split. simple-evals CSV is OpenAI's
+  repackaging; NS's `hendrycks_math/prepare.py` pulls Hendrycks's GitHub
+  original.
+- **longbench_v2**: **both pull from `THUDM/LongBench-v2` HF.** This is
+  the only benchmark in the gap list that's *literally* source-equivalent —
+  registering it in sgl-eval immediately closes the gap.
+
+If "same-questions-yes" counts as covered:
+- gsm8k: still **1 of 4** (the variant sources are genuinely different
+  question sets — gsm8k-platinum has corrected mislabels; Meta's eval
+  set is a fixed subset; lm-eval's prompt template selects different
+  exemplars).
+- mmlu: **0 of 5** of the *CI-relevant* sources covered. The
+  simple-evals CSV (`mmlu.csv`) and Hendrycks tarball both contain the
+  ~14k-row test split, but CI thresholds are calibrated against the
+  CSV and not all rows are bit-identical between the two packages.
+  Verify before swapping.
+- gpqa: **same-questions-yes (1/1)** — but score will shift due to
+  permutation seed difference.
+- aime25: **likely same-questions (1/1)** — verify checksum.
+- longbench_v2: **literally same source (1/1)** — once registered.
+- everything else: 0 covered.
+
+### Bottom line
+
+**gsm8k is the only benchmark where sglang genuinely pulls from
+multiple distinct upstream data sources.** sgl-eval covers the
+dominant one (raw grade-school-math) but misses the three variant
+sources (platinum, Meta-evals reproduction, lm-eval). Every other
+benchmark is single-source in sglang or different-packaging-of-the-
+same-source.
+
+The implication for migration sequencing: gsm8k is in the registry but
+*not source-complete* — declaring it "done" requires deciding what to
+do about the four variant paths. Options:
+
+1. **Drop the variants.** If the lm-eval gsm8k yaml configs and the
+   `llama3_eval` Meta-evals reproduction aren't load-bearing for any
+   ongoing decision, just retire them.
+2. **Register them as separate sgl-eval entries.** `gsm8k-platinum`,
+   `gsm8k-meta`, etc. — each is a one-row `_TABLE` addition once the
+   loader knows about the alternate dataset. The platinum case is
+   trivial (one HF dataset call); Meta and lm-eval are heavier because
+   they import each ecosystem's own prompt machinery.
+3. **Punt on the variants.** Migrate the dominant path now, leave the
+   variants on the existing sglang harness until someone needs them.
+
+Recommend option 3 for gsm8k specifically, then revisit if the variant
+sources turn out to be load-bearing.
+
+---
+
 ## Effort tiers and migration sequencing
 
 ### Tier 1 — paste into registry (NS already has it, fits existing runner)
