@@ -20,6 +20,25 @@ sgl-eval's job is to be the lightweight, vendored alternative: one
 unified harness, one set of graders (vendored verbatim from NS so
 scores match), no minutes-per-CI-run installation.
 
+## Roadmap coverage
+
+This plan addresses sgl-eval's `README.md` roadmap as follows:
+
+| roadmap bullet | covered? | where in this doc |
+|---|---|---|
+| **1. Replace the accuracy-eval surface in `sgl-project/sglang`.** "sgl-eval aims to be the single client SGLang's CI calls." | ✅ This is the entire purpose of the document. | `## The fragmentation, mapped` enumerates what needs replacing; `## Per-benchmark deep dive` describes every implementation; `## Effort tiers and migration sequencing` lays out the order. |
+| **2. More benchmarks within `math` and `multichoice`** (MATH-500, AIME26, MMLU-Pro, GPQA-extended). | ✅ Covered for the sglang-relevant subset. | `## Per-benchmark deep dive` covers MATH (Hendrycks), MMLU-Pro. **Tier 1** sequencing recommends MATH, MATH-500, MMLU-Pro as first-PR targets. AIME26 / GPQA-extended are not in sglang today, so out of scope of *this* migration but trivially register-as-row when needed. |
+| **3. New metrics types** — `long_context`, `code`, `instruction_following`, `multimodal`, `agentic`. | ⚠️ Partially covered. | `long_context` (LongBench V2): per-benchmark deep dive. `code` (HumanEval): per-benchmark deep dive + Tier 2 sequencing. `multimodal` (MMMU, MMMU-Pro): per-benchmark deep dive + Tier 2. `instruction_following` (IFEval) and `agentic` (BFCL, Tau-Bench) are not in sglang today and not analyzed here — they're future-state additions, not migrations. |
+| **4. More vendor sources** beyond NeMo-Skills (`lm-evaluation-harness`, `lmms-eval`, `openai/simple-evals`). | ✅ Analyzed. | `## The fragmentation, mapped` shows lm-eval-harness and lmms-eval as existing in-tree shell-outs. mgsm migration explicitly proposes `lm-evaluation-harness` as the natural *first* second-vendor-source candidate. mmmu migration proposes `lmms-eval` for basic MMMU. `### The vendor-rule pressure point` consolidates the strict-vs-roadmap-vs-soft decision and recommends "roadmap-as-written." `openai/simple-evals` is the codebase the existing sglang `simple_eval_*.py` files are adapted from, so it's referenced throughout but not proposed as a *new* vendor source — its content is already inlined. |
+| **5. LLM-as-judge benchmarks** (Arena-Hard, MTBench). | ❌ Out of scope of this migration. | sglang doesn't ship Arena-Hard or MTBench accuracy eval (the `benchmark/llm_judge/` and `benchmark/mtbench/` legacy scripts are *not really accuracy benchmarks* — they generate judgments rather than score them). Closest in-scope item is the `simple_eval_math.py` GPT-4-turbo judge — flagged in the math section as a methodology change the migration removes. **Genuine LLM-as-judge benchmarks remain a future architectural addition**, as the README says, and need a second judge endpoint + prompt-pair handling. |
+| **6. Regression CI infra** (publish per-run metrics to `sgl-eval-data` repo, baselines, fail-on-regression). | ❌ Out of scope of this migration. | Mentioned at the boundary in `### CI threshold migration` (every `*_score_threshold` constant in `test/registered/` is calibrated against a specific sglang harness and will need to shift). The "what to do about the threshold drift" question (Open Question #6) is the on-ramp to building this infra, but the infra itself is downstream of the migration finishing. |
+
+**Reading guide:** if you came to this doc from a specific roadmap
+bullet, the "where in this doc" column tells you what to read. If
+you're reviewing the doc cold, the rest of the sections proceed
+top-down: fragmentation → per-benchmark detail → source coverage →
+sequencing → cross-cutting concerns → open questions.
+
 ## The fragmentation, mapped
 
 Six in-tree harnesses:
