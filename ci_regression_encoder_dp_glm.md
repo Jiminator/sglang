@@ -137,3 +137,41 @@ m.MODELS = [SimpleNamespace(model="zai-org/GLM-4.1V-9B-Thinking", mmmu_accuracy=
 suite = unittest.TestLoader().loadTestsFromName("TestVLMEncoderDP.test_vlm_mmmu_benchmark", m)
 sys.exit(0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1)'
 ```
+
+## H100 End-to-End Verification (2026-05-07)
+
+Reproduced the bug on a local 4×H100 box using `OpenGVLab/InternVL2_5-8B` (cached, threshold 0.52) as a stand-in for the random model selection.
+
+`test/registered/vlm/test_encoder_dp.py` is **byte-identical** at parent (`0f21fe924a`), suspect (`267c2c0849`), and current `HEAD` (`git diff` produces no output). The only differentiator between parent and suspect is the one-line EPD suite-registration change shown above. The verification therefore exercises the bug mechanism that the suite move triggers, on the same encoder_dp code:
+
+| Phase | `./logs` precondition | Suite simulated | Result |
+|-------|------------------------|-----------------|--------|
+| A | empty / freshly cleaned | parent `0f21fe924a` (EPD in `stage-c-test-4-gpu-h100`, doesn't run before encoder_dp in nightly-4-gpu) | **PASS** — InternVL2_5-8B real accuracy **0.5311** ≥ 0.52 |
+| B | pre-populated `./logs/epd_multi_encoder_mmmu/__Qwen__Qwen2.5-VL-3B-Instruct__/20260507_080000/results_*.json` with `mmmu_acc,none=0.42` and `model_args="Qwen2.5-VL-3B-Instruct"` (mimicking what EPD writes) | suspect `267c2c0849` (EPD in `nightly-4-gpu`, runs before encoder_dp) | **FAIL** — `Model OpenGVLab/InternVL2_5-8B accuracy (0.4200) below expected threshold (0.5200)` |
+
+### Phase B detail — bug mechanism caught in the act
+
+After phase B's run, `./logs/` contained both:
+```
+logs/epd_multi_encoder_mmmu/__Qwen__Qwen2.5-VL-3B-Instruct__/20260507_080000/results_2026-05-07T08-00-00.000000.json
+logs/__OpenGVLab__InternVL2_5-8B__/20260507_161106_results.json
+```
+
+InternVL's eval **did run successfully** and wrote its real result (`mmmu_acc,none=0.52889`, `model_args=OpenGVLab/InternVL2_5-8B`) — but `glob.glob("./logs/**/*.json", recursive=True)` returned the stale EPD file at index `[0]`, so encoder_dp read the wrong file:
+
+```
+=== Stale EPD file content (read by encoder_dp): ===
+mmmu_acc,none = 0.42
+model_args = model_version="Qwen/Qwen2.5-VL-3B-Instruct",tp=1
+
+=== InternVL fresh result that encoder_dp ACTUALLY produced (and ignored): ===
+mmmu_acc,none = 0.52889
+model_args = model_version="OpenGVLab/InternVL2_5-8B",tp=1
+```
+
+This matches the failing CI logs **exactly**: the read JSON shows the EPD model + 50-sample limit, while the actual model under test scored above its threshold. The 0.4200 in production is not the model's accuracy — it is the EPD test's stale 50-sample MMMU result on Qwen2.5-VL-3B-Instruct.
+
+### Confidence after H100 verification
+
+- Bug mechanism (stale-`./logs` glob picks up EPD's prior result): **Confirmed end-to-end on H100.**
+- Commit causation (PR #23518 / `267c2c0849` introduced the regression by moving EPD into `nightly-4-gpu`): **Confirmed** — the parent commit's nightly-4-gpu suite has no EPD, the suspect commit's does, and the encoder_dp code is unchanged. With clean `./logs` (parent state) the test passes; with EPD's expected stale file present (suspect state) the test fails with the exact CI failure signature.
