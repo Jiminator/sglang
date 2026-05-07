@@ -192,3 +192,36 @@ Qwen3_5MoeForConditionalGeneration, Qwen3_5ForConditionalGeneration
 7. Verified the fix gap by reading `_handle_deterministic_inference` and `_handle_model_specific_adjustments` in `python/sglang/srt/server_args.py` at HEAD.
 
 Investigation log files were retained under `/tmp/nightly_logs/` and `/tmp/nightly_jobs/`.
+
+---
+
+## Local Verification on H100 (8× H100 80GB, driver 580.126.20)
+
+To prove the bisect, the same single test was executed at the parent commit and at the introducing commit on a workstation with 8× H100 80GB (using `CUDA_VISIBLE_DEVICES=0,1,2,3`, `tp=4`). `sglang` is editable-installed from the working tree, so a `git checkout` on a Python-only diff is sufficient to flip the runtime.
+
+Command (identical at both SHAs):
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
+SGLANG_IS_IN_CI=true \
+HF_HUB_DOWNLOAD_TIMEOUT=300 HF_HUB_ETAG_TIMEOUT=300 \
+.venv/bin/python test/registered/core/test_qwen3_next_deterministic.py \
+  TestFlashInferDeterministic.test_prefix_with_logprobs -v
+```
+
+| SHA | Description | `Auto-enabling FlashInfer ...` line | `enable_flashinfer_allreduce_fusion` in server_args | Result |
+|---|---|---|---|---|
+| `4839cecbb0` (parent of `c6a45fab64`) | One commit before the suspected regression | absent | `False` | **PASS** — `Ran 1 test in 118.429s / OK / ✓✓✓ Logprobs are identical across all batch sizes! ✓✓✓` |
+| `c6a45fab64` (introducing commit, PR #22664) | The suspected regression itself | `Auto-enabling FlashInfer AllReduce Fusion on SM90/SM10X for Qwen3NextForCausalLM` | `True` | **FAIL** — `Ran 1 test in 102.623s / FAILED (errors=1) / ✗✗✗ Some logprobs differ across batch sizes! ✗✗✗`, 244 per-sample mismatch lines, 2 mismatch banners (forward + reverse comparison both fail). |
+
+The local FAIL reproduces the exact CI numerical fingerprint, e.g.
+
+```
+✗ Sample 6: Logprob mismatch at position 0: -2.355271339416504 vs -2.3723394870758057 (diff: 0.017068147659301758)
+```
+
+— same `0.017068147659301758` and same `-2.355271339416504 vs -2.3723394870758057` pair seen in the CI logs from 2026-04-19 onward (e.g. samples 4..37 in run `24971499389`, samples 14..29 in run `25469734855`).
+
+The bisect is conclusive: PR #22664 / commit `c6a45fab64` is the introducing change. The fix outlined in *Recommended Fix* above will both (a) restore the deterministic-inference contract for Qwen3NextForCausalLM (and the other arches in the auto-enable list) and (b) keep the deterministic CI lane green.
+
+Local-verify logs: `logs/bisect_verify/parent_4839cecbb0.log`, `logs/bisect_verify/at_c6a45fab64.log`.
