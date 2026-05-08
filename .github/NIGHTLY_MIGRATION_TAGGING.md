@@ -146,21 +146,154 @@ The `Reasoning` column captures *why* each tag was chosen. Subset markers (e.g. 
 
 ---
 
+## Tests grouped by tag
+
+Each row lists the test plus its other tags (so you can see what else gets pulled along). When only a subset of classes in a file moves, the qualifier is reproduced here.
+
+### Reused tags
+
+#### `Multi-modal` (3)
+- `test_bench_serving_1gpu_part2.py` — also `perf`, `scoring`
+- `test_vlm_models.py`
+- `test_ministral4_models.py`
+
+#### `blackwell` (8)
+- `test_deepseek_v3_fp4_4gpu.py` *(only `TestDeepseekV3FP4CutlassMoE`)* — also `deepseek`, `moe`, `quant`
+- `test_nvidia_nemotron_3_super_nvfp4.py` — also `quant`
+- `test_fp8_blockwise_gemm.py` — also `quant`
+- `test_cutedsl_moe.py` — also `moe`, `quant`
+- `test_update_weights_from_disk_blackwell.py` — also `rl`
+- `test_lora_nemotron_3_super_120b_a12b_logprob_diff.py` — also `lora`, `moe`
+- `test_lora_gpt_oss_20b_logprob_diff.py` — also `lora`, `moe`
+- `test_lora_qwen3_30b_a3b_instruct_2507_logprob_diff.py` — also `lora`, `moe`
+
+#### `deepseek` (7)
+- `test_deepseek_v3_fp4_4gpu.py` *(only `TestDeepseekV3FP4CutlassMoE`)* — also `moe`, `quant`, `blackwell`
+- `test_return_routed_experts.py` — also `moe`
+- `test_step3p5_flash_chain_mtp.py` — also `speculative-decoding`, `moe`
+- `test_return_indexer_topk.py`
+- `test_deepseek_v32_indexcache.py` — also `hicache`
+- `test_deepseek_v32_cp_single_node.py`
+- `test_deepep_large.py` — also `moe`
+
+#### `hicache` (1)
+- `test_deepseek_v32_indexcache.py` — also `deepseek`
+
+#### `lora` (9)
+- `test_lora_load_from_tensor.py` — also `rl`
+- `test_lora_qwen3_5_4b_logprob_diff.py`
+- `test_lora_qwen3_8b_logprob_diff.py`
+- `test_lora_eviction.py`
+- `test_lora_drainer.py`
+- `test_lora_moe_tp_logprob_diff.py` — also `moe`
+- `test_lora_nemotron_3_super_120b_a12b_logprob_diff.py` — also `moe`, `blackwell`
+- `test_lora_gpt_oss_20b_logprob_diff.py` — also `moe`, `blackwell`
+- `test_lora_qwen3_30b_a3b_instruct_2507_logprob_diff.py` — also `moe`, `blackwell`
+
+#### `piecewise-cuda-graph` (3)
+- `test_torch_compile.py`
+- `test_bench_one_batch_2gpu.py` — also `perf`, `moe`
+- `test_pcg_with_speculative_decoding.py` *(STANDALONE + NGRAM + MTP only; EAGLE3 stays in PR)* — also `speculative-decoding`
+
+#### `quant` (12)
+- `test_bench_serving_1gpu_large.py` — also `perf`, `speculative-decoding`
+- `test_w8a8_quantization.py`
+- `test_gptqmodel_dynamic.py`
+- `test_fp8kv_triton.py` — also `attention-backend`
+- `test_compressed_tensors_models.py`
+- `test_gpt_oss_sm120.py`
+- `test_fp8_gemm_sm120.py`
+- `test_moe_ep.py` *(only `TestEpDeepGEMM`)* — also `moe`
+- `test_deepseek_v3_fp4_4gpu.py` *(only `TestDeepseekV3FP4CutlassMoE`)* — also `deepseek`, `moe`, `blackwell`
+- `test_nvidia_nemotron_3_super_nvfp4.py` — also `blackwell`
+- `test_fp8_blockwise_gemm.py` — also `blackwell`
+- `test_cutedsl_moe.py` — also `moe`, `blackwell`
+
+#### `speculative-decoding` (8)
+- `test_bench_serving_1gpu_large.py` — also `perf`, `quant`
+- `test_eagle_infer_a.py`
+- `test_standalone_speculative_decoding.py` *(non-V2 classes only; V2 stays in PR)*
+- `test_ngram_speculative_decoding.py` *(Triton + Flashinfer classes only; FA3 path stays in PR)*
+- `test_pcg_with_speculative_decoding.py` *(STANDALONE + NGRAM + MTP only)* — also `piecewise-cuda-graph`
+- `test_eagle_dp_attention.py`
+- `test_step3p5_flash_chain_mtp.py` — also `deepseek`, `moe`
+- `test_nvidia_nemotron_3_super_bf16.py`
+
+### New tags
+
+#### `attention-backend` (4)
+- `test_hybrid_attn_backend.py`
+- `test_torch_native_attention_backend.py`
+- `test_triton_sliding_window.py`
+- `test_fp8kv_triton.py` — also `quant`
+
+#### `moe` (12)
+- `test_bench_serving_2gpu.py` — also `perf`
+- `test_bench_one_batch_2gpu.py` — also `perf`, `piecewise-cuda-graph`
+- `test_moe_ep.py` *(only `TestEpDeepGEMM`)* — also `quant`
+- `test_lora_moe_tp_logprob_diff.py` — also `lora`
+- `test_deepseek_v3_fp4_4gpu.py` *(only `TestDeepseekV3FP4CutlassMoE`)* — also `deepseek`, `quant`, `blackwell`
+- `test_cutedsl_moe.py` — also `quant`, `blackwell`
+- `test_lora_nemotron_3_super_120b_a12b_logprob_diff.py` — also `lora`, `blackwell`
+- `test_lora_gpt_oss_20b_logprob_diff.py` — also `lora`, `blackwell`
+- `test_lora_qwen3_30b_a3b_instruct_2507_logprob_diff.py` — also `lora`, `blackwell`
+- `test_return_routed_experts.py` — also `deepseek`
+- `test_step3p5_flash_chain_mtp.py` — also `speculative-decoding`, `deepseek`
+- `test_deepep_large.py` — also `deepseek`
+
+#### `perf` (6)
+- `test_bench_serving_1gpu_part1.py`
+- `test_bench_serving_1gpu_part2.py` — also `Multi-modal`, `scoring`
+- `test_bench_serving_1gpu_large.py` — also `quant`, `speculative-decoding`
+- `test_session_latency.py` — also `session`
+- `test_bench_serving_2gpu.py` — also `moe`
+- `test_bench_one_batch_2gpu.py` — also `moe`, `piecewise-cuda-graph`
+
+#### `rl` (6)
+- `test_lora_load_from_tensor.py` — also `lora`
+- `test_update_weights_from_tensor.py`
+- `test_load_weights_from_remote_instance.py`
+- `test_update_weights_from_distributed.py`
+- `test_update_weights_from_disk_blackwell.py` — also `blackwell`
+- `test_multi_instance_release_memory_occupation.py`
+
+#### `scoring` (6)
+- `test_bench_serving_1gpu_part2.py` — also `perf`, `Multi-modal`
+- `test_multi_item_scoring.py`
+- `test_pooled_hidden_states.py`
+- `test_score_engine.py`
+- `test_score_api.py`
+- `test_openai_embedding.py`
+
+#### `session` (3)
+- `test_streaming_session.py` *(excl. `TestStreamingSessionEagleV2RetractLargePage`, `TestStreamingSessionAbortLeakRepro`)*
+- `test_session_latency.py` — also `perf`
+- `test_session_control.py`
+
+### Untagged (nightly-only)
+
+#### *(untagged)* (3)
+- `test_generation_models.py`
+- `test_priority_scheduling.py`
+- `test_tracing.py`
+
+---
+
 ## Tag-frequency summary
 
 | Tag | Tests | Source |
 |---|---:|---|
-| `quant` | 13 | reused |
 | `moe` | 12 | new |
-| `lora` | 11 | reused |
-| `blackwell` | 9 | reused |
-| `speculative-decoding` | 9 | reused |
-| `deepseek` | 8 | reused |
-| `rl` | 7 | new |
+| `quant` | 12 | reused |
+| `lora` | 9 | reused |
+| `blackwell` | 8 | reused |
+| `speculative-decoding` | 8 | reused |
+| `deepseek` | 7 | reused |
 | `perf` | 6 | new |
+| `rl` | 6 | new |
 | `scoring` | 6 | new |
 | `attention-backend` | 4 | new |
-| `Multi-modal` | 4 | reused |
+| `Multi-modal` | 3 | reused |
 | `piecewise-cuda-graph` | 3 | reused |
 | `session` | 3 | new |
 | `hicache` | 1 | reused |
