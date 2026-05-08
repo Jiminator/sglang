@@ -38,16 +38,19 @@ A test can carry multiple tags — any matching label pulls it in.
 
 | Tag | Why a new tag is needed | Suggested labeler.yml glob |
 |---|---|---|
-| `perf` | Bench / one-batch / serving throughput tests don't share a single source path; many of them are also tagged with feature labels (e.g. `quant`, `Multi-modal`) so they ride along on those, but `perf` lets a perf-only PR opt in. | (no auto-glob — apply manually or via slash command); optionally `python/sglang/bench_*` |
+| `perf` | Bench / one-batch / serving throughput tests; auto-fire on changes to bench scripts and the executor / forward-info hot path so perf-sensitive PRs always re-run them. | `python/sglang/bench_*.py`, `python/sglang/srt/{model_executor,forward_batch_info}*` |
 | `attention-backend` | FA3-hybrid, torch-native, Triton sliding-window, and FP8-KV-on-Triton tests all live under `python/sglang/srt/layers/attention/`. No existing tag covers it. | `python/sglang/srt/layers/attention/**/*` |
 | `moe` | MoE / EP / DeepEP / CuteDSL-MoE / routed-experts. `quant` doesn't capture MoE-only changes. | `python/sglang/srt/layers/moe/**/*` |
-| `rl` | Online weight-sync (`update_weights_from_*`, `load_weights_from_remote_instance`) and `release_memory_occupation` form a tight group of training-loop integration tests. | `python/sglang/srt/weight_sync/**/*`, `python/sglang/srt/entrypoints/engine.py` |
+| `rl` | Online weight-sync (`update_weights_from_*`, `load_weights_from_remote_instance`) and `release_memory_occupation` form a tight group of training-loop integration tests. | `python/sglang/srt/weight_sync/**/*` |
 | `scoring` | `/v1/score`, `/v1/embeddings`, pooled hidden states, multi-item scoring — distinct surface from generation. | `python/sglang/srt/scoring/**/*`, `python/sglang/srt/entrypoints/openai/serving_embedding*`, `python/sglang/srt/entrypoints/openai/serving_score*` |
 | `session` | Streaming session / control / session-latency. | `python/sglang/srt/managers/session_*`, `python/sglang/srt/server/streaming_*` |
+| `scheduler` | Closes the previously-untagged `test_priority_scheduling.py` slot. The scheduler / batch-scheduling code is its own tight surface. | `python/sglang/srt/managers/{scheduler,schedule_batch}*` |
+| `model-coverage` | Closes the previously-untagged `test_generation_models.py` slot. Any change under `python/sglang/srt/models/**` should re-run the model-coverage tests. | `python/sglang/srt/models/**/*` |
 
 **Decisions deliberately not made:**
 - No `sm120` / `5090` tag. Only two tests are SM12.0-specific (`test_fp8_gemm_sm120.py`, `test_gpt_oss_sm120.py`); both are quant kernels and `quant` already covers anyone touching the relevant code paths.
-- No "model-coverage" tag. Three tests (`test_generation_models.py`, `test_priority_scheduling.py`, `test_tracing.py`) don't fit a clear feature group and would only dilute existing tags. They stay untagged → nightly-only.
+- The `rl` glob deliberately *does not* include `python/sglang/srt/entrypoints/engine.py`. `engine.py` is touched by almost every server-side change, so labeling on it would auto-flag `rl` on too many unrelated PRs. The weight-sync subdirectory is the load-bearing surface.
+- `test_tracing.py` (OTLP/observability) stays untagged. One test alone doesn't justify a dedicated tag, and no existing label fits the surface area.
 
 ---
 
@@ -77,7 +80,7 @@ The `Reasoning` column captures *why* each tag was chosen. Subset markers (e.g. 
 | `test_fp8kv_triton.py` | `quant`, `attention-backend` | FP8 KV-cache *and* Triton attention — both surfaces matter. |
 | `test_compressed_tensors_models.py` | `quant` | CompressedTensors FP8. |
 | `test_vlm_models.py` | `Multi-modal` | VLM accuracy via MMMU. |
-| `test_generation_models.py` | *(untagged)* | Generic text-generation model coverage; doesn't tie to any feature group. Nightly-only. |
+| `test_generation_models.py` | `model-coverage` | Generic text-generation model coverage; rides on the new `model-coverage` glob. |
 | `test_lora_load_from_tensor.py` | `lora`, `rl` | Online tensor-based LoRA load — used in RL pipelines. |
 | `test_lora_qwen3_5_4b_logprob_diff.py` | `lora` | LoRA logprob accuracy. |
 | `test_lora_qwen3_8b_logprob_diff.py` | `lora` | LoRA logprob accuracy. |
@@ -96,7 +99,7 @@ The `Reasoning` column captures *why* each tag was chosen. Subset markers (e.g. 
 | `test_score_api.py` | `scoring` | HTTP `/v1/score`. |
 | `test_openai_embedding.py` | `scoring` | OpenAI-compatible `/v1/embeddings`. |
 | `test_update_weights_from_tensor.py` | `rl` | Online weight sync from a host tensor. |
-| `test_priority_scheduling.py` | *(untagged)* | Single-purpose scheduler edge case; no clear feature group. Nightly-only. |
+| `test_priority_scheduling.py` | `scheduler` | Priority-queue scheduling edge case; closed by the new `scheduler` glob. |
 | `test_tracing.py` | *(untagged)* | OTLP/observability is its own surface; one test alone doesn't justify a tag. Nightly-only. |
 
 ### 2-GPU
@@ -227,6 +230,9 @@ Each row lists the test plus its other tags (so you can see what else gets pulle
 - `test_triton_sliding_window.py`
 - `test_fp8kv_triton.py` — also `quant`
 
+#### `model-coverage` (1)
+- `test_generation_models.py`
+
 #### `moe` (12)
 - `test_bench_serving_2gpu.py` — also `perf`
 - `test_bench_one_batch_2gpu.py` — also `perf`, `piecewise-cuda-graph`
@@ -257,6 +263,9 @@ Each row lists the test plus its other tags (so you can see what else gets pulle
 - `test_update_weights_from_disk_blackwell.py` — also `blackwell`
 - `test_multi_instance_release_memory_occupation.py`
 
+#### `scheduler` (1)
+- `test_priority_scheduling.py`
+
 #### `scoring` (6)
 - `test_bench_serving_1gpu_part2.py` — also `perf`, `Multi-modal`
 - `test_multi_item_scoring.py`
@@ -272,9 +281,7 @@ Each row lists the test plus its other tags (so you can see what else gets pulle
 
 ### Untagged (nightly-only)
 
-#### *(untagged)* (3)
-- `test_generation_models.py`
-- `test_priority_scheduling.py`
+#### *(untagged)* (1)
 - `test_tracing.py`
 
 ---
@@ -297,9 +304,11 @@ Each row lists the test plus its other tags (so you can see what else gets pulle
 | `piecewise-cuda-graph` | 3 | reused |
 | `session` | 3 | new |
 | `hicache` | 1 | reused |
-| *(untagged — nightly-only)* | 3 | — |
+| `model-coverage` | 1 | new |
+| `scheduler` | 1 | new |
+| *(untagged — nightly-only)* | 1 | — |
 
-Total: 59 tests / 14 tags + untagged.
+Total: 59 tests / 16 tags + untagged.
 
 ---
 
