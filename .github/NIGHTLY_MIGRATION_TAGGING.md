@@ -1,6 +1,6 @@
 # Tag-gated nightly migration — tagging report
 
-This document is the design report for moving 61 long-running tests off the per-commit PR pipeline (`.github/workflows/pr-test.yml`) and into the nightly pipeline (`.github/workflows/nightly-test-nvidia.yml`), while keeping each test reachable from a PR run that has a relevant label.
+This document is the design report for moving 62 long-running tests off the per-commit PR pipeline (`.github/workflows/pr-test.yml`) and into the nightly pipeline (`.github/workflows/nightly-test-nvidia.yml`), while keeping each test reachable from a PR run that has a relevant label.
 
 It does **not** modify any code or workflow yet — it captures the tagging decisions so the implementation can follow.
 
@@ -35,7 +35,7 @@ path separators; directory surfaces should use `/**/*`.
 | `quant` | Keep `**/*quant*`, `**/*quantization*`; also add `python/sglang/srt/layers/quantization/**/*`, `python/sglang/srt/hardware_backend/*/quantization/**/*`, and FP8/FP4 kernel globs such as `**/*fp8*`, `**/*nvfp4*`, `**/*mxfp4*`. |
 | `speculative-decoding` | Keep `**/*speculative*`; also add `python/sglang/srt/speculative/**/*`, `**/*eagle*`, `**/*mtp*`, and `**/*ngram*` so EAGLE/MTP/NGRAM-specific files auto-label. |
 | `deepseek` | Keep `**/*deepseek*`; also add `python/sglang/srt/models/deepseek_common/**/*` because nested files under that directory are DeepSeek-specific even when their basenames do not contain `deepseek`. |
-| `hicache` | Keep `**/*hicache*`; also add `python/sglang/srt/mem_cache/hiradix_cache.py`, `python/sglang/srt/mem_cache/hi_mamba_radix_cache.py`, `python/sglang/srt/managers/cache_controller.py`, `python/sglang/srt/mem_cache/unified_cache_components/tree_component.py`, `python/sglang/srt/mem_cache/unified_cache_components/mamba_component.py`, and `python/sglang/srt/mem_cache/unified_cache_components/swa_component.py` so the core HiCache / HiCache-Mamba paths auto-label even when the basename does not contain `hicache`. |
+| `hicache` | Keep `**/*hicache*`; also add `python/sglang/srt/mem_cache/hiradix_cache.py`, `python/sglang/srt/mem_cache/hi_mamba_radix_cache.py`, `python/sglang/srt/mem_cache/storage/**/*`, `python/sglang/srt/managers/cache_controller.py`, `python/sglang/srt/mem_cache/unified_cache_components/tree_component.py`, `python/sglang/srt/mem_cache/unified_cache_components/mamba_component.py`, and `python/sglang/srt/mem_cache/unified_cache_components/swa_component.py` so the core HiCache / HiCache-Mamba / storage-backend paths auto-label even when the basename does not contain `hicache`. |
 | `blackwell` | Existing `**/*nvfp4*`, `sgl-kernel/csrc/attention/cutlass_sm100_mla/**/*`, `python/sglang/srt/layers/attention/trtllm_mla_backend.py`, `python/sglang/srt/layers/attention/trtllm_mha_backend.py`. |
 | `piecewise-cuda-graph` | Existing `python/sglang/srt/compilation/**/*` is sufficient for the migrated PCG tests. |
 
@@ -80,6 +80,7 @@ The `Reasoning` column captures *why* each tag was chosen. Subset markers (e.g. 
 | `test_triton_sliding_window.py` | `attention-backend` | Triton SWA backend behavior. |
 | `test_torch_compile.py` | `piecewise-cuda-graph` | `torch.compile` interacts directly with the piecewise-CUDA-graph path. |
 | `test_eagle_infer_a.py` | `speculative-decoding` | EAGLE inference. |
+| `test_hicache_spec_file_storage.py` | `hicache`, `speculative-decoding` | HiCache file-storage loadback with EAGLE3 speculative decoding; either cache storage or EAGLE changes should pull it into PR CI. |
 | `test_standalone_speculative_decoding.py` *(non-V2 classes only)* | `speculative-decoding` | Legacy non-V2 path; V2 stays in PR per-commit. |
 | `test_ngram_speculative_decoding.py` *(Triton + Flashinfer classes only)* | `speculative-decoding` | Backend-specific NGRAM coverage; FA3 path stays in PR. |
 | `test_w8a8_quantization.py` | `quant` | W8A8 INT8. |
@@ -194,7 +195,8 @@ Each row lists the test plus its other tags (so you can see what else gets pulle
 - `test_deepseek_v32_cp_single_node.py`
 - `test_deepep_large.py` — also `moe`
 
-#### `hicache` (2)
+#### `hicache` (3)
+- `test_hicache_spec_file_storage.py` — also `speculative-decoding`
 - `test_qwen35_hicache.py` — also `attention-backend`, `disaggregation`
 - `test_deepseek_v32_indexcache.py` — also `deepseek`
 
@@ -228,9 +230,10 @@ Each row lists the test plus its other tags (so you can see what else gets pulle
 - `test_fp8_blockwise_gemm.py` — also `blackwell`
 - `test_cutedsl_moe.py` — also `moe`, `blackwell`
 
-#### `speculative-decoding` (9)
+#### `speculative-decoding` (10)
 - `test_bench_serving_1gpu_large.py` — also `perf`, `quant`
 - `test_eagle_infer_a.py`
+- `test_hicache_spec_file_storage.py` — also `hicache`
 - `test_standalone_speculative_decoding.py` *(non-V2 classes only; V2 stays in PR)*
 - `test_ngram_speculative_decoding.py` *(Triton + Flashinfer classes only; FA3 path stays in PR)*
 - `test_pcg_with_speculative_decoding.py` *(STANDALONE + NGRAM + MTP only)* — also `piecewise-cuda-graph`
@@ -318,8 +321,8 @@ Each row lists the test plus its other tags (so you can see what else gets pulle
 |---|---:|---|
 | `moe` | 15 | new |
 | `quant` | 12 | reused |
+| `speculative-decoding` | 10 | reused |
 | `lora` | 9 | reused |
-| `speculative-decoding` | 9 | reused |
 | `blackwell` | 8 | reused |
 | `attention-backend` | 6 | new |
 | `perf` | 6 | new |
@@ -327,15 +330,15 @@ Each row lists the test plus its other tags (so you can see what else gets pulle
 | `scoring` | 6 | new |
 | `deepseek` | 5 | reused |
 | `Multi-modal` | 3 | reused |
+| `hicache` | 3 | reused |
 | `piecewise-cuda-graph` | 3 | reused |
 | `session` | 3 | new |
 | `disaggregation` | 2 | new |
-| `hicache` | 2 | reused |
 | `model-coverage` | 1 | new |
 | `scheduler` | 1 | new |
 | *(untagged — nightly-only)* | 1 | — |
 
-Total: 61 tests / 17 tags + untagged.
+Total: 62 tests / 17 tags + untagged.
 
 ---
 
