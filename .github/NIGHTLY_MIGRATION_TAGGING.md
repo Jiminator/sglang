@@ -1,6 +1,6 @@
 # Tag-gated nightly migration — tagging report
 
-This document is the design report for moving 59 long-running tests off the per-commit PR pipeline (`.github/workflows/pr-test.yml`) and into the nightly pipeline (`.github/workflows/nightly-test-nvidia.yml`), while keeping each test reachable from a PR run that has a relevant label.
+This document is the design report for moving 61 long-running tests off the per-commit PR pipeline (`.github/workflows/pr-test.yml`) and into the nightly pipeline (`.github/workflows/nightly-test-nvidia.yml`), while keeping each test reachable from a PR run that has a relevant label.
 
 It does **not** modify any code or workflow yet — it captures the tagging decisions so the implementation can follow.
 
@@ -35,7 +35,7 @@ path separators; directory surfaces should use `/**/*`.
 | `quant` | Keep `**/*quant*`, `**/*quantization*`; also add `python/sglang/srt/layers/quantization/**/*`, `python/sglang/srt/hardware_backend/*/quantization/**/*`, and FP8/FP4 kernel globs such as `**/*fp8*`, `**/*nvfp4*`, `**/*mxfp4*`. |
 | `speculative-decoding` | Keep `**/*speculative*`; also add `python/sglang/srt/speculative/**/*`, `**/*eagle*`, `**/*mtp*`, and `**/*ngram*` so EAGLE/MTP/NGRAM-specific files auto-label. |
 | `deepseek` | Keep `**/*deepseek*`; also add `python/sglang/srt/models/deepseek_common/**/*` because nested files under that directory are DeepSeek-specific even when their basenames do not contain `deepseek`. |
-| `hicache` | Existing `**/*hicache*` is sufficient for the migrated `hicache` test. |
+| `hicache` | Keep `**/*hicache*`; also add `python/sglang/srt/mem_cache/hiradix_cache.py`, `python/sglang/srt/mem_cache/hi_mamba_radix_cache.py`, `python/sglang/srt/managers/cache_controller.py`, `python/sglang/srt/mem_cache/unified_cache_components/tree_component.py`, `python/sglang/srt/mem_cache/unified_cache_components/mamba_component.py`, and `python/sglang/srt/mem_cache/unified_cache_components/swa_component.py` so the core HiCache / HiCache-Mamba paths auto-label even when the basename does not contain `hicache`. |
 | `blackwell` | Existing `**/*nvfp4*`, `sgl-kernel/csrc/attention/cutlass_sm100_mla/**/*`, `python/sglang/srt/layers/attention/trtllm_mla_backend.py`, `python/sglang/srt/layers/attention/trtllm_mha_backend.py`. |
 | `piecewise-cuda-graph` | Existing `python/sglang/srt/compilation/**/*` is sufficient for the migrated PCG tests. |
 
@@ -44,8 +44,9 @@ path separators; directory surfaces should use `/**/*`.
 | Tag | Why a new tag is needed | Suggested labeler.yml glob |
 |---|---|---|
 | `perf` | Bench / one-batch / serving throughput tests; auto-fire on changes to bench scripts and the executor / forward-info hot path so perf-sensitive PRs always re-run them. | `python/sglang/bench_*.py`, `python/sglang/srt/model_executor/**/*` |
-| `attention-backend` | FA3-hybrid, torch-native, Triton sliding-window, and FP8-KV-on-Triton tests all live under `python/sglang/srt/layers/attention/`. No existing tag covers it. | `python/sglang/srt/layers/attention/**/*` |
-| `moe` | MoE / EP / DeepEP / CuteDSL-MoE / routed-experts. `quant` doesn't capture MoE-only changes. | `python/sglang/srt/layers/moe/**/*`, `python/sglang/srt/eplb/**/*`, `python/sglang/srt/models/**/*moe*.py`, `python/sglang/srt/models/gpt_oss.py`, `python/sglang/srt/models/nemotron_h*.py`, `python/sglang/srt/models/step3p5*.py` |
+| `attention-backend` | FA3-hybrid, torch-native, Triton sliding-window, FP8-KV-on-Triton, and hybrid/Mamba attention tests all live on the attention backend surface. No existing tag covers it. | `python/sglang/srt/layers/attention/**/*`, `python/sglang/srt/models/qwen3_next*.py`, `python/sglang/srt/configs/qwen3_next.py`, `python/sglang/srt/models/qwen3_5.py`, `python/sglang/srt/configs/qwen3_5.py` |
+| `moe` | MoE / EP / DeepEP / CuteDSL-MoE / routed-experts. `quant` doesn't capture MoE-only changes. | `python/sglang/srt/layers/moe/**/*`, `python/sglang/srt/eplb/**/*`, `python/sglang/srt/models/**/*moe*.py`, `python/sglang/srt/models/gpt_oss.py`, `python/sglang/srt/models/nemotron_h*.py`, `python/sglang/srt/models/step3p5*.py`, `python/sglang/srt/models/qwen3_next*.py` |
+| `disaggregation` | PD disaggregation, KV-transfer / KV-event plumbing, and disaggregated prefill/decode tests are distinct from normal serving and cache-only coverage. | `python/sglang/srt/disaggregation/**/*`, `test/server_fixtures/disaggregation_fixture.py`, `test/**/*disaggregation*.py` |
 | `rl` | Online weight-sync (`update_weights_from_*`, `load_weights_from_remote_instance`) and `release_memory_occupation` form a tight group of training-loop integration tests. | `python/sglang/srt/weight_sync/**/*`, `python/sglang/srt/managers/scheduler_update_weights_mixin.py`, `python/sglang/srt/managers/tokenizer_control_mixin.py` |
 | `scoring` | `/v1/score`, `/v1/embeddings`, pooled hidden states, multi-item scoring — distinct surface from generation. | `python/sglang/srt/managers/tokenizer_manager_score_mixin.py`, `python/sglang/srt/entrypoints/engine_score_mixin.py`, `python/sglang/srt/entrypoints/openai/serving_embedding*`, `python/sglang/srt/entrypoints/openai/serving_score*` |
 | `session` | Streaming session / control / session-latency. | `python/sglang/srt/session/**/*`, `python/sglang/srt/entrypoints/http_server*`, `python/sglang/srt/entrypoints/openai/serving_chat*` |
@@ -55,7 +56,7 @@ path separators; directory surfaces should use `/**/*`.
 **Decisions deliberately not made:**
 - No `sm120` / `5090` tag. Only two tests are SM12.0-specific (`test_fp8_gemm_sm120.py`, `test_gpt_oss_sm120.py`); both are quant kernels and `quant` already covers anyone touching the relevant code paths.
 - The `rl` glob deliberately *does not* include broad shared files such as `python/sglang/srt/entrypoints/engine.py`, `python/sglang/srt/entrypoints/http_server.py`, or `python/sglang/srt/model_executor/model_runner.py`. Those files are touched by many unrelated server-side changes. If a PR edits the RL/update-weight methods inside one of those broad files, the PR should receive the `rl` label manually.
-- Similarly, scoring/session-specific edits in broad files such as `python/sglang/srt/managers/io_struct.py`, `python/sglang/srt/server_args.py`, `python/sglang/srt/model_executor/forward_batch_info.py`, `python/sglang/srt/mem_cache/unified_radix_cache.py`, or `python/sglang/srt/managers/scheduler.py` may need a manual `scoring` or `session` label unless the implementation chooses to accept broader auto-labeling.
+- Similarly, scoring/session/disaggregation/HiCache-specific edits in broad files such as `python/sglang/srt/managers/io_struct.py`, `python/sglang/srt/server_args.py`, `python/sglang/srt/model_executor/forward_batch_info.py`, `python/sglang/srt/mem_cache/unified_radix_cache.py`, `python/sglang/srt/managers/schedule_batch.py`, `python/sglang/srt/managers/scheduler.py`, or `python/sglang/srt/managers/tp_worker.py` may need a manual corresponding label unless the implementation chooses to accept broader auto-labeling.
 - `test_tracing.py` (OTLP/observability) stays untagged. One test alone doesn't justify a dedicated tag, and no existing label fits the surface area.
 
 ---
@@ -138,6 +139,7 @@ The `Reasoning` column captures *why* each tag was chosen. Subset markers (e.g. 
 
 | Test | Tags | Reasoning |
 |---|---|---|
+| `test_qwen35_hicache.py` | `hicache`, `attention-backend`, `disaggregation` | Qwen3.5 HiCache accuracy and KV-event smoke test; it exercises HiCache-Mamba / hybrid-attention cache behavior plus the shared disaggregation KV-event types. |
 | `test_return_routed_experts.py` | `moe` | DeepEP routed-expert state capture on Qwen3 MoE; this is not DeepSeek-specific. |
 | `test_eagle_dp_attention.py` | `speculative-decoding` | EAGLE3 + DP-attention. |
 | `test_multi_instance_release_memory_occupation.py` | `rl` | Multi-instance memory-occupation tracking — RL-control-plane test. |
@@ -147,11 +149,20 @@ The `Reasoning` column captures *why* each tag was chosen. Subset markers (e.g. 
 | Test | Tags | Reasoning |
 |---|---|---|
 | `test_step3p5_flash_chain_mtp.py` | `speculative-decoding`, `moe` | Multi-layer EAGLE/MTP on the Step-3.5 MoE model; this is not DeepSeek-specific. |
+| `test_disaggregation_hybrid_attention.py` | `disaggregation`, `attention-backend`, `moe` | PD disaggregation on Qwen3-Next with hybrid/Mamba attention and a sparse-MoE model, including DP-attention decode coverage. |
 | `test_return_indexer_topk.py` | `deepseek` | DSv3.2 indexer-topk capture. |
 | `test_deepseek_v32_indexcache.py` | `deepseek`, `hicache` | Index-cache pattern (DSv3.2 + hicache). |
 | `test_nvidia_nemotron_3_super_bf16.py` | `speculative-decoding`, `moe` | TP8 Nemotron MoE with EAGLE/MTP. |
 | `test_deepseek_v32_cp_single_node.py` | `deepseek` | Context-parallel for DSv3.2. |
 | `test_deepep_large.py` | `moe`, `deepseek` | DeepEP large-scale on DeepSeek. |
+
+---
+
+## Related PR changes not tag-gated
+
+| Test | Disposition | Reasoning |
+|---|---|---|
+| `test_vision_openai_server_a.py` | Keep in `stage-b-test-1-gpu-large`; no nightly tag assignment. | The PR trims this per-commit OpenAI vision/audio/omni/OCR smoke file from `780s` to `420s` by removing model families that already have nightly VLM accuracy coverage (`test_vlms_mmmu_eval.py` / `nightly-eval-vlm-2-gpu`, plus Gemma in `test_vlm_models.py`). It does not move this file, or the removed classes, into the tag-gated nightly migration. The remaining per-commit file still covers OpenAI-server behavior for the model families not duplicated by those nightly accuracy tests plus Qwen2-VL context-length validation. |
 
 ---
 
@@ -183,7 +194,8 @@ Each row lists the test plus its other tags (so you can see what else gets pulle
 - `test_deepseek_v32_cp_single_node.py`
 - `test_deepep_large.py` — also `moe`
 
-#### `hicache` (1)
+#### `hicache` (2)
+- `test_qwen35_hicache.py` — also `attention-backend`, `disaggregation`
 - `test_deepseek_v32_indexcache.py` — also `deepseek`
 
 #### `lora` (9)
@@ -229,16 +241,22 @@ Each row lists the test plus its other tags (so you can see what else gets pulle
 
 ### New tags
 
-#### `attention-backend` (4)
+#### `attention-backend` (6)
 - `test_hybrid_attn_backend.py`
 - `test_torch_native_attention_backend.py`
 - `test_triton_sliding_window.py`
 - `test_fp8kv_triton.py` — also `quant`
+- `test_qwen35_hicache.py` — also `hicache`, `disaggregation`
+- `test_disaggregation_hybrid_attention.py` — also `disaggregation`, `moe`
+
+#### `disaggregation` (2)
+- `test_qwen35_hicache.py` — also `hicache`, `attention-backend`
+- `test_disaggregation_hybrid_attention.py` — also `attention-backend`, `moe`
 
 #### `model-coverage` (1)
 - `test_generation_models.py`
 
-#### `moe` (14)
+#### `moe` (15)
 - `test_bench_serving_2gpu.py` — also `perf`
 - `test_bench_one_batch_2gpu.py` — also `perf`, `piecewise-cuda-graph`
 - `test_moe_ep.py` *(only `TestEpDeepGEMM`)* — also `quant`
@@ -252,6 +270,7 @@ Each row lists the test plus its other tags (so you can see what else gets pulle
 - `test_return_routed_experts.py`
 - `test_step3p5_flash_chain_mtp.py` — also `speculative-decoding`
 - `test_nvidia_nemotron_3_super_bf16.py` — also `speculative-decoding`
+- `test_disaggregation_hybrid_attention.py` — also `disaggregation`, `attention-backend`
 - `test_deepep_large.py` — also `deepseek`
 
 #### `perf` (6)
@@ -297,25 +316,26 @@ Each row lists the test plus its other tags (so you can see what else gets pulle
 
 | Tag | Tests | Source |
 |---|---:|---|
-| `moe` | 14 | new |
+| `moe` | 15 | new |
 | `quant` | 12 | reused |
 | `lora` | 9 | reused |
 | `speculative-decoding` | 9 | reused |
 | `blackwell` | 8 | reused |
+| `attention-backend` | 6 | new |
 | `perf` | 6 | new |
 | `rl` | 6 | new |
 | `scoring` | 6 | new |
 | `deepseek` | 5 | reused |
-| `attention-backend` | 4 | new |
 | `Multi-modal` | 3 | reused |
 | `piecewise-cuda-graph` | 3 | reused |
 | `session` | 3 | new |
-| `hicache` | 1 | reused |
+| `disaggregation` | 2 | new |
+| `hicache` | 2 | reused |
 | `model-coverage` | 1 | new |
 | `scheduler` | 1 | new |
 | *(untagged — nightly-only)* | 1 | — |
 
-Total: 59 tests / 16 tags + untagged.
+Total: 61 tests / 17 tags + untagged.
 
 ---
 
