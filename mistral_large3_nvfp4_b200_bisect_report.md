@@ -4,14 +4,11 @@
 **Date:** 2026-05-15
 **Repo:** `sgl-project/sglang`
 **Reporting run:** https://github.com/sgl-project/sglang/actions/runs/25835354140/job/75909128362
+**Status:** Reproduced; root cause isolated and confirmed by an A/B/C/D experiment matrix.
+
+> **Correction note:** An earlier draft of this report (commit `b0591ab`) blamed the flashinfer dependency bump `d5f3254` (PR #24452). That conclusion was wrong. `d5f3254` *aggravates* the failure but is **not** the introducing commit, and the revert in **PR #25310 (`22dfcda`) does not fix the Mistral NVFP4 test** — verified by running the same test locally at the post-revert SHA `0fde6153` and getting the identical traceback. The actual culprit is `1d80a1a` (PR #23745, "Use Cute-DSL NVFP4 quantization kernels"), which wraps `flashinfer.fp4_quantize` and forces `backend="cute-dsl"` on SM100/B200. The cute-dsl backend has a hard `reshape(1)` on `global_scale` that is incompatible with the per-expert `[num_experts]` scale the MoE call site passes; the same kernel ships in both flashinfer 0.6.8.post1 *and* 0.6.11+, so the flashinfer version is irrelevant to this failure. The corrected analysis is below.
 
 ---
-
-## Status
-
-**Reproduced locally.** Root cause identified. Bisection-introducing commit isolated by code review + an A/B reproduction (13afe8a → PASS, 34c0029 → FAIL; backend swap in `fp4_utils.py` also FAILs with a more revealing flashinfer-side assertion).
-
-The previous session's hypothesis ("Likely 51a9403104; possibly 28758d37dd") is **not the root cause**. The real introducer is `d5f3254` (#24452).
 
 ## Failure Signature
 
@@ -19,11 +16,9 @@ The previous session's hypothesis ("Likely 51a9403104; possibly 28758d37dd") is 
 - **Workflow / job:** `Nightly Test (Nvidia)` (run `25835354140`) → `nightly-test-general-8-gpu-b200 (3)` (job `75909128362`), suite `nightly-8-gpu-common`, partition 3/4, runner `b200-novita-1` (8× B200, drv 580.126.09, CUDA 13).
 - **Head SHA at time of failure:** `34c0029f0aff4c3d1c714e7d55b2a522bbc0ff69` ("[diffusion] [AMD] feat: support online MXFP4 and fp8 quantization (#21431)", 2026-05-14).
 - **Step that failed:** "Run common 8-GPU model tests" — exit code 255.
-- **Variant that fails:** **NVFP4** (`mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4`, 128 experts, TP=8, `--attention-backend=trtllm_mla --moe-runner-backend=flashinfer_trtllm`). The TP8 (FP8) and TP8+MTP (FP8 + EAGLE) variants do not exercise this NVFP4 path.
+- **Variant that fails:** **NVFP4** (`mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4`, 128 experts, TP=8, `--attention-backend=trtllm_mla --moe-runner-backend=flashinfer_trtllm`). TP8 (FP8 basic) is unaffected.
 
-GitHub's raw-job-log endpoint (`/repos/.../actions/jobs/75909128362/logs`) returned 403 — the exact assertion text was reconstructed from local reproduction (below).
-
-### Failure trace (from local reproduction at `34c0029` + flashinfer 0.6.11.post1)
+Failure trace (reproduced locally at `34c0029`, and verified identical at `0fde6153` post-revert):
 
 ```
 File ".../layers/moe/fused_moe_triton/layer.py", line 1093, in run_moe_core
@@ -33,133 +28,178 @@ File ".../quantization/compressed_tensors/compressed_tensors.py", line 1030, in 
 File ".../compressed_tensors/schemes/compressed_tensors_w4a4_nvfp4_moe.py", line 315, in apply_weights
     hs_fp4_bytes, hs_sf_bytes = fp4_quantize(
 File ".../sglang/srt/layers/quantization/fp4_utils.py", line 36, in _flashinfer_fp4_quantize_impl
-    return _flashinfer_fp4_quantize(... backend=_flashinfer_fp4_quantize_backend)
-File ".../flashinfer/quantization/fp4_quantization.py", line 924, in _fp4_quantize_cute_dsl
+    return _flashinfer_fp4_quantize(... backend="cute-dsl")
+File ".../flashinfer/quantization/fp4_quantization.py", line 703/924, in fp4_quantize -> _fp4_quantize_cute_dsl
     return nvfp4_quantize_cute_dsl(...)
 File ".../flashinfer/quantization/kernels/nvfp4_quantize.py", line 1270, in nvfp4_quantize_cute_dsl
     global_scale.float().reshape(1).contiguous().to(input.device)
 RuntimeError: shape '[1]' is invalid for input of size 128
 ```
 
-`128` is the model's number of experts; the global-scale tensor passed in is `layer.w13_input_scale_quant`, shape `[num_experts]`.
+The `128` matches the model's number of experts; `layer.w13_input_scale_quant` has shape `[num_experts]`.
 
-When the cute-dsl backend is patched out (set `_flashinfer_fp4_quantize_backend = "cuda"` in `python/sglang/srt/layers/quantization/fp4_utils.py:22`), the same call falls through to flashinfer's *cuda* kernel and fails with the **more informative** error from `flashinfer/data/csrc/nv_internal/tensorrt_llm/thop/fp4Quantize.cpp:64`:
+---
 
-```
-TVM_FFI_ICHECK(globalScale.value().numel() == 1 || globalScale.value().numel() == m)
-    << "globalScale should have shape [1] or [num_tokens]";
-RuntimeError: Check failed ... is false: globalScale should have shape [1] or [num_tokens]
-```
+## Historical Failure Window (from CI metrics artifacts)
 
-i.e. `flashinfer.fp4_quantize` in 0.6.11.post1 explicitly **rejects per-expert global-scale tensors**; only `[1]` (scalar) or `[num_tokens]` (per-token) is accepted.
+Using `gh run download <run_id> -n metrics-8gpu-b200-partition-3` for each scheduled `nightly-test-nvidia.yml` run:
 
-## Boundary (verified locally)
+| Run | SHA | Date (UTC) | flashinfer | Mistral NVFP4 perf rows present? | Status |
+|---|---|---|---|---|---|
+| 607 | `aa7a9af1` | 2026-05-11 01:00 | 0.6.8.post1 | **YES (4 batch sizes)** | **PASS** |
+| 608 | `74d70af0` | 2026-05-12 00:54 | 0.6.8.post1 | NO | FAIL |
+| 609 | `4fb40bf` | 2026-05-13 00:58 | 0.6.11.post1 | NO | FAIL |
+| 610 | `34c0029` | 2026-05-14 01:00 | 0.6.11.post1 | NO | FAIL (the run in the question) |
+| 613 | `0fde6153` | 2026-05-15 00:58 | **0.6.8.post1 (post-revert)** | NO | **STILL FAIL** |
 
-| Status | SHA | flashinfer | torch | sgl-kernel | Hardware | NVFP4 + gsm8k |
-|---|---|---|---|---|---|---|
-| **Last pass** | `13afe8a` (2026-04-29 HEAD-of-main) | `0.6.8.post1` | `2.9.1+cu130` | `0.4.1.post1+cu130` | 8× B200 (drv 580.126.09) | **PASS** — perf bench succeeded; gsm8k **score = 0.951** ≥ baseline 0.85; total runtime 8m55s |
-| **First fail** | `34c0029` (CI failure SHA) | `0.6.11.post1` (pinned by the SHA's `pyproject.toml`) | `2.11.0+cu130` (pinned by `pyproject.toml`) | `0.4.2.post1+cu130` (pinned) | same machine | **FAIL** — `RuntimeError: shape '[1]' is invalid for input of size 128` during the first MoE forward (during `fp4_gemm` autotune) |
-| Sub-experiment | `34c0029` + patch `fp4_utils.py` to `backend="cuda"` | same | same | same | same | **FAIL** — same call site, cleaner error: `globalScale should have shape [1] or [num_tokens]` |
+Boundary: PASS at `aa7a9af1` (run 607) → FAIL at `74d70af0` (run 608). Window = 51 commits. The notable change in that window is `1d80a1a` ("Use Cute-DSL NVFP4 quantization kernels", PR #23745), which touches the `fp4_quantize` import in `compressed_tensors_w4a4_nvfp4_moe.py:309` and adds the `backend="cute-dsl" if is_sm100_supported() else "cuda"` wrapper in `python/sglang/srt/layers/quantization/fp4_utils.py:22`.
 
-Reproduction used the user-modified `test_mistral_large3.py` reduced to the NVFP4 variant (TP8+MTP needs `mistralai/Mistral-Large-3-675B-Instruct-2512-Eagle` weights — these were downloaded successfully (11 GB), but TP8+MTP was deferred to keep the bisection cycle fast).
+`d5f3254` (flashinfer 0.6.8.post1 → 0.6.11) and `51a9403` (0.6.11 → 0.6.11.post1) both land **after** the regression boundary (May 12+); they cannot have introduced the failure because run 608 (still on flashinfer 0.6.8.post1) already exhibits it. PR #25310 (`22dfcda`) reverts those two flashinfer bumps but leaves `1d80a1a` in place — which is why run 613 (post-revert) is still failing on the same NVFP4 partition.
 
-Two environment notes:
-- `SGLANG_IS_IN_CI=true` is required for the test to reach the same code path as CI: the per-server context-length check in `model_config.py:_derive_context_length` short-circuits with a `ValueError` outside CI. (This is unrelated to the regression; just an env-parity gotcha.)
-- The `nightly-test-nvidia.yml` workflow pins this env at the workflow level. With it set, reproduction is byte-for-byte the CI path.
+---
+
+## A/B/C/D Local Experiments
+
+All on 8× B200 (drv 580.126.09, CUDA 13). `SGLANG_IS_IN_CI=true`, `SGLANG_ENABLE_JIT_DEEPGEMM=0`, `SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1`. NVFP4-only variant.
+
+| # | sglang SHA | `fp4_utils.py:22` backend | flashinfer | sgl-kernel | torch | Outcome | Total wall time |
+|---|---|---|---|---|---|---|---|
+| A | `13afe8a` (pre-`1d80a1a`) | n/a (no wrapper) | 0.6.8.post1 | 0.4.1.post1+cu130 | 2.9.1+cu130 | **PASS** — gsm8k 0.951 | 8m 55s |
+| B | `34c0029` (CI failure SHA, has wrapper) | `"cute-dsl"` | 0.6.11.post1 | 0.4.2.post1+cu130 | 2.11.0+cu130 | **FAIL** — `reshape '[1]' invalid for input of size 128` (cute-dsl) | crashed at `fp4_gemm` autotune |
+| C | `34c0029` | `"cuda"` (patch) | 0.6.11.post1 | 0.4.2.post1+cu130 | 2.11.0+cu130 | **FAIL** — `globalScale should have shape [1] or [num_tokens]` (`fp4Quantize.cpp:64`, *new strict cuda-side check in flashinfer 0.6.11+*) | crashed at autotune |
+| D | `0fde6153` (post-revert HEAD) | `"cute-dsl"` (unchanged) | 0.6.8.post1 | 0.4.2.post1+cu130 | 2.11.0+cu130 | **FAIL** — identical traceback to B (`nvfp4_quantize_cute_dsl:1270` `reshape '[1]' invalid`) | crashed before bench |
+| E | `0fde6153` | **`"cuda"` (patch)** | 0.6.8.post1 | 0.4.2.post1+cu130 | 2.11.0+cu130 | **PASS** — gsm8k 0.949 ≥ 0.85 | 23m 43s |
+| **F** | **`ea217a2` (parent of `1d80a1a`, the falsification test)** | **n/a (no wrapper)** | **0.6.8.post1** | **0.4.2.post1+cu130** | **2.11.0+cu130** | **PASS — gsm8k 0.956 ≥ 0.85** | **9m 33s** |
+
+Interpretation:
+
+- A → D shows the regression is **independent of flashinfer version** (both 0.6.8.post1; A passes, D fails). The only relevant sglang-side change between A and D is `1d80a1a` adding the wrapper that routes B200/SM100 through `backend="cute-dsl"`.
+- D → E (one-line patch of `fp4_utils.py:22` from `"cute-dsl"` to `"cuda"`) restores the pre-`1d80a1a` routing and the test passes — confirming the cute-dsl backend is the proximate failure, not the per-expert scale itself.
+- B → C shows that flashinfer 0.6.11 *additionally* added the same strict shape check to the cuda backend (`fp4Quantize.cpp:64`), so once `1d80a1a` is in *and* flashinfer is bumped, even the cuda fallback fails. PR #25310's revert removes that strict-check side, but the cute-dsl-side failure (D) remains because `1d80a1a` is still in.
+- **F is the direct falsification test:** check out the literal git parent of `1d80a1a` (`ea217a2`, "ci: remove Execute Notebooks workflow") with all other dependencies identical to D, and the test passes. Combined with D failing on the same dependency stack, this isolates the regression to exactly the diff introduced by `1d80a1a`.
+
+---
 
 ## Candidate Commits / Independent Review
 
-Filtered set of commits in `13afe8a..34c0029` (587 commits) that touch NVFP4 / FP4 / flashinfer / `trtllm_mla_backend` / `compressed_tensors_w4a4_nvfp4_moe`:
-
 | Rank | SHA | PR | Title | Verdict |
 |---|---|---|---|---|
-| **C1 (root cause)** | **`d5f3254`** | **#24452** | `[Dependency] Flashinfer 0.6.8post1 -> 0.6.11` | **Confirmed.** The 0.6.8.post1 → 0.6.11 bump pulls in a flashinfer kernel that *explicitly checks* `globalScale.numel() == 1 || globalScale.numel() == num_tokens` (`fp4Quantize.cpp:64`). The 13afe8a call site `compressed_tensors_w4a4_nvfp4_moe.py:315` passes a per-expert tensor (numel == 128). Pre-bump (0.6.8.post1), the kernel accepted the per-expert tensor (or treated it as a broadcast/no-op), so the test was green on 13afe8a. Post-bump, every NVFP4 + flashinfer_trtllm MoE forward fails. |
-| C2 | `1d80a1a` | #23745 | `Use Cute-DSL NVFP4 quantization kernels` | **Aggravates, but does not cause.** This wraps `flashinfer.fp4_quantize` in a sglang custom op and routes through `backend="cute-dsl"` on SM100 (B200). When the cute-dsl backend hits the same per-expert tensor, the failure surfaces as `reshape '[1]' is invalid for input of size 128` in `nvfp4_quantize.py:1270` (still rooted in flashinfer ≥ 0.6.11's MoE refactor). Reverting to `backend="cuda"` reveals the underlying flashinfer assertion (above) — the regression persists. |
-| C3 | `51a9403` | #25129 | `Update flashinfer to 0.6.11.post1` | **Not the root cause.** Diff is two version-string updates and a `pyproject.toml` patch-bump. The flashinfer changelog 0.6.11 → 0.6.11.post1 covers SM120 W4A16 MoE, sccache, JIT `-DNDEBUG` fixes, a typo in `trtllm_fused_moe_runner.cu` — none of these revert the fp4_quantize shape contract. |
-| C4 | `28758d3` | #24816 | `Add FlashInfer SM90 cutlass MXFP4 MoE backend (W4A16) for GPT-OSS + DeepSeek-V4` | **Not the root cause.** Gated on SM90 + MXFP4 + GPT-OSS/DeepSeek-V4. The B200 (SM100) NVFP4 + Mistral-Large-3 path never enters this code. PR #25329 later disabled this PR's own tests, but the disablement is unrelated to the Mistral test. |
-| C5 | `7618ad7` | #24925 | `[attn backend] Integrate tokenspeed_mla prefill/decode kernels` | Refactors `trtllm_mla_backend.py` (+223/-92), but the new code is a no-op until `--attention-backend tokenspeed_mla`. The Mistral test uses `trtllm_mla`. Not the root cause. |
-| C6 | `73e93be` | #21954 | `[1/4] NVFP4 KV cache: quantization strategy abstraction and kernel` | Doesn't touch the MoE fp4_quantize call site. |
+| **C1 (root cause)** | **`1d80a1a`** | **#23745** | **Use Cute-DSL NVFP4 quantization kernels** | **Confirmed.** Touches `python/sglang/srt/layers/quantization/fp4_utils.py` to wrap `flashinfer.fp4_quantize` with `_flashinfer_fp4_quantize_backend = "cute-dsl" if is_sm100_supported() else "cuda"`, and changes `compressed_tensors_w4a4_nvfp4_moe.py:309` to import that wrapper. After this change, every B200 NVFP4 MoE forward routes to flashinfer's cute-dsl kernel, which assumes scalar `global_scale` and fails on the per-expert `layer.w13_input_scale_quant`. Date: 2026-05-10 17:40 PDT — first nightly to ship it is run 608 (May 12), which is exactly where the regression starts in CI metrics. |
+| C2 | `d5f3254` | #24452 | [Dependency] Flashinfer 0.6.8post1 → 0.6.11 | **Aggravates, but does not cause.** Tightened the *cuda* backend to also reject `numel != 1 && numel != num_tokens`, eliminating the fallback that would otherwise work if `_flashinfer_fp4_quantize_backend` were forced to `"cuda"`. Without `1d80a1a` in place, this PR alone wouldn't have broken Mistral NVFP4 (sglang's call site went via the looser pre-0.6.11 `fp4_quantize`). |
+| C3 | `51a9403` | #25129 | Update flashinfer to 0.6.11.post1 | Not relevant. One-line version-string updates. The breaking change is between 0.6.10 and 0.6.11. |
+| C4 | `28758d3` | #24816 | Add FlashInfer SM90 cutlass MXFP4 MoE backend (W4A16) for GPT-OSS + DeepSeek-V4 | Not relevant. SM90+MXFP4 path; never enters this test. |
+| C5 | `22dfcda` | #25310 | revert flashinfer 0.6.11 bumps | Reverts C2+C3; **does not fix the regression** because it doesn't touch `1d80a1a`. Verified by experiment D above. |
+
+### Why the previous session's hypothesis was wrong (and why my earlier draft was too)
+
+> "Likely 51a9403104 (NVFP4/flashinfer); possibly 28758d37dd (FlashInfer SM90 cutlass MXFP4 MoE)" — prior session
+> "d5f3254 is the root cause" — earlier draft of this report (commit `b0591ab`)
+
+The prior session pattern-matched on "recent flashinfer-touching commit," which mis-ranked `51a9403` and `28758d3` (a patch-version bump and an SM90-MXFP4 path that never executes on this test). My earlier draft moved one step earlier in the same direction (`d5f3254`, the bigger flashinfer bump), which had circumstantial evidence (a flashinfer-side stricter check) but was still wrong because:
+
+1. The CI metrics show NVFP4 already failed in run 608 (2026-05-12), when flashinfer was still 0.6.8.post1.
+2. The revert in #25310 returned main to flashinfer 0.6.8.post1 yet run 613 (post-revert) still fails.
+3. Locally, `0fde6153` (post-revert, flashinfer 0.6.8.post1) reproduces the identical `reshape '[1]'` cute-dsl traceback; only patching `_flashinfer_fp4_quantize_backend` to `"cuda"` makes the test pass.
+
+The lesson: the dependency bump narrative was downstream/confounded. The real change is the *sglang-side* routing decision in `fp4_utils.py:22`.
+
+---
 
 ## Root Cause Classification
 
-**Code regression — `d5f3254` (#24452) is the introducing commit.**
+**Code regression — `1d80a1a` (#23745) is the introducing commit.**
 
-The bug is at the sglang↔flashinfer interface:
-- `python/sglang/srt/layers/quantization/compressed_tensors/schemes/compressed_tensors_w4a4_nvfp4_moe.py:315` passes `layer.w13_input_scale_quant` (per-expert, shape `[num_experts]`) as `global_scale` to `flashinfer.fp4_quantize`.
-- Flashinfer ≥ 0.6.11 now enforces `numel == 1 || numel == num_tokens`, so per-expert tensors are rejected.
+The wrapper in `python/sglang/srt/layers/quantization/fp4_utils.py` unconditionally forces `backend="cute-dsl"` for any SM100 device. The cute-dsl path in flashinfer (`flashinfer/quantization/kernels/nvfp4_quantize.py:nvfp4_quantize_cute_dsl`) does:
 
-`1d80a1a` (cute-dsl wrapper) is a co-conspirator: it picks a different flashinfer backend on B200, which converts the friendly cuda-side assertion into a raw `RuntimeError: shape '[1]' is invalid` from `nvfp4_quantize_cute_dsl:1270`. The fix has to be the same in both cases.
+```python
+global_scale.float().reshape(1).contiguous().to(input.device)
+```
 
-## Independent Reading of the Prior Session's Hypothesis
+which is only valid for `global_scale.numel() == 1`. The MoE call site in `compressed_tensors_w4a4_nvfp4_moe.py:315` passes `layer.w13_input_scale_quant`, which is shape `[num_experts]` (= 128 for Mistral-Large-3). Before `1d80a1a` the call went through `flashinfer.fp4_quantize` without a backend kwarg, hitting flashinfer's then-permissive cuda kernel that accepted per-expert scales.
 
-> Likely 51a9403104 (NVFP4/flashinfer); possibly 28758d37dd (FlashInfer SM90 cutlass MXFP4 MoE)
-
-- **51a9403 (#25129)** — wrong. Diff is one-line version-string updates and a patch-version bump in `pyproject.toml`. The flashinfer 0.6.11.post1 changelog (vs 0.6.11) does not touch `globalScale`'s shape contract.
-- **28758d3 (#24816)** — wrong. SM90 + MXFP4 path only. B200 is SM100, Mistral-Large-3 NVFP4 uses NVFP4 + `flashinfer_trtllm`, which routes through `compressed_tensors_w4a4_nvfp4_moe.apply_weights → flashinfer.fp4_quantize`, not through the new SM90 MXFP4 cutlass backend.
-
-The actual chain is `d5f3254` (major flashinfer bump) → exposes a long-standing per-expert global_scale mismatch in `compressed_tensors_w4a4_nvfp4_moe.py:315`. The prior session pattern-matched on "any recent NVFP4/flashinfer commit"; the substantive code/dependency change is one step earlier.
+---
 
 ## Recommended Fix
 
-Two complementary directions; pick (1) for an immediate unblock, (2) for the correct long-term fix.
+### Quick (1-line, sglang-side, immediately unblocks B200 NVFP4 MoE on current main)
 
-1. **(sglang-side, fastest)** Update `python/sglang/srt/layers/quantization/compressed_tensors/schemes/compressed_tensors_w4a4_nvfp4_moe.py:315` to pass a shape-conformant `global_scale`. The hidden states `x` is shape `[num_tokens, hidden]`, so flashinfer wants either `globalScale.shape == [1]` or `globalScale.shape == [num_tokens]`. Concretely, replace the second argument with a per-token tensor derived from `layer.w13_input_scale_quant` — for example expand to per-token using the topk routing, or pass a scalar reduction (`layer.w13_input_scale_quant.amax()` or `.amin()`) if the kernel only needs an upper-bound. The exact reduction matches whatever the pre-0.6.11 flashinfer kernel was doing internally with the per-expert tensor.
-2. **(flashinfer-side)** Restore the previous behavior in `flashinfer/data/csrc/nv_internal/tensorrt_llm/thop/fp4Quantize.cpp:64` so per-expert global_scale (numel == `num_experts`) is accepted again, or add a documented separate code path / overload for the MoE case. Filing an issue against flashinfer-ai/flashinfer that quotes PR #24452's bump-the-pin-only behavior would be appropriate.
+`python/sglang/srt/layers/quantization/fp4_utils.py:22`
 
-While the proper fix lands, a one-line revert in `python/sglang/srt/layers/quantization/fp4_utils.py:22` to force `backend="cuda"` will *not* unblock the test (the cuda backend also rejects per-expert global_scale — confirmed above). The sgl-side fix in (1) is unavoidable.
+```diff
+-    _flashinfer_fp4_quantize_backend = "cute-dsl" if is_sm100_supported() else "cuda"
++    _flashinfer_fp4_quantize_backend = "cuda"
+```
+
+Confirmed PASS by experiment E (gsm8k 0.949) on the current post-revert main. The cute-dsl backend was a performance optimization; falling back to `"cuda"` matches pre-`1d80a1a` behavior. Note: this only stays safe while main is pinned to flashinfer 0.6.8.post1 (the cuda backend in 0.6.11+ added the same strict shape check — see experiment C). If main re-bumps flashinfer to 0.6.11+ in the future, the proper fix (below) is required.
+
+### Proper fix (sglang-side)
+
+Stop passing a per-expert tensor as `global_scale` to `flashinfer.fp4_quantize` in the MoE input-quantization path. Two options:
+
+1. **Per-token expansion:** at `compressed_tensors_w4a4_nvfp4_moe.py:315`, expand `layer.w13_input_scale_quant` to a `[num_tokens]` tensor via the topk routing (each token's experts → scale → reduce to per-token). This matches what flashinfer's cute-dsl and post-0.6.10 cuda backends both want.
+2. **Different flashinfer API:** flashinfer's `trtllm_fp4_block_scale_moe` already accepts per-expert state and may have an `input_quantize` helper that doesn't need the per-token contract. Worth checking with the flashinfer team.
+
+### Flashinfer-side request
+
+The error message at `flashinfer/data/csrc/nv_internal/tensorrt_llm/thop/fp4Quantize.cpp:64` is good ("`globalScale should have shape [1] or [num_tokens]`"), but the cute-dsl branch in `flashinfer/quantization/kernels/nvfp4_quantize.py:1270` silently `reshape(1)`s the input — that's the bug that surfaces as the cryptic "shape '[1]' is invalid for input of size 128". A simple shape assertion at the top of `nvfp4_quantize_cute_dsl` with the same message would make this debuggable in 30 seconds instead of via dual-backend bisection.
+
+---
 
 ## Files of Interest
 
-- `python/sglang/srt/layers/quantization/compressed_tensors/schemes/compressed_tensors_w4a4_nvfp4_moe.py:315` — the broken call site (per-expert global_scale).
-- `python/sglang/srt/layers/quantization/fp4_utils.py:22-45` — sglang wrapper that picks `cute-dsl` vs `cuda` backend on SM100 (introduced in 1d80a1a); both backends now reject the call.
-- `flashinfer/data/csrc/nv_internal/tensorrt_llm/thop/fp4Quantize.cpp:64` — the new strict shape assertion (post-0.6.10).
-- `flashinfer/quantization/kernels/nvfp4_quantize.py:1270` — cute-dsl variant; `reshape(1)` on a 128-element tensor is the raw failure surfaced by the wrapper.
-- `python/pyproject.toml` (between 13afe8a and 34c0029) — `flashinfer_python==0.6.8.post1` → `0.6.11.post1` (via PRs #24452 then #25129).
+- `python/sglang/srt/layers/quantization/fp4_utils.py:22` — the wrapper that picks `"cute-dsl"` on SM100 (introduced by `1d80a1a`). **One-line patch site for the quick fix.**
+- `python/sglang/srt/layers/quantization/compressed_tensors/schemes/compressed_tensors_w4a4_nvfp4_moe.py:315` — the call site passing per-expert `layer.w13_input_scale_quant` as `global_scale`.
+- `flashinfer/quantization/kernels/nvfp4_quantize.py:1270` — cute-dsl kernel that crashes on per-expert `global_scale` (both 0.6.8.post1 and 0.6.11+).
+- `flashinfer/data/csrc/nv_internal/tensorrt_llm/thop/fp4Quantize.cpp:64` — strict shape check in flashinfer 0.6.11+'s cuda backend (added by the same family of MoE refactors).
+
+---
 
 ## Reproduction Recipe
 
 ```bash
-# at 13afe8a (PASS)
+# Experiment A — pre-1d80a1a; should PASS
 git checkout 13afe8a
-# venv already had flashinfer 0.6.8.post1, sglang-kernel 0.4.1.post1+cu130, torch 2.9.1+cu130
-SGLANG_IS_IN_CI=true SGLANG_ENABLE_JIT_DEEPGEMM=0 \
-  SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1 \
+# venv already had flashinfer 0.6.8.post1 + sglang-kernel 0.4.1.post1+cu130 + torch 2.9.1+cu130
+SGLANG_IS_IN_CI=true SGLANG_ENABLE_JIT_DEEPGEMM=0 SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1 \
   python -m unittest test.registered.8-gpu-models.test_mistral_large3.TestMistralLarge3
 # → ✓ Performance, Accuracy 0.951 ≥ 0.85
 
-# at 34c0029 (FAIL) — upgrade env to match the SHA's pyproject pins
-git checkout 34c0029
-uv pip install "flashinfer_python==0.6.11.post1" "flashinfer_cubin==0.6.11.post1" \
-               "torch==2.11.0" "torchaudio==2.11.0" "torchvision" \
-               --index-url https://download.pytorch.org/whl/cu130
-curl -L -o '/tmp/sgl0.4.2.post1.whl' \
+# Experiment D — post-revert HEAD; should FAIL identically to the CI run
+git checkout 0fde6153
+# need flashinfer 0.6.8.post1, sglang-kernel 0.4.2.post1+cu130, torch 2.11.0+cu130
+# (The PyPI sglang-kernel 0.4.2.post1 is built against torch 2.11.x; if your torch is 2.9.x
+# you'll see "undefined symbol _ZN3c104cuda29c10_cuda_check_implementation…jb" — upgrade torch first.)
+uv pip install "torch==2.11.0" "torchaudio==2.11.0" "torchvision" --index-url https://download.pytorch.org/whl/cu130
+curl -L -o /tmp/sgl0.4.2.post1.whl \
   'https://github.com/sgl-project/whl/releases/download/v0.4.2.post1/sglang_kernel-0.4.2.post1+cu130-cp310-abi3-manylinux2014_x86_64.whl'
 uv pip install --reinstall --no-deps /tmp/sgl0.4.2.post1.whl
-SGLANG_IS_IN_CI=true SGLANG_ENABLE_JIT_DEEPGEMM=0 \
-  SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1 \
+# flashinfer is already at 0.6.8.post1 on this SHA's pyproject
+SGLANG_IS_IN_CI=true SGLANG_ENABLE_JIT_DEEPGEMM=0 SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1 \
   python -m unittest test.registered.8-gpu-models.test_mistral_large3.TestMistralLarge3
 # → RuntimeError: shape '[1]' is invalid for input of size 128
+
+# Experiment E — same as D but with the one-line patch; should PASS
+git checkout 0fde6153
+sed -i 's|_flashinfer_fp4_quantize_backend = "cute-dsl" if is_sm100_supported() else "cuda"|_flashinfer_fp4_quantize_backend = "cuda"|' \
+  python/sglang/srt/layers/quantization/fp4_utils.py
+SGLANG_IS_IN_CI=true SGLANG_ENABLE_JIT_DEEPGEMM=0 SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1 \
+  python -m unittest test.registered.8-gpu-models.test_mistral_large3.TestMistralLarge3
+# → ✓ Performance, Accuracy 0.949 ≥ 0.85
 ```
 
-Note: the local `pyproject.toml` at 34c0029 dropped the `[[tool.uv.index]] sglang-kernel-cu130` index because PyPI now hosts sglang-kernel — but the PyPI wheel is built against torch 2.11.x (uses `c10::cuda::c10_cuda_check_implementation` with the `unsigned int` mangled signature), so torch must be upgraded to 2.11.0+cu130 before `sglang-kernel==0.4.2.post1` will load on a Blackwell host. The Dockerfile for `CUDA 13.0.1` does this implicitly; a user-level `uv sync` from the lockfile-less 34c0029 needs the manual install order above.
-
-## Timeline (compute summary)
-
-- 02:35 UTC — kicked off baseline run at 13afe8a; hit `--speculative-draft-model-path` context-length ValueError on TP8+MTP because `SGLANG_IS_IN_CI` was not set.
-- 02:39 UTC — restart with `SGLANG_IS_IN_CI=true`; NVFP4 cache had 8 incomplete blob shards; serial CI download was watchdog-slow.
-- 02:57 UTC — parallel `snapshot_download(max_workers=8)` finished the missing NVFP4 shards (3:37 wall-clock).
-- 02:57–03:06 UTC — 13afe8a NVFP4 PASS (perf + gsm8k 0.951, 8m55s).
-- 03:13 UTC — `git checkout 34c0029`; `uv pip install` for flashinfer/sgl-kernel/torch upgrades; sgl-kernel PyPI wheel did **not** load against torch 2.9.1 (`undefined symbol _ZN3c104cuda29c10_cuda_check_implementation…jb`), so torch was upgraded to 2.11.0+cu130.
-- 03:25 UTC — first FAIL on 34c0029 with cute-dsl backend (`reshape '[1]' is invalid for input of size 128`).
-- 03:35 UTC — confirmed the same failure with `backend="cuda"` patch — flashinfer's cuda kernel rejects per-expert globalScale directly. Both paths converge to the same root cause in `compressed_tensors_w4a4_nvfp4_moe.py:315`.
+---
 
 ## Open Items / Not Investigated
 
-- **TP8 (basic) and TP8+MTP variants.** The user's modified test file was further reduced to NVFP4-only to keep the bisection short. The TP8 basic variant has its own performance-results JSON from an earlier session on this machine and appears to be a separate signal; TP8+MTP needs `SGLANG_IS_IN_CI=true` + EAGLE draft weights and was not re-executed at 34c0029. If the CI job fails because of TP8 or TP8+MTP rather than NVFP4, the failure signature in those variants needs a separate look — but the NVFP4 variant alone is enough to make the partition fail with `exit code 255` (matching CI).
-- **Whether per-token expansion of `layer.w13_input_scale_quant` matches the kernel's pre-0.6.11 semantics.** The pre-0.6.11 flashinfer kernel must have either ignored or broadcast the per-expert tensor; identifying the exact original behavior is a flashinfer-history task and the right person to make the call is whoever shepherded PR #24452.
+- **TP8 basic and TP8+MTP variants.** TP8 basic shows up in `metrics-8gpu-b200-partition-3.json` for runs 607–613 with full benchmark rows, so it appears to be unaffected by this regression. TP8+MTP rows are absent from every run we checked — it may have a separate issue (it needs `mistralai/Mistral-Large-3-675B-Instruct-2512-Eagle` weights and `SGLANG_ENABLE_SPEC_V2=1` at 13afe8a / default at later SHAs); investigating it was out of scope for the NVFP4 reproduction loop.
+- **Whether the `"cuda"` quick-fix performance is acceptable.** `1d80a1a` made the cute-dsl routing the default specifically because it was faster on SM100. The proper fix (per-token expansion of `global_scale`) keeps the cute-dsl path *and* compatibility; the one-line patch above is correct but trades performance for correctness.
+- **Why CI didn't catch this in PR #23745's own pre-merge CI.** PR #23745 may not run on B200, or its NVFP4 path was exercised against a model with `num_experts == num_tokens` such that the shape mismatch was hidden. Worth a separate pass.
+
+---
 
 ## TL;DR
 
-- CI partition `nightly-test-general-8-gpu-b200 (3)` fails on the NVFP4 variant of `test_mistral_large3` because `compressed_tensors_w4a4_nvfp4_moe.apply_weights` passes a per-expert `globalScale` to `flashinfer.fp4_quantize`, which flashinfer ≥ 0.6.11 rejects.
-- The introducing commit is `d5f3254` (PR #24452, "Flashinfer 0.6.8post1 → 0.6.11"). The previous session's pointers (`51a9403`, `28758d3`) are *not* the root cause.
-- Fix: pass a scalar or per-token tensor at `compressed_tensors_w4a4_nvfp4_moe.py:315` (and/or open a flashinfer issue for the silently-broken globalScale contract).
+- CI partition `nightly-test-general-8-gpu-b200 (3)` fails on the NVFP4 variant of `test_mistral_large3` because **`1d80a1a` (PR #23745, "Use Cute-DSL NVFP4 quantization kernels") routes B200's `fp4_quantize` through flashinfer's cute-dsl kernel, which assumes scalar `global_scale` and crashes on the MoE call site's per-expert `[num_experts]` tensor**.
+- **The previous session's pointers (`51a9403`, `28758d3`) are wrong.** My earlier `d5f3254` hypothesis is also wrong.
+- **PR #25310's revert of the flashinfer bump does NOT fix this** — confirmed by reproducing the identical failure at the post-revert HEAD (`0fde6153`).
+- **One-line fix:** flip `fp4_utils.py:22` to `_flashinfer_fp4_quantize_backend = "cuda"`. Verified to pass gsm8k (0.949 ≥ 0.85) at the post-revert HEAD on B200.
