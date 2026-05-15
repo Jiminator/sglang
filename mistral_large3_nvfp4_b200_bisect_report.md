@@ -4,7 +4,8 @@
 **Date:** 2026-05-15
 **Repo:** `sgl-project/sglang`
 **Reporting run:** https://github.com/sgl-project/sglang/actions/runs/25835354140/job/75909128362
-**Status:** Reproduced; root cause isolated and confirmed by an A/B/C/D experiment matrix.
+**Related report:** see [`mistral_large3_tp8_mtp_b200_bisect_report.md`](mistral_large3_tp8_mtp_b200_bisect_report.md) for the **TP8+MTP** variant regression in the same CI partition — *different* root cause (PR #24436, `_resolve_speculative_algorithm_alias`), *different* fix, **not addressed by PR #25407**.
+**Status:** Reproduced; root cause isolated and confirmed by an A/B/C/D experiment matrix. PR #25407 ("Fix Mistral Large 3 nightly test") implements the proper call-site fix and is verified to make this variant pass — see "PR #25407 verification" below.
 
 > **Correction note:** An earlier draft of this report (commit `b0591ab`) blamed the flashinfer dependency bump `d5f3254` (PR #24452). That conclusion was wrong. `d5f3254` *aggravates* the failure but is **not** the introducing commit, and the revert in **PR #25310 (`22dfcda`) does not fix the Mistral NVFP4 test** — verified by running the same test locally at the post-revert SHA `0fde6153` and getting the identical traceback. The actual culprit is `1d80a1a` (PR #23745, "Use Cute-DSL NVFP4 quantization kernels"), which wraps `flashinfer.fp4_quantize` and forces `backend="cute-dsl"` on SM100/B200. The cute-dsl backend has a hard `reshape(1)` on `global_scale` that is incompatible with the per-expert `[num_experts]` scale the MoE call site passes; the same kernel ships in both flashinfer 0.6.8.post1 *and* 0.6.11+, so the flashinfer version is irrelevant to this failure. The corrected analysis is below.
 
@@ -191,8 +192,8 @@ SGLANG_IS_IN_CI=true SGLANG_ENABLE_JIT_DEEPGEMM=0 SGLANG_ALLOW_OVERWRITE_LONGER_
 
 ## Open Items / Not Investigated
 
-- **TP8 basic and TP8+MTP variants.** TP8 basic shows up in `metrics-8gpu-b200-partition-3.json` for runs 607–613 with full benchmark rows, so it appears to be unaffected by this regression. TP8+MTP rows are absent from every run we checked — it may have a separate issue (it needs `mistralai/Mistral-Large-3-675B-Instruct-2512-Eagle` weights and `SGLANG_ENABLE_SPEC_V2=1` at 13afe8a / default at later SHAs); investigating it was out of scope for the NVFP4 reproduction loop.
-- **Whether the `"cuda"` quick-fix performance is acceptable.** `1d80a1a` made the cute-dsl routing the default specifically because it was faster on SM100. The proper fix (per-token expansion of `global_scale`) keeps the cute-dsl path *and* compatibility; the one-line patch above is correct but trades performance for correctness.
+- **TP8+MTP variant of the same test.** TP8+MTP is *also* red on the same partition for the same time window, but for a completely unrelated reason (PR #24436's `_resolve_speculative_algorithm_alias` crashes on Mistral-native-format drafts). It is documented separately in [`mistral_large3_tp8_mtp_b200_bisect_report.md`](mistral_large3_tp8_mtp_b200_bisect_report.md) and is **not fixed by PR #25407**.
+- **Whether the `"cuda"` quick-fix performance is acceptable.** `1d80a1a` made the cute-dsl routing the default specifically because it was faster on SM100. The proper fix (PR #25407's per-token/scalar collapse of `global_scale`) keeps the cute-dsl path *and* compatibility; the one-line `cute-dsl → cuda` patch was correct only on flashinfer 0.6.8.post1 and traded performance for correctness.
 - **Why CI didn't catch this in PR #23745's own pre-merge CI.** PR #23745 may not run on B200, or its NVFP4 path was exercised against a model with `num_experts == num_tokens` such that the shape mismatch was hidden. Worth a separate pass.
 
 ---
@@ -202,7 +203,8 @@ SGLANG_IS_IN_CI=true SGLANG_ENABLE_JIT_DEEPGEMM=0 SGLANG_ALLOW_OVERWRITE_LONGER_
 - CI partition `nightly-test-general-8-gpu-b200 (3)` fails on the NVFP4 variant of `test_mistral_large3` because **`1d80a1a` (PR #23745, "Use Cute-DSL NVFP4 quantization kernels") routes B200's `fp4_quantize` through flashinfer's cute-dsl kernel, which assumes scalar `global_scale` and crashes on the MoE call site's per-expert `[num_experts]` tensor**.
 - **The previous session's pointers (`51a9403`, `28758d3`) are wrong.** My earlier `d5f3254` hypothesis is also wrong.
 - **PR #25310's revert of the flashinfer bump does NOT fix this** — confirmed by reproducing the identical failure at the post-revert HEAD (`0fde6153`).
-- **One-line fix:** flip `fp4_utils.py:22` to `_flashinfer_fp4_quantize_backend = "cuda"`. Verified to pass gsm8k (0.949 ≥ 0.85) at the post-revert HEAD on B200.
+- **PR #25407 ("Fix Mistral Large 3 nightly test") is the correct fix** — verified to pass gsm8k 0.957 on the full 3-variant test on B200 with flashinfer 0.6.11.post1. The diff slices `layer.w13_input_scale_quant[:1]` at the call site so the per-expert tensor becomes a length-1 tensor that satisfies the strict `globalScale.numel() == 1` contract on both cute-dsl and cuda backends.
+- The **TP8+MTP** variant in the same partition fails for an unrelated reason (PR #24436); see [`mistral_large3_tp8_mtp_b200_bisect_report.md`](mistral_large3_tp8_mtp_b200_bisect_report.md). PR #25407 does not address it.
 
 ---
 
@@ -218,78 +220,32 @@ After the corrected NVFP4 analysis above, two additional questions were investig
 |---|---|---|---|---|
 | **G** | `0c19540` (latest `main` at time of test) | `"cuda"` (one-line patch) | **0.6.11.post1** | **FAIL** — `globalScale should have shape [1] or [num_tokens]` (identical to experiment C) |
 
-So the one-line patch only restores the green state while `main` is pinned to flashinfer `0.6.8.post1`; once flashinfer is `0.6.11.post1` again (which it is today), a proper call-site fix is required: collapse `layer.w13_input_scale_quant` (per-expert, shape `[num_experts]`) to either scalar `[1]` or per-token `[num_tokens]` in `compressed_tensors_w4a4_nvfp4_moe.py:315` before passing as `global_scale`.
+So the one-line patch only restores the green state while `main` is pinned to flashinfer `0.6.8.post1`; once flashinfer is `0.6.11.post1` again (which it is today), a proper call-site fix is required: collapse `layer.w13_input_scale_quant` (per-expert, shape `[num_experts]`) to either scalar `[1]` or per-token `[num_tokens]` in `compressed_tensors_w4a4_nvfp4_moe.py:315` before passing as `global_scale` — which is exactly what PR #25407 does (see next section).
 
-The full 3-variant run on `0c19540` with the one-line patch produced: TP8 ✓ (gsm8k 0.957), TP8+MTP ✗ (separate bug, see below), NVFP4 ✗ (above). Total wall time 33m 32s.
+### 2. PR #25407 verification
 
-### 2. What's wrong with the TP8+MTP variant?
+PR **#25407** ("Fix Mistral Large 3 nightly test", head `e3fb4ee`, open at time of writing) is the proper call-site fix. The diff is one hunk:
 
-This is a **separate pre-existing regression**, unrelated to the cute-dsl issue. TP8+MTP rows are missing from `metrics-8gpu-b200-partition-3.json` in every scheduled `nightly-test-nvidia.yml` run from #608 onward — the variant has been failing in CI for the same time window as NVFP4, but for a different reason.
+```diff
+-            # Quantize input hidden states using fp4_quantize
++            # global_scale must be shape [1] (strict in cute-dsl backend).
+             hs_fp4_bytes, hs_sf_bytes = fp4_quantize(
+                 x,
+-                layer.w13_input_scale_quant,
++                layer.w13_input_scale_quant[:1],
+                 self.group_size,  # sf_vec_size
+                 False,  # use_ue8m0
+                 False,  # is_sf_swizzled_layout
+```
 
-**Where the failure does and doesn't show up in CI:**
+i.e. it slices the per-expert tensor to a length-1 tensor before passing it as `global_scale`, satisfying flashinfer's `numel() == 1` shape contract on every backend (cute-dsl *and* post-0.6.10 cuda).
 
-| CI surface | TP8+MTP failure visible? |
+Verified locally on 8× B200 with `flashinfer==0.6.11.post1`, `sglang-kernel==0.4.2.post2+cu130`, `torch==2.11.0+cu130` against the full 3-variant test:
+
+| Variant on PR #25407 (`e3fb4ee`) | Outcome |
 |---|---|
-| Per-partition metrics artifact (`metrics-8gpu-b200-partition-3.json`) | No — only contains successful benchmark rows; pre-load failures never produce a row |
-| Raw step log (`Run common 8-GPU model tests`) | **Yes** — full traceback + variant-by-variant summary at the end |
-| Run-page annotations | Partially — only shows `exit code 1` / `exit code 255`; doesn't name the variant |
+| TP8 | ✓ PASS — gsm8k 0.953 |
+| TP8+MTP | ✗ STILL FAIL — *unrelated*, see [`mistral_large3_tp8_mtp_b200_bisect_report.md`](mistral_large3_tp8_mtp_b200_bisect_report.md) |
+| **NVFP4** | **✓ PASS — gsm8k 0.957** (this regression's fix) |
 
-From run 610's job log (`/repos/sgl-project/sglang/actions/jobs/75909128362/logs`):
-
-```
-2026-05-14T07:22:10  ...in _resolve_speculative_algorithm_alias
-2026-05-14T07:22:10  ValueError: Unrecognized model in mistralai/Mistral-Large-3-675B-Instruct-2512-Eagle.
-                     Should have a `model_type` key in its config.json.
-2026-05-14T07:38:25  Variant: TP8+MTP
-2026-05-14T07:38:25  Model 2 (mistralai/Mistral-Large-3-675B-Instruct-2512 [TP8+MTP]):
-                     performance, accuracy - Performance test exception ...; Accuracy test exception ...
-```
-
-So the regression has been visible in the raw nightly logs since 2026-05-12 (run 608, the first scheduled run after `d2c1034` merged on May 7) — it just doesn't surface in the metrics dashboard.
-
-**Failure signature:**
-
-```
-File ".../sglang/srt/server_args.py", line 3536, in _handle_speculative_decoding
-    self.speculative_algorithm = _resolve_speculative_algorithm_alias(...)
-File ".../sglang/srt/server_args.py", line 329, in _resolve_speculative_algorithm_alias
-    cfg = AutoConfig.from_pretrained(
-        speculative_draft_model_path, trust_remote_code=trust_remote_code
-    )
-File ".../transformers/models/auto/configuration_auto.py", line 419, in from_pretrained
-    raise ValueError(...)
-ValueError: Unrecognized model in mistralai/Mistral-Large-3-675B-Instruct-2512-Eagle.
-Should have a `model_type` key in its config.json.
-```
-
-The Eagle draft model is a Mistral-native checkpoint with `params.json` (no HF `config.json`), so `AutoConfig.from_pretrained` can't parse it. The helper that performs this call was added in **`d2c1034`** ("[Gemma 4] Adding MTP support", PR #24436, 2026-05-07) — its only purpose is to detect a Gemma4 draft and silently promote `NEXTN`/`EAGLE` to `FROZEN_KV_MTP`. The call is unconditional: it fires whenever `--speculative-draft-model-path` is set, even when `--speculative-algorithm` is already `EAGLE` and the user has no interest in the Gemma4 alias.
-
-**Empirical bisect (single-step):**
-
-| SHA | `_resolve_speculative_algorithm_alias` defined? | Result |
-|---|---|---|
-| **`d2c1034`** ([Gemma 4] Adding MTP support, PR #24436) | **yes** | **FAIL** — Eagle config ValueError above, total wall time 60.7s (crash before model load) |
-| **`f1395af`** (parent, "fix(openai): map reasoning.enabled to thinking AND enable_thinking") | **no** | **PASS** — gsm8k 0.949 |
-
-Both runs used: NVFP4-only test reduced to TP8+MTP, flashinfer `0.6.8.post1`, `sglang-kernel==0.4.2.post1+cu130`, `torch==2.11.0+cu130`, `SGLANG_IS_IN_CI=true`, `SGLANG_ENABLE_JIT_DEEPGEMM=0`, `SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1`.
-
-**Minimal fix candidates** for `_resolve_speculative_algorithm_alias` at `python/sglang/srt/server_args.py:318-342`:
-
-1. **Wrap the `AutoConfig.from_pretrained` call in `try/except Exception`** and treat the failure as "not Gemma4 draft" (`is_gemma4_draft = False`). This is the minimal-blast-radius patch — non-Gemma4 drafts get the original behavior, Gemma4 drafts still get auto-promoted to `FROZEN_KV_MTP`.
-2. **Short-circuit** when `speculative_algorithm not in (None, "NEXTN", "EAGLE", "EAGLE3")` — the only purpose of the lookup is to convert those three algorithm names; if the user already specified something else (or explicit `EAGLE` without Gemma4 ambitions), there's no need to read the draft config at all.
-3. **Detect Mistral native format first** (`params.json` exists, no `config.json`) and skip the Gemma4 check entirely.
-
-Option 1 is the safest and a one-liner; option 2 is closest to "intent" (the helper exists to handle three algorithm names, so guard on those names).
-
-### Combined status of the 3 variants on latest `main` (`0c19540`)
-
-| Variant | Status | Cause |
-|---|---|---|
-| TP8 basic | **PASS** (gsm8k 0.957) | n/a |
-| TP8+MTP | **FAIL** | `d2c1034` (PR #24436) added `AutoConfig.from_pretrained` on the draft path; crashes on Mistral native format drafts |
-| NVFP4 | **FAIL** | `1d80a1a` (PR #23745) routed `fp4_quantize` to flashinfer's cute-dsl kernel which can't handle per-expert `global_scale`; PR #25335's re-bump to flashinfer 0.6.11.post1 makes the cuda fallback strict too |
-
-Two independent regressions in the same partition. To get the nightly green:
-
-- **NVFP4:** patch the call site in `compressed_tensors_w4a4_nvfp4_moe.py:315` to collapse `layer.w13_input_scale_quant` to scalar or per-token before passing as `global_scale`. (One-line `cute-dsl → cuda` flip in `fp4_utils.py` no longer enough on flashinfer 0.6.11.post1.)
-- **TP8+MTP:** wrap `AutoConfig.from_pretrained` in `_resolve_speculative_algorithm_alias` with a try/except, or short-circuit when the algorithm is already explicit.
+Total wall time 1574s (≈ 26 min). PR #25407 lands the green light for the NVFP4 variant of this test.
