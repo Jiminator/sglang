@@ -224,7 +224,28 @@ The full 3-variant run on `0c19540` with the one-line patch produced: TP8 ✓ (g
 
 ### 2. What's wrong with the TP8+MTP variant?
 
-This is a **separate pre-existing regression**, unrelated to the cute-dsl issue. TP8+MTP rows are missing from `metrics-8gpu-b200-partition-3.json` in every scheduled `nightly-test-nvidia.yml` run from #608 onward — the variant has been failing in CI for the same time window as NVFP4, but for a different reason that doesn't surface in the metrics aggregation because the failure happens during server-arg parsing, before any benchmark runs.
+This is a **separate pre-existing regression**, unrelated to the cute-dsl issue. TP8+MTP rows are missing from `metrics-8gpu-b200-partition-3.json` in every scheduled `nightly-test-nvidia.yml` run from #608 onward — the variant has been failing in CI for the same time window as NVFP4, but for a different reason.
+
+**Where the failure does and doesn't show up in CI:**
+
+| CI surface | TP8+MTP failure visible? |
+|---|---|
+| Per-partition metrics artifact (`metrics-8gpu-b200-partition-3.json`) | No — only contains successful benchmark rows; pre-load failures never produce a row |
+| Raw step log (`Run common 8-GPU model tests`) | **Yes** — full traceback + variant-by-variant summary at the end |
+| Run-page annotations | Partially — only shows `exit code 1` / `exit code 255`; doesn't name the variant |
+
+From run 610's job log (`/repos/sgl-project/sglang/actions/jobs/75909128362/logs`):
+
+```
+2026-05-14T07:22:10  ...in _resolve_speculative_algorithm_alias
+2026-05-14T07:22:10  ValueError: Unrecognized model in mistralai/Mistral-Large-3-675B-Instruct-2512-Eagle.
+                     Should have a `model_type` key in its config.json.
+2026-05-14T07:38:25  Variant: TP8+MTP
+2026-05-14T07:38:25  Model 2 (mistralai/Mistral-Large-3-675B-Instruct-2512 [TP8+MTP]):
+                     performance, accuracy - Performance test exception ...; Accuracy test exception ...
+```
+
+So the regression has been visible in the raw nightly logs since 2026-05-12 (run 608, the first scheduled run after `d2c1034` merged on May 7) — it just doesn't surface in the metrics dashboard.
 
 **Failure signature:**
 
