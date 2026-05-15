@@ -203,3 +203,72 @@ SGLANG_IS_IN_CI=true SGLANG_ENABLE_JIT_DEEPGEMM=0 SGLANG_ALLOW_OVERWRITE_LONGER_
 - **The previous session's pointers (`51a9403`, `28758d3`) are wrong.** My earlier `d5f3254` hypothesis is also wrong.
 - **PR #25310's revert of the flashinfer bump does NOT fix this** — confirmed by reproducing the identical failure at the post-revert HEAD (`0fde6153`).
 - **One-line fix:** flip `fp4_utils.py:22` to `_flashinfer_fp4_quantize_backend = "cuda"`. Verified to pass gsm8k (0.949 ≥ 0.85) at the post-revert HEAD on B200.
+
+---
+
+## Follow-up note (2026-05-15, later in the same day)
+
+After the corrected NVFP4 analysis above, two additional questions were investigated by request.
+
+### 1. Does the one-line `cute-dsl → cuda` fix still hold on the *latest* `main`?
+
+**No** — `main` has since moved past PR #25310's revert. PR #25335 ("Fix gpt oss triton kernels and upgrade flashinfer back to 0.6.11.post1", merged `0c19540`) **re-bumped flashinfer to 0.6.11.post1**, which carries a stricter cuda-side check (the `globalScale.numel() == 1 || numel == num_tokens` assertion at `fp4Quantize.cpp:64`, same one observed in experiment C). Reproduced locally:
+
+| # | sglang SHA | `fp4_utils.py:22` backend | flashinfer | NVFP4 Outcome |
+|---|---|---|---|---|
+| **G** | `0c19540` (latest `main` at time of test) | `"cuda"` (one-line patch) | **0.6.11.post1** | **FAIL** — `globalScale should have shape [1] or [num_tokens]` (identical to experiment C) |
+
+So the one-line patch only restores the green state while `main` is pinned to flashinfer `0.6.8.post1`; once flashinfer is `0.6.11.post1` again (which it is today), a proper call-site fix is required: collapse `layer.w13_input_scale_quant` (per-expert, shape `[num_experts]`) to either scalar `[1]` or per-token `[num_tokens]` in `compressed_tensors_w4a4_nvfp4_moe.py:315` before passing as `global_scale`.
+
+The full 3-variant run on `0c19540` with the one-line patch produced: TP8 ✓ (gsm8k 0.957), TP8+MTP ✗ (separate bug, see below), NVFP4 ✗ (above). Total wall time 33m 32s.
+
+### 2. What's wrong with the TP8+MTP variant?
+
+This is a **separate pre-existing regression**, unrelated to the cute-dsl issue. TP8+MTP rows are missing from `metrics-8gpu-b200-partition-3.json` in every scheduled `nightly-test-nvidia.yml` run from #608 onward — the variant has been failing in CI for the same time window as NVFP4, but for a different reason that doesn't surface in the metrics aggregation because the failure happens during server-arg parsing, before any benchmark runs.
+
+**Failure signature:**
+
+```
+File ".../sglang/srt/server_args.py", line 3536, in _handle_speculative_decoding
+    self.speculative_algorithm = _resolve_speculative_algorithm_alias(...)
+File ".../sglang/srt/server_args.py", line 329, in _resolve_speculative_algorithm_alias
+    cfg = AutoConfig.from_pretrained(
+        speculative_draft_model_path, trust_remote_code=trust_remote_code
+    )
+File ".../transformers/models/auto/configuration_auto.py", line 419, in from_pretrained
+    raise ValueError(...)
+ValueError: Unrecognized model in mistralai/Mistral-Large-3-675B-Instruct-2512-Eagle.
+Should have a `model_type` key in its config.json.
+```
+
+The Eagle draft model is a Mistral-native checkpoint with `params.json` (no HF `config.json`), so `AutoConfig.from_pretrained` can't parse it. The helper that performs this call was added in **`d2c1034`** ("[Gemma 4] Adding MTP support", PR #24436, 2026-05-07) — its only purpose is to detect a Gemma4 draft and silently promote `NEXTN`/`EAGLE` to `FROZEN_KV_MTP`. The call is unconditional: it fires whenever `--speculative-draft-model-path` is set, even when `--speculative-algorithm` is already `EAGLE` and the user has no interest in the Gemma4 alias.
+
+**Empirical bisect (single-step):**
+
+| SHA | `_resolve_speculative_algorithm_alias` defined? | Result |
+|---|---|---|
+| **`d2c1034`** ([Gemma 4] Adding MTP support, PR #24436) | **yes** | **FAIL** — Eagle config ValueError above, total wall time 60.7s (crash before model load) |
+| **`f1395af`** (parent, "fix(openai): map reasoning.enabled to thinking AND enable_thinking") | **no** | **PASS** — gsm8k 0.949 |
+
+Both runs used: NVFP4-only test reduced to TP8+MTP, flashinfer `0.6.8.post1`, `sglang-kernel==0.4.2.post1+cu130`, `torch==2.11.0+cu130`, `SGLANG_IS_IN_CI=true`, `SGLANG_ENABLE_JIT_DEEPGEMM=0`, `SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1`.
+
+**Minimal fix candidates** for `_resolve_speculative_algorithm_alias` at `python/sglang/srt/server_args.py:318-342`:
+
+1. **Wrap the `AutoConfig.from_pretrained` call in `try/except Exception`** and treat the failure as "not Gemma4 draft" (`is_gemma4_draft = False`). This is the minimal-blast-radius patch — non-Gemma4 drafts get the original behavior, Gemma4 drafts still get auto-promoted to `FROZEN_KV_MTP`.
+2. **Short-circuit** when `speculative_algorithm not in (None, "NEXTN", "EAGLE", "EAGLE3")` — the only purpose of the lookup is to convert those three algorithm names; if the user already specified something else (or explicit `EAGLE` without Gemma4 ambitions), there's no need to read the draft config at all.
+3. **Detect Mistral native format first** (`params.json` exists, no `config.json`) and skip the Gemma4 check entirely.
+
+Option 1 is the safest and a one-liner; option 2 is closest to "intent" (the helper exists to handle three algorithm names, so guard on those names).
+
+### Combined status of the 3 variants on latest `main` (`0c19540`)
+
+| Variant | Status | Cause |
+|---|---|---|
+| TP8 basic | **PASS** (gsm8k 0.957) | n/a |
+| TP8+MTP | **FAIL** | `d2c1034` (PR #24436) added `AutoConfig.from_pretrained` on the draft path; crashes on Mistral native format drafts |
+| NVFP4 | **FAIL** | `1d80a1a` (PR #23745) routed `fp4_quantize` to flashinfer's cute-dsl kernel which can't handle per-expert `global_scale`; PR #25335's re-bump to flashinfer 0.6.11.post1 makes the cuda fallback strict too |
+
+Two independent regressions in the same partition. To get the nightly green:
+
+- **NVFP4:** patch the call site in `compressed_tensors_w4a4_nvfp4_moe.py:315` to collapse `layer.w13_input_scale_quant` to scalar or per-token before passing as `global_scale`. (One-line `cute-dsl → cuda` flip in `fp4_utils.py` no longer enough on flashinfer 0.6.11.post1.)
+- **TP8+MTP:** wrap `AutoConfig.from_pretrained` in `_resolve_speculative_algorithm_alias` with a try/except, or short-circuit when the algorithm is already explicit.
