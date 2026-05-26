@@ -1,0 +1,42 @@
+DSv3.2 SLO loop — final state of experiments
+
+Branch: sglang main @ b13d3d18c (post-switch from dev/double-sparsity-standalone)
+Hardware: 2 nodes × 8× H200 (verified P0, no throttle, 0 ECC errors)
+Model: deepseek-ai/DeepSeek-V3.2 (fp8 weights, 643GB)
+Workload: gsp num_groups=1, prompts=320, sys=2253, q=1843, out=512, concurrency=64
+SLO: P99_TTFT<22s AND (1000/mean_TPOT >= 30 OR output_tok_s/concurrency >= 30)
+
+| # | config                                                | mean TPOT | 1000/TPOT | output/64 | P99 TTFT | SLO |
+|---|-------------------------------------------------------|-----------|-----------|-----------|----------|-----|
+| 1 | dev cache_aware EP=0 (BAD ROUTING; 187:1 imbalance)   | 51.3      | 19.5      | 10.8      | 37.3 s   | FAIL |
+| 2 | dev RR EP=0                                           | 75.1      | 13.3      | 11.0      | 28.8 s   | FAIL |
+| 3 | dev RR EP=8                                           | 69.4      | 14.4      | 12.1      | 21.7 s   | FAIL |
+| 4 | dev RR EP=8 mixed-chunk lpm mem=0.88 (BEST DEV)       | 56.0      | 17.9      | 14.7      | 19.3 s   | FAIL |
+| 5 | +piecewise-cuda-graph                                 | 56.7      | 17.6      | 14.6      | 20.3 s   | FAIL |
+| 6 | +MTP(2,1,3) EAGLE                                     | 91.4      | 10.9      | 9.3       | 22.1 s   | FAIL |
+| 7 | dev simple (bf16, no tune)                            | 68.7      | 14.6      | 12.2      | 24.3 s   | FAIL |
+| 8 | main simple fp8                                       | 56.4      | 17.7      | 14.4      | 19.2 s   | FAIL |
+| 9 | main +EP=8                                            | 54.9      | 18.2      | 14.7      | 20.1 s   | FAIL |
+|10 | main +EP=8 +MTP(3,1,4)                                | 95.0      | 10.5      | 9.3       | 20.7 s   | FAIL |
+|11 | main best (=#4 on main, BEST OVERALL)                 | **49.9**  | **20.0**  | **15.9**  | 20.3 s   | FAIL — decode |
+|12 | +NVLS                                                 | 56.3      | 17.8      | 14.6      | 20.0 s   | FAIL — worse |
+|13 | TP=8 only (no DP-attention)                           | 51.7      | 19.4      | 10.8      | 34.0 s   | FAIL — TTFT |
+
+Hardware sanity: all 16 H200 P0 max boost (SM 1980 MHz, HBM 3201 MHz), 0 ECC errors, no throttle. Hardware is healthy.
+
+Decode profile (run #11, best config):
+  - NCCL collectives:        17.4% (ReduceScatter 12.5 + AllGather 4.9)
+  - FP8 GEMMs (DSA path):    30.6% across 4 shape variants
+  - Fused MoE kernel:        16.8%
+  - FP8 per-token quant:     2.9% (2135 launches)
+  - MLA attention:           5.3%
+  - MoE routing+align:       2.6%
+  - Fused residual+RMSNorm:  1.7%
+  - Misc:                   ~22.7%
+
+Theoretical decode ceiling (mem-BW bound, fp8 weights, MoE 37B active):
+  8× H200 = 38.4 TB/s / 37 GB per token = ~1038 tok/s per replica
+  2 replicas / 64 concurrency = **~32 tok/s/req theoretical max**
+  We hit 20 tok/s = **62% of theoretical**.
+
+Remaining gap to SLO (20 → 30 tok/s) requires breaking past the steady-state ceiling, not just removing tail stalls.

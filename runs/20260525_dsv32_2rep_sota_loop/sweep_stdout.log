@@ -1,0 +1,59 @@
+[06:15:45] ===== SWEEP START Tue May 26 06:15:45 UTC 2026 =====
+[06:15:45] Base config: run #11 = mixed-chunk + lpm + mem 0.88 + ep=8 + tp=8 + dp-attention dp=8 + fp8 KV + page 64
+[06:15:45] 
+[06:15:45] === TEST: torchcompile ===
+[06:15:51]   launching tag=torchcompile flags=--enable-torch-compile --torch-compile-max-bs 32
+[06:19:28]   CRASH_N0 detected at 195s
+[06:19:28]   SKIP (load failed/timeout)
+[06:19:28] === TEST: ngram ===
+[06:19:33]   launching tag=ngram flags=--speculative-algorithm NGRAM --speculative-num-draft-tokens 4
+[06:20:29]   CRASH_N0 detected at 45s
+[06:20:29]   SKIP (load failed/timeout)
+[06:20:29] === TEST: mscclpp ===
+[06:20:35]   launching tag=mscclpp flags=--enable-mscclpp
+[06:23:57]   BOTH_READY in 180s
+    run_benchmark(args)
+  File "/sgl-workspace/sglang/python/sglang/bench_serving.py", line 1905, in run_benchmark
+    return asyncio.run(
+           ^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/runners.py", line 194, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/base_events.py", line 687, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/sgl-workspace/sglang/python/sglang/bench_serving.py", line 1310, in benchmark
+    raise ValueError(
+ValueError: Warmup failed - Please make sure benchmark arguments are correctly specified. Error: Service Unavailable: {"error":{"type":"Service Unavailable","code":"no_available_workers","message":"No available workers (all circuits open or unhealthy)"}}
+benchmark_args=Namespace(backend='sglang', base_url=None, host='0.0.0.0', port=30000, ready_check_timeout_sec=60, dataset_name='generated-shared-prefix', dataset_path='', model=None, served_model_name=None, tokenizer=None, num_prompts=320, sharegpt_output_len=None, sharegpt_context_len=None, random_input_len=1024, random_output_len=1024, random_range_ratio=0.0, image_count=1, image_resolution='1080p', random_image_count=False, image_format='jpeg', image_content='random', request_rate=inf, use_trace_timestamps=False, max_concurrency=64, output_file='sw_mscclpp_gsp_isl4096_osl512_c64.jsonl', output_details=True, print_requests=False, disable_tqdm=False, disable_stream=False, return_logprob=False, top_logprobs_num=0, token_ids_logprob=None, logprob_start_len=-1, return_routed_experts=False, seed=31234, disable_ignore_eos=False, extra_request_body=None, apply_chat_template=False, profile=False, plot_throughput=False, profile_activities=['CPU', 'GPU'], profile_start_step=None, profile_steps=None, profile_num_steps=None, profile_by_stage=False, profile_stages=None, profile_output_dir=None, profile_prefix=None, lora_name=None, lora_request_distribution='uniform', lora_zipf_alpha=1.5, prompt_suffix='', pd_separated=False, profile_prefill_url=None, profile_decode_url=None, flush_cache=False, warmup_requests=1, tokenize_prompt=False, gsp_num_groups=1, gsp_prompts_per_group=320, gsp_system_prompt_len=2253, gsp_question_len=1843, gsp_output_len=512, gsp_range_ratio=1.0, gsp_fast_prepare=False, gsp_send_routing_key=False, gsp_num_turns=1, gsp_ordered=False, mooncake_slowdown_factor=1.0, mooncake_num_rounds=1, mooncake_workload='conversation', fake_prefill=False, tag=None, header=None)
+Waiting up to 60s for http://0.0.0.0:30000/v1/models to become ready...
+Server ready in 0.0s.
+
+WARNING It is recommended to use the `Chat` or `Instruct` model for benchmarking.
+Because when the tokenizer counts the output tokens, if there is gibberish, it might count incorrectly.
+
+Namespace(backend='sglang', base_url=None, host='0.0.0.0', port=30000, ready_check_timeout_sec=60, dataset_name='generated-shared-prefix', dataset_path='', model='/cluster-storage/models/deepseek-ai/DeepSeek-V3.2', served_model_name=None, tokenizer=None, num_prompts=320, sharegpt_output_len=None, sharegpt_context_len=None, random_input_len=1024, random_output_len=1024, random_range_ratio=0.0, image_count=1, image_resolution='1080p', random_image_count=False, image_format='jpeg', image_content='random', request_rate=inf, use_trace_timestamps=False, max_concurrency=64, output_file='sw_mscclpp_gsp_isl4096_osl512_c64.jsonl', output_details=True, print_requests=False, disable_tqdm=False, disable_stream=False, return_logprob=False, top_logprobs_num=0, token_ids_logprob=None, logprob_start_len=-1, return_routed_experts=False, seed=31234, disable_ignore_eos=False, extra_request_body=None, apply_chat_template=False, profile=False, plot_throughput=False, profile_activities=['CPU', 'GPU'], profile_start_step=None, profile_steps=None, profile_num_steps=None, profile_by_stage=False, profile_stages=None, profile_output_dir=None, profile_prefix=None, lora_name=None, lora_request_distribution='uniform', lora_zipf_alpha=1.5, prompt_suffix='', pd_separated=False, profile_prefill_url=None, profile_decode_url=None, flush_cache=False, warmup_requests=1, tokenize_prompt=False, gsp_num_groups=1, gsp_prompts_per_group=320, gsp_system_prompt_len=2253, gsp_question_len=1843, gsp_output_len=512, gsp_range_ratio=1.0, gsp_fast_prepare=False, gsp_send_routing_key=False, gsp_num_turns=1, gsp_ordered=False, mooncake_slowdown_factor=1.0, mooncake_num_rounds=1, mooncake_workload='conversation', fake_prefill=False, tag=None, header=None)
+
+
+Loading cached generated input data from /root/.cache/sglang/benchmark/gen_shared_prefix_31234_1_320_2253_1843_512_LlamaTokenizer.pkl
+Starting warmup with 1 sequences...
+[06:24:14]   RESULT mscclpp: mean_TPOT= P99_TTFT= out_thru=
+[06:24:14] === TEST: a2a_mooncake ===
+/sgl-workspace/sglang/development/sweep.sh: line 35: 1171110 Killed                  nohup python3 -m sglang.launch_server "${BASE_FLAGS[@]}" "${extra[@]}" > "$N0_LOG" 2>&1
+[06:24:19]   launching tag=a2a_mooncake flags=--moe-a2a-backend mooncake
+[06:25:31]   CRASH_N0 detected at 60s
+[06:25:31]   SKIP (load failed/timeout)
+[06:25:31] === TEST: a2a_nixl ===
+[06:25:37]   launching tag=a2a_nixl flags=--moe-a2a-backend nixl
+[06:26:48]   CRASH_N0 detected at 60s
+[06:26:48]   SKIP (load failed/timeout)
+[06:26:48] === TEST: a2a_flashinfer ===
+[06:26:54]   launching tag=a2a_flashinfer flags=--moe-a2a-backend flashinfer
+[06:27:49]   CRASH_N0 detected at 45s
+[06:27:49]   SKIP (load failed/timeout)
+[06:27:49] === TEST: a2a_megamoe ===
+[06:27:55]   launching tag=a2a_megamoe flags=--moe-a2a-backend megamoe
+/sgl-workspace/sglang/development/sweep.sh: line 89: 1184317 Killed                  nohup python3 -m sglang.launch_server "${BASE_FLAGS[@]}" "${extra[@]}" > "$N0_LOG" 2>&1

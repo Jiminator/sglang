@@ -1,0 +1,133 @@
+[06:53:25] ===== SWEEP_V2 START Tue May 26 06:53:25 UTC 2026 =====
+[06:53:25] Base = run #11 best (mixed-chunk + lpm + mem 0.88 + ep=8 + tp=8 + DPA dp=8 + fp8 KV + page 64)
+[06:53:25] 
+[06:53:25] === TEST: mscclpp ===
+[06:53:30]   launching tag=mscclpp flags=--enable-mscclpp
+[06:56:54]   BOTH_READY in 180s
+Total generated tokens (retokenized):    21873     
+Request throughput (req/s):              1.85      
+Input token throughput (tok/s):          7915.48   
+Output token throughput (tok/s):         948.02    
+Peak output token throughput (tok/s):    2304.00   
+Peak concurrent requests:                73        
+Total token throughput (tok/s):          8863.50   
+Concurrency:                             63.69     
+----------------End-to-End Latency----------------
+Mean E2E Latency (ms):                   34395.12  
+Median E2E Latency (ms):                 35002.19  
+P90 E2E Latency (ms):                    41063.20  
+P99 E2E Latency (ms):                    50505.27  
+---------------Time to First Token----------------
+Mean TTFT (ms):                          5978.91   
+Median TTFT (ms):                        4011.62   
+P99 TTFT (ms):                           20264.97  
+-----Time per Output Token (excl. 1st token)------
+Mean TPOT (ms):                          55.61     
+Median TPOT (ms):                        59.78     
+P99 TPOT (ms):                           63.70     
+---------------Inter-Token Latency----------------
+Mean ITL (ms):                           55.67     
+Median ITL (ms):                         29.14     
+P95 ITL (ms):                            289.31    
+P99 ITL (ms):                            361.49    
+Max ITL (ms):                            520.25    
+==================================================
+[07:00:09]   RESULT mscclpp: mean_TPOT=55.61 P99_TTFT=20264.97 out_thru=948.02
+[07:00:09] === TEST: cgbs_custom ===
+[07:00:15]   launching tag=cgbs_custom flags=--cuda-graph-bs 1 2 3 4 5 6 7 8 10 12 16 20 24 32 48 64 96 128 256 512
+[07:03:26]   BOTH_READY in 165s
+Total generated tokens (retokenized):    21670     
+Request throughput (req/s):              1.90      
+Input token throughput (tok/s):          8128.05   
+Output token throughput (tok/s):         973.48    
+Peak output token throughput (tok/s):    2304.00   
+Peak concurrent requests:                74        
+Total token throughput (tok/s):          9101.53   
+Concurrency:                             63.70     
+----------------End-to-End Latency----------------
+Mean E2E Latency (ms):                   33501.99  
+Median E2E Latency (ms):                 33334.59  
+P90 E2E Latency (ms):                    41109.92  
+P99 E2E Latency (ms):                    50101.29  
+---------------Time to First Token----------------
+Mean TTFT (ms):                          6031.34   
+Median TTFT (ms):                        4044.83   
+P99 TTFT (ms):                           20280.50  
+-----Time per Output Token (excl. 1st token)------
+Mean TPOT (ms):                          53.76     
+Median TPOT (ms):                        56.99     
+P99 TPOT (ms):                           61.86     
+---------------Inter-Token Latency----------------
+Mean ITL (ms):                           53.82     
+Median ITL (ms):                         28.91     
+P95 ITL (ms):                            287.57    
+P99 ITL (ms):                            366.89    
+Max ITL (ms):                            512.19    
+==================================================
+[07:06:37]   RESULT cgbs_custom: mean_TPOT=53.76 P99_TTFT=20280.50 out_thru=973.48
+[07:06:37] === TEST: maxrr32 ===
+[07:06:42]   launching tag=maxrr32 flags=--max-running-requests 32
+[07:09:33]   BOTH_READY in 150s
+Total generated tokens (retokenized):    21085     
+Request throughput (req/s):              1.89      
+Input token throughput (tok/s):          8077.65   
+Output token throughput (tok/s):         967.44    
+Peak output token throughput (tok/s):    2304.00   
+Peak concurrent requests:                77        
+Total token throughput (tok/s):          9045.09   
+Concurrency:                             59.99     
+----------------End-to-End Latency----------------
+Mean E2E Latency (ms):                   31748.99  
+Median E2E Latency (ms):                 30880.74  
+P90 E2E Latency (ms):                    40623.25  
+P99 E2E Latency (ms):                    46903.56  
+---------------Time to First Token----------------
+Mean TTFT (ms):                          7228.87   
+Median TTFT (ms):                        5100.03   
+P99 TTFT (ms):                           20489.55  
+-----Time per Output Token (excl. 1st token)------
+Mean TPOT (ms):                          47.98     
+Median TPOT (ms):                        48.88     
+P99 TPOT (ms):                           54.16     
+---------------Inter-Token Latency----------------
+Mean ITL (ms):                           48.04     
+Median ITL (ms):                         28.50     
+P95 ITL (ms):                            260.44    
+P99 ITL (ms):                            389.90    
+Max ITL (ms):                            509.65    
+==================================================
+[07:12:46]   RESULT maxrr32: mean_TPOT=47.98 P99_TTFT=20489.55 out_thru=967.44
+[07:12:46] === TEST: tok_batch_encode ===
+[07:12:51]   launching tag=tok_batch_encode flags=--enable-tokenizer-batch-encode
+[07:16:14]   BOTH_READY in 180s
+Total generated tokens (retokenized):    21969     
+Request throughput (req/s):              1.87      
+Input token throughput (tok/s):          8002.37   
+Output token throughput (tok/s):         958.43    
+Peak output token throughput (tok/s):    2304.00   
+Peak concurrent requests:                73        
+Total token throughput (tok/s):          8960.80   
+Concurrency:                             63.57     
+----------------End-to-End Latency----------------
+Mean E2E Latency (ms):                   33960.25  
+Median E2E Latency (ms):                 33726.10  
+P90 E2E Latency (ms):                    40934.22  
+P99 E2E Latency (ms):                    50035.24  
+---------------Time to First Token----------------
+Mean TTFT (ms):                          6006.35   
+Median TTFT (ms):                        4050.10   
+P99 TTFT (ms):                           20205.88  
+-----Time per Output Token (excl. 1st token)------
+Mean TPOT (ms):                          54.70     
+Median TPOT (ms):                        58.07     
+P99 TPOT (ms):                           62.83     
+---------------Inter-Token Latency----------------
+Mean ITL (ms):                           54.77     
+Median ITL (ms):                         29.07     
+P95 ITL (ms):                            287.82    
+P99 ITL (ms):                            362.71    
+Max ITL (ms):                            512.54    
+==================================================
+[07:19:28]   RESULT tok_batch_encode: mean_TPOT=54.70 P99_TTFT=20205.88 out_thru=958.43
+[07:19:28] 
+[07:19:28] ===== SWEEP_V2 COMPLETE Tue May 26 07:19:28 UTC 2026 =====
