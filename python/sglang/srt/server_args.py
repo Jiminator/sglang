@@ -3319,6 +3319,31 @@ class ServerArgs:
                 self.ep_size == 1
             ), "FP8/MXFP8 Cutlass MoE is only supported with ep_size == 1"
 
+    def cutedsl_moe_max_num_tokens(self) -> int:
+        """Largest number of tokens a single forward can route through a CuteDSL
+        MoE layer on one (DP) rank.
+
+        Sizes the standard-allgather wrapper's CUDA-graph buffers and validates
+        the FlashInfer A2A dispatcher workspace. The bound is the max over every
+        forward shape that reaches the layer:
+          * prefill batch             -> max_prefill_tokens
+          * piecewise-prefill capture -> piecewise_cuda_graph_max_tokens
+          * decode / spec verify      -> cuda_graph_max_bs * num_tokens_per_bs
+        num_tokens_per_bs is speculative_num_draft_tokens under speculative
+        decoding (the verify forward packs that many tokens per request), else 1.
+        """
+        if self.speculative_algorithm:
+            num_tokens_per_bs = self.speculative_num_draft_tokens or 1
+        else:
+            num_tokens_per_bs = 1
+        prefill_tokens = self.max_prefill_tokens or 0
+        if not self.disable_piecewise_cuda_graph:
+            prefill_tokens = max(
+                prefill_tokens, self.piecewise_cuda_graph_max_tokens or 0
+            )
+        decode_tokens = (self.cuda_graph_max_bs or 0) * num_tokens_per_bs
+        return max(prefill_tokens, decode_tokens)
+
     def _handle_a2a_moe(self):
         if self.enable_deepep_waterfill and self.moe_a2a_backend != "deepep":
             logger.warning(
@@ -3420,30 +3445,30 @@ class ServerArgs:
                 and self.max_prefill_tokens > 0
                 and self.disaggregation_mode != "decode"
             ):
+                required_tokens = self.cutedsl_moe_max_num_tokens()
                 max_dispatch_tokens_per_rank = get_int_env_var(
                     "SGLANG_FLASHINFER_NUM_MAX_DISPATCH_TOKENS_PER_RANK", 1024
                 )
                 max_cutedsl_tokens = max_dispatch_tokens_per_rank * self.ep_size
-                if max_cutedsl_tokens < self.max_prefill_tokens:
+                if max_cutedsl_tokens < required_tokens:
                     required_per_rank = (
-                        self.max_prefill_tokens + self.ep_size - 1
+                        required_tokens + self.ep_size - 1
                     ) // self.ep_size
                     raise ValueError(
                         "FlashInfer MoE A2A with flashinfer_cutedsl requires "
                         "SGLANG_FLASHINFER_NUM_MAX_DISPATCH_TOKENS_PER_RANK * "
-                        "ep_size to cover --max-prefill-tokens. Otherwise the "
-                        "FlashInfer dispatcher can crash at runtime with "
-                        "`ValueError: num_tokens (...) exceeds max_num_tokens (...)` "
-                        "when a local DP rank schedules too many prefill tokens. "
+                        "ep_size to cover the largest CuteDSL MoE forward "
+                        f"({required_tokens} tokens). Otherwise the FlashInfer "
+                        "dispatcher can crash at runtime with "
+                        "`ValueError: num_tokens (...) exceeds max_num_tokens (...)`. "
                         "Current values: "
                         f"SGLANG_FLASHINFER_NUM_MAX_DISPATCH_TOKENS_PER_RANK="
                         f"{max_dispatch_tokens_per_rank}, ep_size={self.ep_size}, "
-                        f"capacity={max_cutedsl_tokens}, "
-                        f"max_prefill_tokens={self.max_prefill_tokens}. "
+                        f"capacity={max_cutedsl_tokens}, required={required_tokens}. "
                         f"Set `export "
                         f"SGLANG_FLASHINFER_NUM_MAX_DISPATCH_TOKENS_PER_RANK="
-                        f"{required_per_rank}` or lower `--max-prefill-tokens` "
-                        f"to <= {max_cutedsl_tokens}."
+                        f"{required_per_rank}` or lower the relevant limit "
+                        f"(e.g. --max-prefill-tokens) to <= {max_cutedsl_tokens}."
                     )
 
         if self.moe_a2a_backend == "mori":

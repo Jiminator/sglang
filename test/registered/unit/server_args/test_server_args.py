@@ -618,5 +618,54 @@ class TestPrefillOnlyDisableKvCache(unittest.TestCase):
             ServerArgs(**self._base_kwargs(kv_cache_dtype="fp4_e2m1"))
 
 
+class TestCutedslMoeMaxNumTokens(unittest.TestCase):
+    """Bound used to size CuteDSL MoE wrapper buffers / validate the A2A
+    dispatcher workspace. Fields are set directly to exercise the math
+    independently of __post_init__ resolution."""
+
+    def _args(self, **overrides):
+        server_args = ServerArgs(model_path="dummy")
+        fields = dict(
+            speculative_algorithm=None,
+            speculative_num_draft_tokens=None,
+            max_prefill_tokens=16384,
+            disable_piecewise_cuda_graph=False,
+            piecewise_cuda_graph_max_tokens=2048,
+            cuda_graph_max_bs=512,
+        )
+        fields.update(overrides)
+        for key, value in fields.items():
+            setattr(server_args, key, value)
+        return server_args
+
+    def test_prefill_dominates_in_default_config(self):
+        # max(16384, 2048, 512 * 1)
+        self.assertEqual(self._args().cutedsl_moe_max_num_tokens(), 16384)
+
+    def test_piecewise_dominates_when_prefill_is_small(self):
+        # max(512, 2048, 512 * 1)
+        args = self._args(max_prefill_tokens=512)
+        self.assertEqual(args.cutedsl_moe_max_num_tokens(), 2048)
+
+    def test_speculative_decoding_scales_decode_bound(self):
+        # decode bound 512 * 8 dominates the small prefill/piecewise bounds
+        args = self._args(
+            max_prefill_tokens=512,
+            piecewise_cuda_graph_max_tokens=512,
+            speculative_algorithm="EAGLE",
+            speculative_num_draft_tokens=8,
+        )
+        self.assertEqual(args.cutedsl_moe_max_num_tokens(), 4096)
+
+    def test_piecewise_bound_excluded_when_disabled(self):
+        # piecewise (2048) ignored; max(512, 64 * 1)
+        args = self._args(
+            max_prefill_tokens=512,
+            disable_piecewise_cuda_graph=True,
+            cuda_graph_max_bs=64,
+        )
+        self.assertEqual(args.cutedsl_moe_max_num_tokens(), 512)
+
+
 if __name__ == "__main__":
     unittest.main()
