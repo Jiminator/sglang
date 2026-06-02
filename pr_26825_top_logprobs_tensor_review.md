@@ -12,8 +12,11 @@
 > each marked confirmed/refuted.
 >
 > **Addendum (same day):** suggestion #2 (the `float()` coercion bonus) has now
-> also been verified empirically — configs F1/F2 below. `float(logprob)` alone is
-> insufficient; `int(token_id)` is needed too.
+> been verified empirically — configs F1/F2 and G below. `float(logprob)` alone is
+> insufficient (the idx tensors leak too), and the coercion must cover **both
+> branches** of `detokenize_logprob_tokens`; with that, non-streaming, streaming,
+> `token_ids_logprob`, and `return_text_in_logprobs` all return output
+> bit-identical to the clean baseline.
 
 ---
 
@@ -64,6 +67,14 @@ Trigger = issue #26286's exact request (`logprobs:true, top_logprobs:5`, temp 0)
 | E — this PR, clean | ✅ | ✅ | Chat/generate/streaming battery all green; unit test 3/3 on PR branch; same test vs main's code: 2/3 fail with the exact RuntimeError, plain-list case passes |
 | F1 — D2 + `float(logprob)` coercion in `detokenize_logprob_tokens` | 🐛 | ✅+ | **Still 500** — the idx tensors leak alongside the values (#26299's `.tolist()` covers both, so reverting it leaks both); orjson chokes on the 0-dim int tensor in `token_id` |
 | F2 — D2 + `(float(logprob), int(token_id), None)` | 🐛 | ✅+ | **200, bit-identical to the clean baseline** — every logprob, token id, and the generated text match exactly |
+| G-a — F2 setup, streaming `/generate` | 🐛 | ✅+ | 200 SSE — the first (leaked) chunk bit-identical to baseline |
+| G-c — F2 setup, `token_ids_logprob` | 🐛 | ✅+ | 200 — requested-id logprobs as floats, bit-identical to baseline |
+| G-b — F2 setup, `return_text_in_logprobs: true` | 🐛 | ✅+ | **Still 500** — F2 only coerced the `decode_to_text=False` branch; the `True` branch ships raw tensors via `list(zip(...))` (process survives) |
+| G-b2 — coercion in **both** branches | 🐛 | ✅+ | 200 — correct decoded text, bit-identical values (`batch_decode` tolerates tensor idx) |
+
+*(Side observation, pre-existing and unrelated to these patches: in PD,
+`output_token_ids_logprobs` returns 3 entries for 4 completion tokens — identical
+on the clean baseline; possibly worth a separate issue.)*
 
 ## First-draft claims, reconciled
 
@@ -95,14 +106,18 @@ Trigger = issue #26286's exact request (`logprobs:true, top_logprobs:5`, temp 0)
 1. **Strengthen the test:** assert `isinstance(logprob, float)` (or that
    `json.dumps(ret)` succeeds) so it also guards the D2 gap; add an empty-list
    case to make the semantics change intentional.
-2. **Optional one-line bonus (now verified):** coercing in
-   `detokenize_logprob_tokens` makes the native `/generate` path return *correct
-   output* instead of a 500 when tensors leak. Empirically, `float(logprob)` alone
-   is **insufficient** (config F1 — the idx tensors leak too and orjson still
-   raises); the complete coercion is `(float(logprob), int(token_id), None)`
-   (config F2 — response bit-identical to the clean baseline). The
-   `decode_to_text=True` branch (`return_text_in_logprobs`) needs the same
-   treatment. Fine as a follow-up.
+2. **Optional bonus (now fully verified):** coercing in **both branches** of
+   `detokenize_logprob_tokens` — `(float(logprob), int(token_id), text_or_None)` —
+   makes the native `/generate` path return *correct output* instead of a 500 when
+   tensors leak. Empirically: `float(logprob)` alone is **insufficient** (F1 — the
+   idx tensors leak too); the `decode_to_text=True` branch needs the same
+   treatment (G-b — `return_text_in_logprobs` still 500s if only the `False`
+   branch is coerced). With both branches coerced, non-streaming, streaming,
+   `token_ids_logprob`, and `return_text_in_logprobs` all return output
+   bit-identical to the clean baseline (F2, G-a/c/b2). Caveat: `float()` raises on
+   multi-element tensors, so this is shape-dependent recovery for the known 1-D
+   leak — the `is not None` check remains the only universally-safe layer. Fine as
+   a follow-up.
 3. **Update the PR description** to reference #26286/#26299 and reposition as
    hardening — saves every future reviewer the "can't reproduce on main" confusion.
 4. **Architectural follow-up (out of scope):** the disease is N result-processing
