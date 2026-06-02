@@ -10,6 +10,10 @@
 > The first draft of this review was static-analysis only; testing **refuted its
 > central objection and flipped the verdict**. The original claims are kept below,
 > each marked confirmed/refuted.
+>
+> **Addendum (same day):** suggestion #2 (the `float()` coercion bonus) has now
+> also been verified empirically — configs F1/F2 below. `float(logprob)` alone is
+> insufficient; `int(token_id)` is needed too.
 
 ---
 
@@ -58,6 +62,8 @@ Trigger = issue #26286's exact request (`logprobs:true, top_logprobs:5`, temp 0)
 | D — **this PR** + #26299 reverted, chat path | 🐛 | ✅ | **No crash**; tensor confirmed arriving; HTTP 200 with logprobs **bit-identical to B** (`-0.00001990775308513548`, `-11.250020027160645`, …) |
 | D2 — same, native `/generate` path | 🐛 | ✅ | Per-request 500 (`TypeError: Type is not JSON serializable: Tensor` at `json_response.py:16`); **process survives**, no restart |
 | E — this PR, clean | ✅ | ✅ | Chat/generate/streaming battery all green; unit test 3/3 on PR branch; same test vs main's code: 2/3 fail with the exact RuntimeError, plain-list case passes |
+| F1 — D2 + `float(logprob)` coercion in `detokenize_logprob_tokens` | 🐛 | ✅+ | **Still 500** — the idx tensors leak alongside the values (#26299's `.tolist()` covers both, so reverting it leaks both); orjson chokes on the 0-dim int tensor in `token_id` |
+| F2 — D2 + `(float(logprob), int(token_id), None)` | 🐛 | ✅+ | **200, bit-identical to the clean baseline** — every logprob, token id, and the generated text match exactly |
 
 ## First-draft claims, reconciled
 
@@ -89,9 +95,14 @@ Trigger = issue #26286's exact request (`logprobs:true, top_logprobs:5`, temp 0)
 1. **Strengthen the test:** assert `isinstance(logprob, float)` (or that
    `json.dumps(ret)` succeeds) so it also guards the D2 gap; add an empty-list
    case to make the semantics change intentional.
-2. **Optional one-line bonus:** coerce in `detokenize_logprob_tokens`
-   (`float(logprob)`) so the native `/generate` path degrades to *correct output*
-   instead of a 500. Fine as a follow-up.
+2. **Optional one-line bonus (now verified):** coercing in
+   `detokenize_logprob_tokens` makes the native `/generate` path return *correct
+   output* instead of a 500 when tensors leak. Empirically, `float(logprob)` alone
+   is **insufficient** (config F1 — the idx tensors leak too and orjson still
+   raises); the complete coercion is `(float(logprob), int(token_id), None)`
+   (config F2 — response bit-identical to the clean baseline). The
+   `decode_to_text=True` branch (`return_text_in_logprobs`) needs the same
+   treatment. Fine as a follow-up.
 3. **Update the PR description** to reference #26286/#26299 and reposition as
    hardening — saves every future reviewer the "can't reproduce on main" confusion.
 4. **Architectural follow-up (out of scope):** the disease is N result-processing
