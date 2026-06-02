@@ -5,6 +5,12 @@
 **URL:** https://github.com/sgl-project/sglang/pull/26825
 **Files:** `python/sglang/srt/managers/tokenizer_manager.py` (+1/-1), `test/registered/unit/managers/test_tokenizer_manager_top_logprobs_tensor.py` (+82)
 
+> **Updated 2026-06-02** after live A/B validation on a real PD deployment
+> (2×8×H200, mooncake/mlx5_0, sglang-router PD mode, Llama-3.1-8B-Instruct).
+> The first draft of this review was static-analysis only; testing **refuted its
+> central objection and flipped the verdict**. The original claims are kept below,
+> each marked confirmed/refuted.
+
 ---
 
 ## The change
@@ -18,79 +24,85 @@
                  token_logprobs_val[i], token_logprobs_idx[i], decode_to_text
 ```
 
-The PR claims this fixes a `RuntimeError: Boolean value of Tensor with more than one value is ambiguous`, which propagates out of the detokenization handler, gets caught by `print_exception_wrapper`, and SIGKILLs the prefill process (exit code -9) — a "prefill restart storm" in disaggregated PD deployments whenever clients send `top_logprobs > 0`.
-
 ---
 
-## Verdict (sober version)
+## Verdict (post-testing)
 
-The diagnosis is **correct** and the one-liner is *directionally* right: `None` genuinely is the sentinel — the `else: ret.append(None)` two lines down proves the original intent was always "None means skip," so `is not None` reads that intent better than truthiness did. Good catch, good writeup, has a regression test. That's the part that's fine.
+**Approve with non-blocking suggestions.** Previous verdict ("send it back, fix the
+source") is withdrawn: the source fix it demanded **already merged as #26299 on
+May 26** — four days before this PR was filed. The conversion block the first
+draft pointed at in `disaggregation/prefill.py` *is* that fix, not evidence of a
+sibling-path bug. What this PR adds is the consumer-side hardening #26299 cannot
+provide, and live testing shows it does exactly what defense-in-depth should do.
 
-But the patch **treats the symptom, not the disease**, and the test **passes by lying**. Both verified below. Mergeable as defensive hardening — **not** as "the fix for the PD prefill crash."
+## Context the PR description omits
 
----
+- **#26286** (May 25): PD + `/v1/chat/completions` with `logprobs=true, top_logprobs>0`
+  → `sampler.py` keeps top-logprobs as tensors (`no_copy_to_cpu=True`, overlap
+  schedule), `disaggregation/prefill.py` forgot `.tolist()` → multi-element tensor
+  hits `if token_logprobs_val[i]:` → `RuntimeError` → `print_exception_wrapper` →
+  `kill_process_tree` → prefill restart storm.
+- **#26299** (merged May 26, `c47f0e7cd`): fixed the producer. **Latest main does
+  not crash** — verified live.
+- **This PR** (May 31): fixes the consumer predicate.
 
-## What Linus would say
+## Empirical validation
 
-> **"You've got a `torch.Tensor` showing up in a function whose signature says `List[float]`, and your fix is to change the `if` statement in the function that *receives* the garbage? No. You don't paper over a type violation at the leaf. You find who put a tensor there and stop them."**
+Trigger = issue #26286's exact request (`logprobs:true, top_logprobs:5`, temp 0).
 
-### 1. The patch doesn't fix the bug — it relocates it
+| Config | Producer | Consumer | Outcome |
+|---|---|---|---|
+| A — `c47f0e7cd~1` (pre-#26299 main) | 🐛 | 🐛 | 💥 Exact crash: `RuntimeError: Boolean value of Tensor...` at `tokenizer_manager.py:2144` (the line this PR changes); prefill tree SIGKILLed (procs 2→0); client sees 500 `KVTransferError/AbortReq` |
+| B — `c47f0e7cd` (#26299) | ✅ | 🐛 | 200, correct 5-candidate top_logprobs |
+| C — latest main (`547b886b3`) + #26299 locally reverted | 🐛 | 🐛 | 💥 Same crash; debug instrumentation confirmed `tensor shape=(5,)` reaching the consumer |
+| D — **this PR** + #26299 reverted, chat path | 🐛 | ✅ | **No crash**; tensor confirmed arriving; HTTP 200 with logprobs **bit-identical to B** (`-0.00001990775308513548`, `-11.250020027160645`, …) |
+| D2 — same, native `/generate` path | 🐛 | ✅ | Per-request 500 (`TypeError: Type is not JSON serializable: Tensor` at `json_response.py:16`); **process survives**, no restart |
+| E — this PR, clean | ✅ | ✅ | Chat/generate/streaming battery all green; unit test 3/3 on PR branch; same test vs main's code: 2/3 fail with the exact RuntimeError, plain-list case passes |
 
-After the `is not None` guard lets the tensor through, `detokenize_logprob_tokens` does `zip(token_logprobs_val[i], token_logprobs_idx[i])`. Iterating a 1-D tensor yields **0-dim tensors**, not floats:
+## First-draft claims, reconciled
 
-```
-returned tuples: [(tensor(-0.1000), 10, None), (tensor(-0.2000), 20, None), (tensor(-0.3000), 30, None)]
-type of first logprob: <class 'torch.Tensor'>
-JSON serializable: NO -> Object of type Tensor is not JSON serializable
-```
+1. **"The patch relocates the crash to the serializer"** — *half right; the wrong
+   half is the one that matters.* On the OpenAI chat path (the reported incident
+   path) the serving layer coerces 0-dim tensors during response construction:
+   config D returned **bit-identical correct floats**, not artifacts, not a 500.
+   On native `/generate` the relocation is real (D2) — but it lands as a contained,
+   loud, per-request 500 with the process alive and a stack trace pointing at the
+   leaking producer. Severity drops from "fleet restart storm" to "one failed
+   request." That is the correct failure mode for a guard rail.
+2. **"Fix the source instead"** — *already done* (#26299, merged before this PR
+   existed). Config C is the counter-argument to "the source fix is sufficient":
+   revert any one producer conversion and latest main's consumer still kills the
+   whole process. With ≥4 result-processing paths and several
+   `no_copy_to_cpu=True` producers (spec-v2 verify, multi-item scoring, PP proxy),
+   "every path remembers `.tolist()`" is not an invariant worth betting the fleet on.
+3. **"The test passes by lying"** — *stands.* `assertEqual` over tuples accepts
+   0-dim tensors because `tensor(-0.1) == -0.1` is truthy. The test pins down
+   "doesn't raise" but not "returns floats." See suggestions.
+4. **Empty-list semantics flip (`[]` now detokenized instead of mapped to `None`)** —
+   *real but latent.* Traced the producers: per-*position* empty lists don't occur
+   today (per-request empties vanish in `extend()`; the `[None]` first-position
+   sentinel stays `None`, covered by the PR's own `test_none_position_yields_none`).
+   Worth one sentence in the PR description; not a blocker.
 
-So instead of `RuntimeError: Boolean value of Tensor ... is ambiguous` at detokenization, you now get `TypeError: Object of type Tensor is not JSON serializable` when `meta_info` is serialized into the response. The crash moves from line 2147 to the serializer. The "restart storm" may still be a storm — just with a different stack trace.
+## Non-blocking suggestions
 
-*(Caveat: depends on whether the real production path coerces before serialize; the artificial repro in the test does not, and neither does the `decode_to_text=False` path traced here.)*
-
-### 2. The test is green but certifies broken behavior
-
-```python
-ret[0] == [(-0.1, 10, None), (-0.2, 20, None), (-0.3, 30, None)]   # assertEqual PASSES
-```
-
-It passes (`assertEqual would pass? -> True`) because `tensor(-0.1) == -0.1` evaluates loosely to a truthy tensor inside tuple comparison. The author *thinks* they asserted "output is a list of float tuples." They actually asserted nothing about type. The function returns **0-dim tensors** and the test waves them through — it **enshrines the broken data type as the expected contract.** This is the part that should block the merge.
-
-### 3. The conversion already exists at the source
-
-`python/sglang/srt/disaggregation/prefill.py:517-527` already does the coercion that's missing:
-
-```python
-if logits_output.next_token_top_logprobs_val:
-    logits_output.next_token_top_logprobs_val = [v.tolist() for v in ...]
-    logits_output.next_token_top_logprobs_idx = [x.tolist() for x in ...]
-if logits_output.next_token_token_ids_logprobs_val:
-    logits_output.next_token_token_ids_logprobs_val = [v.tolist() for v in ...]
-```
-
-The PD prefill path *knows* these must be Python lists and converts `next_token_*`. The bug is almost certainly a **sibling path that skips this** (e.g. `input_top_logprobs`, or a branch not gated the same way). That's the line to fix — convert at the source where the contract is established, not 1500 lines downstream where four callers all hope someone upstream did the right thing.
-
-### 4. Unexamined behavioral change for empty lists
-
-`is not None` also changes behavior for empty lists:
-- Old: `if []:` → False → appends `None`
-- New: `[] is not None` → True → calls `detokenize_logprob_tokens([], [], ...)` → appends `[]`
-
-Empty-position results flip from `None` to `[]`. Probably harmless, but it's an *unexamined* behavioral change riding along in a "one-line bugfix."
-
----
-
-## What the patch should be
-
-1. **Fix the source.** Find the path in `disaggregation/prefill.py` (or wherever) that leaves `*_top_logprobs_val` as tensors and `.tolist()` it there, next to the conversion that already exists. Keep the `is not None` change as a defensive sentinel fix — it's more correct than truthiness — but it cannot be the *whole* fix.
-2. **Make the test honest.** Coerce to float in the fix and assert `isinstance(logprob, float)` (or assert `not isinstance(..., torch.Tensor)` and that `json.dumps(...)` succeeds). A test that a 0-dim-tensor output passes is not a regression test for this bug.
-3. **Decide the empty-list semantics on purpose**, and add a case for it.
-
----
+1. **Strengthen the test:** assert `isinstance(logprob, float)` (or that
+   `json.dumps(ret)` succeeds) so it also guards the D2 gap; add an empty-list
+   case to make the semantics change intentional.
+2. **Optional one-line bonus:** coerce in `detokenize_logprob_tokens`
+   (`float(logprob)`) so the native `/generate` path degrades to *correct output*
+   instead of a 500. Fine as a follow-up.
+3. **Update the PR description** to reference #26286/#26299 and reposition as
+   hardening — saves every future reviewer the "can't reproduce on main" confusion.
+4. **Architectural follow-up (out of scope):** the disease is N result-processing
+   paths each owning tensor→list conversion. One choke point (at `copy_to_cpu`
+   finalization or IPC serialization) would delete the bug class; worth an issue.
 
 ## Bottom line
 
-Send it back: keep the `is not None` guard, add the `.tolist()` at the real source, and rewrite the test to assert types and JSON-serializability. As written, it hardens the detokenizer but does not fix the reported PD prefill crash — it relocates it past a test that can't see the relocation.
+Merge it. One line, correct sentinel semantics, regression-tested, and
+live-verified to convert a client-triggerable prefill SIGKILL into either a fully
+correct response (chat) or a contained per-request error (`/generate`).
 
 ---
 
