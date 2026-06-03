@@ -1,0 +1,8 @@
+**Findings**
+- [development/loop7/m12_final_decision.md](/sgl-workspace/sglang/development/loop7/m12_final_decision.md:46) overclaims the 4K oracle result: it says `recall@4096 = 100%`. Binding R4 says 4K is `44% -> 86% -> 100%` at `2048/4096/8192`, with rank min/med/max `44/2417/4406` ([m0_oracle_finding_r4.md](/sgl-workspace/sglang/development/loop7/m0_oracle_finding_r4.md:42)). Fix to `recall@8192 = 100%` or `recall@4096 ~= 86%`.
+
+- [development/loop7/m12_final_decision.md](/sgl-workspace/sglang/development/loop7/m12_final_decision.md:86) cites the graph N=50 AC-2/AC-3 artifacts but gives stale/mixed 4K numbers: `default 75%, hybrid 80%`. The binding graph N=50 artifact says `default 80%, hybrid 80%` ([m4_ac3_nonregression_finding.md](/sgl-workspace/sglang/development/loop7/m4_ac3_nonregression_finding.md:14)). The 16K `6% -> 38%` CIs and MMLU `89.0/88.5/88.5` claims match.
+
+- [development/loop7/m12_final_decision.md](/sgl-workspace/sglang/development/loop7/m12_final_decision.md:125) and [line 181](/sgl-workspace/sglang/development/loop7/m12_final_decision.md:181) describe exact M11 commit provenance and per-run `run_provenance` in each `ttft_*.json` as committed artifacts. They are currently only dirty worktree changes: `git status` shows `m11_perf_consolidation.md` and all `ttft_*.json` modified, and `git show HEAD:development/loop7/ttft_ds_default_c1.json` has no `run_provenance`.
+
+No other high-signal invalidating issue found. The supersession logic itself is supported: M0 demotes wider budget from primary long-context lever, Loop-6 change/prior-soundness is explicit, R8 stride provenance is explicit and backed by the call site/gitignore, and DEC-4 is satisfied by `m9_tier2a_disposition.md`.
