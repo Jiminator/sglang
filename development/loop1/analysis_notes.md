@@ -63,3 +63,23 @@ no penalty for non-64, but non-64 is simply unavailable on this DSA path).
 ## Sweep snapshot (gate-passing configs, run-to-run noise ~±1 ms on tpot)
 baseline 42.16 | spec_decmode 42.15 | lpm 41.92 | page32(->64) 41.21 | chunk4096 41.19
 => chunked-prefill 4096 + lpm are the mild positives; combine for the winner candidate.
+
+## Metric decision (user, supersedes plan DEC-1)
+Client gave only "30 tok/s per user"; the "(or 1000/ITL)" was the user's own earlier
+gloss, NOT a client mandate. Faithful per-user speed = sustained decode rate (TPOT),
+not 1000/ITL (speculation-inflated). HEADLINE = 1000/median_TPOT (typical user);
+report p99_TPOT as the worst-case/SLO-style guarantee (client specified P99 for TTFT,
+so tail matters); show 1000/median_ITL only as "literal-but-burst-inflated".
+TARGET measured at the MEDIAN: need median_TPOT <= 33.3 ms (30 tok/s).
+Best gate-passing (combo): median_TPOT 40.31 ms -> 24.8 tok/s; gap ~5 tok/s (~17%).
+Worst-case p99_TPOT ~68 ms -> ~14.6 tok/s.
+
+## Why DP attention regressed at conc 64 (regime mismatch)
+DP attention is a high-concurrency / KV-capacity-bound throughput optimization. At
+conc 64 it lost on every axis: mean_tpot 48.63 vs 42.16, aggregate throughput 1057
+vs 1266 tok/s, p99_itl 444 vs 307; only median_itl "improved" (12.81, burst artifact).
+Mechanisms: (1) per-rank batch collapses to 64/8=8 reqs -> small-batch attention
+under-utilizes the GPU; (2) DP-attn + TP-MoE (ep_size=1) forces all-gather before MoE
++ reduce-scatter after, every layer/step, with ~8 tokens/rank to amortize -> comm
+dominates; (3) its KV-replication-avoidance win is worthless here (bf16 MLA KV tiny,
+not capacity-bound; capacity even halved 300k->161k). => stay TP8 (also satisfies AC-6).
