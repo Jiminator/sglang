@@ -1,0 +1,7 @@
+# GLM-5.1-FP8 flags-only hill-climb — sweep table
+
+| tag | changed knob(s) | median_itl_ms | per_user_tps | mean_tpot_ms | thr/req | p99_ttft_ms | p99_itl_ms | accept_len | conc | max_conc | completed | errors | max_total_num_tokens | target_met | rationale |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| baseline | --speculative-algorithm EAGLE --speculative-num-steps 3 --speculative-eagle-topk 1 --speculative-num-draft-tokens 4 --mem-fraction-static 0.85 --max-running-requests 64 | 18.05 | 55.39 | 42.16 | 19.77 | 13345.9 | 306.94 | 3.106 | 61.1 | 81 | 320 | 0 | 300352 | True | cookbook baseline; max-running-requests raised 48->64 (spec default caps admission) |
+| nospec | --mem-fraction-static 0.85 --max-running-requests 64 | 35.63 | 28.07 | 37.74 | 16.47 | 29625.1 | 38.94 | None | 60.1 | 127 | 320 | 0 | 300352 | False | speculation OFF (else identical to baseline): isolate spec effect on sustained TPOT at conc 64 |
+| dp_attn | --speculative-algorithm EAGLE --speculative-num-steps 3 --speculative-eagle-topk 1 --speculative-num-draft-tokens 4 --mem-fraction-static 0.85 --max-running-requests 64 --enable-dp-attention --dp-size 8 | 12.81 | 78.09 | 48.63 | 16.51 | 18672.9 | 444.29 | 3.011 | 60.1 | 74 | 320 | 0 | 161216 | True | spec-ON base + DP attention (dp-size 8): test decode-latency scaling vs TP at conc 64 |
