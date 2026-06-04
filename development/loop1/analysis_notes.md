@@ -48,3 +48,18 @@ median_itl ≤ 33.3 and p99_ttft < 22 s, then combine winners and confirm.
 
 `*` accuracy-risk knob — introduced only after lower-risk knobs are exhausted, and
 flagged as such in the report.
+
+## Page-size finding (AC-4)
+Source `python/sglang/srt/server_args.py:1918-1920`: on CUDA (non-HIP), the DSA
+path unconditionally executes `self.page_size = 64` and logs "Setting page size to
+64 for DeepSeek DSA." regardless of any `--page-size` value. Verified empirically:
+`--page-size 32` launched + benchmarked successfully (tpot 41.21, gates pass) but the
+server resolved page_size=64. FlashMLA also "only supports a page_size of 64"
+(server_args.py:2852). => GLM-5.1 DSA on H200 supports exactly ONE effective page
+size (64); the flag is accepted but always overridden. The winning config therefore
+uses page 64 by hard architectural constraint, not by preference (DEC-3 intent met:
+no penalty for non-64, but non-64 is simply unavailable on this DSA path).
+
+## Sweep snapshot (gate-passing configs, run-to-run noise ~±1 ms on tpot)
+baseline 42.16 | spec_decmode 42.15 | lpm 41.92 | page32(->64) 41.21 | chunk4096 41.19
+=> chunked-prefill 4096 + lpm are the mild positives; combine for the winner candidate.
