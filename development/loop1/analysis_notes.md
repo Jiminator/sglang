@@ -83,3 +83,21 @@ under-utilizes the GPU; (2) DP-attn + TP-MoE (ep_size=1) forces all-gather befor
 + reduce-scatter after, every layer/step, with ~8 tokens/rank to amortize -> comm
 dominates; (3) its KV-replication-avoidance win is worthless here (bf16 MLA KV tiny,
 not capacity-bound; capacity even halved 300k->161k). => stay TP8 (also satisfies AC-6).
+
+## IndexCache (accuracy-risk rung 2) — the only knob that moved the binding metric
+combo + --json-model-override-args '{"index_topk_pattern":"FFSF...SSS"}' (GLM-5 doc pattern):
+median_tpot 36.30 ms -> 27.5 tok/s (vs combo 24.8), mean_tpot 37.72, p99_tpot 63.25 -> 15.8 tok/s,
+median_itl 17.36, p99_ttft 11387, accept 3.093 (unchanged), 320 ok / 0 err.
+Works because it reuses the DSA indexer result ACROSS LAYERS -> cuts per-step DECODE
+indexer compute (the binding cost). Contrast FP8-KV which only touched KV/attn bandwidth
+(decode kernel) and regressed. ACCURACY-RISK: docs claim "negligible" loss but the
+latency benchmark cannot verify quality -> MUST be flagged; report as best-achievable,
+with combo (bf16) as the safe no-risk recommendation.
+Rung 3 (raise SGLANG_DSA_PREFILL_DENSE_ATTN_KV_LEN_THRESHOLD) NOT pursued: it affects
+dense PREFILL attention (TTFT, which has ~10s slack), not the binding decode TPOT.
+
+## Two reported winners
+- SAFE (no accuracy risk): combo = baseline-spec + chunked-prefill 4096 + schedule-policy lpm.
+  median_tpot 24.8 tok/s, gap to 30 ~5 tok/s (~17%).
+- BEST-ACHIEVABLE (accuracy-risk, flagged): combo + IndexCache.
+  median_tpot 27.5 tok/s, gap ~2.5 tok/s (~8%). p99_ttft 11.4s (both well under 22s).
