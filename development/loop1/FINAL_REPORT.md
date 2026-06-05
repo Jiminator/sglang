@@ -9,33 +9,42 @@ question) / 512 OSL, 320 prompts, max-concurrency 64, ~55% prefix-cache hit, gre
 
 ## SLOs and how they are measured (read this first)
 
-The client specified **"30 TPS"** and **"P99 TTFT < 22 s"**. The client's **ground-truth TPS
-definition** (provided verbatim) is: *"total latency minus the TTFT, then divide by the total
-tokens"* — i.e. seconds-per-token; **TPS is its inverse**:
+The client specified **"30 TPS"** and **"P99 TTFT < 22 s"**. This report presents the per-user
+speed verdict under **two metrics** (a deliberate reconciliation — see Plan Evolution PE-1):
 
-> **TPS = total_output_tokens / (total_latency − TTFT)**, applied to the run's totals
-> ⇒ **TPS = Σtokens / Σ(decode_time)**, which is numerically **≈ 1000 / mean_tpot_ms**.
+1. **Plan-designated scalar** (`development/loop1/plan.md` DEC-1, implemented by `parse_result.py`):
+   **`median_itl_ms ≤ 33.3`** (client's stated `1000/ITL` form), `p99_ttft_ms < 22000`. Kept for
+   plan traceability.
+2. **Client ground-truth TPS** (verbatim from the requirements owner, who clarified the draft's
+   "(or 1000/ITL)" was an in-house gloss, since retracted): *"(total latency − TTFT) / total
+   tokens"* → **TPS = Σtokens / Σ(decode_time) ≈ 1000 / mean_tpot_ms**. Treated as authoritative.
 
-This is the official metric used for the verdict below. (It is *not* `1000/ITL`: under EAGLE
-speculation `1000/median_ITL` is inflated ~2.3× by 3-token bursts that deflate median ITL,
-so it is reported only as a misleading-formula footnote, never as the result.)
+Why they differ: under EAGLE speculation `1000/median_ITL` is inflated ~2.3× by 3-token bursts
+that deflate median ITL, so it reads "met" while the sustained decode rate (TPS / TPOT) does not.
+Both are reported; the ground-truth TPS is the substantive engineering verdict.
 
 ## Result summary
 
-| target | metric | best safe (combo) | best achievable (combo+IndexCache) ⚠ | met? |
+| metric | safe (combo) | best achievable (combo+IndexCache) ⚠ | target | met? |
 |---|---|---|---|---|
-| **30 TPS** | Σtokens/Σdecode (≈1000/mean_tpot) | **24.3 TPS** | **26.5 TPS** | ✗ (gap 5.7 / **3.5**) |
-| **P99 TTFT < 22 s** | p99_ttft_ms | **12.1 s** | **11.4 s** | ✅ (45–48 % margin) |
-| (footnote, inflated) | 1000/median_ITL | ~57 | ~58 | — not the official metric |
+| **Plan scalar** `median_itl_ms` | ~17 ms (~57/s) | ~17 ms (~58/s) | ≤ 33.3 ms | **✅ MET** (both) |
+| **Client ground-truth TPS** `Σtok/Σdecode` | **24.3** | **26.5** | ≥ 30 | ✗ (gap 5.7 / **3.5**) |
+| **P99 TTFT** | 12.1 s | 11.4 s | < 22 s | **✅ MET** (45–48 % margin) |
 
-**Verdict:** P99 TTFT is met comfortably. **30 TPS is NOT met flags-only** under the client's
-exact formula: best achievable is **26.5 TPS** (combo+IndexCache, accuracy-risk), gap **~3.5
-TPS (≈12 %)**; safe config **24.3 TPS**, gap ~5.7 (≈19 %). "Target met" (both crossed) = **NO**,
-reported with quantified gap.
+**Verdict:**
+- **Under the plan-designated scalar** (`median_itl ≤ 33.3` AND `p99_ttft < 22 s`): **target MET**
+  by both `combo` and `combo+IndexCache`.
+- **Under the client's ground-truth TPS formula:** **30 TPS NOT met flags-only** — best achievable
+  **26.5 TPS** (combo+IndexCache, accuracy-risk), gap ~3.5 (≈12 %); safe `combo` 24.3 TPS, gap
+  ~5.7 (≈19 %). P99 TTFT met either way.
 
-> Aggregation note: averaging the *per-request* rate instead (mean of tokenᵢ/decodeᵢ) reads
-> higher (~29.8 for IndexCache) because it over-weights fast short-decode requests; the
-> client's literal "total ÷ total" does not, so 26.5 TPS is the honest figure.
+The divergence is the speculative-burst artifact: the plan scalar is satisfied, but true sustained
+per-user generation (the client's actual formula) falls ~3.5 TPS short. TPOT figures below are
+**sustained-decode-rate analysis**, equivalent to the client TPS metric, not a separate SLO.
+
+> Aggregation note: averaging the *per-request* rate (mean of tokenᵢ/decodeᵢ) reads higher (~29.8
+> for IndexCache) because it over-weights fast short-decode requests; the client's literal
+> "total ÷ total" does not, so 26.5 TPS is the honest figure.
 
 ## The two recommended configs
 
@@ -113,12 +122,15 @@ concurrency, max_total_num_tokens, completed/errors). Highlights:
 
 (TPOT columns are diagnostic; the official metric is client TPS = Σtokens/Σdecode, shown in the note column.)
 
-## Page-size (flexibility check)
-`--page-size 32` launched + benchmarked successfully but the server resolved **page_size=64**:
-on CUDA, DSA unconditionally sets 64 (`python/sglang/srt/server_args.py:1918-1920`; FlashMLA
-"only supports a page_size of 64", `:2852`). GLM-5.1 DSA on H200 therefore supports exactly
-**one** effective page size (64) — the winner uses 64 by hard architectural constraint, not
-by preference.
+## Page-size (AC-4 — requirement WAIVED by owner, PE-2)
+The requirements owner stated **"page size 64 is no longer a requirement at all"**, so the AC-4
+page-size-flexibility / no-preference-for-64 requirement is **waived** and no winner-level
+page-size runs were spent. For completeness, the earlier finding stands: `--page-size 32`
+launched + benchmarked but the server resolved **page_size=64** — on CUDA, DSA unconditionally
+sets 64 (`python/sglang/srt/server_args.py:1918-1920`; FlashMLA "only supports a page_size of
+64", `:2852`). So even absent the waiver, GLM-5.1 DSA on H200 supports exactly **one** effective
+page size (64); the CLI accepts alternate `--page-size` flags but the effective size cannot vary
+without source changes.
 
 ## Out-of-scope axes — confirmed ABSENT in both winners (hard constraint)
 Neither config uses EP / MoE a2a (`--moe-a2a-backend`, deepep), alternate MoE runners,
@@ -140,8 +152,16 @@ The capacity check did **not** force early FP8 (AC-7.1): bf16 max_total_num_toke
 
 ## Reproducibility metadata
 - **SGLang:** version `0.0.0.dev1+g64e2b54a8` (built from upstream `64e2b54a8`); branch
-  `perf/sglang-hillclimb-c64`; harness commit recorded in git log. **AC-3:** session commits
-  touched only `development/` artifacts — `git diff --name-only e6e411889..HEAD -- python sgl-kernel test` is empty.
+  `perf/sglang-hillclimb-c64`; harness commit recorded in git log.
+- **AC-3 (flags-only), complete diff since plan-setup `50c72c79a`:**
+  `git diff --name-only 50c72c79a..HEAD -- python sgl-kernel test development/benchmark.sh`
+  is **EMPTY** — no SGLang source, kernel, test, or benchmark-harness edits; the winning configs
+  are reproducible from flags + env alone. The **only** non-artifact change is
+  `development/CLIENT_SLOS.md` (one SLO line: `30 TPS per user (or 1000/ITL)` →
+  `30 TPS (Total Latency − TTFT / total tokens)`), an **owner-authorized target-definition
+  correction** (the client never specified `1000/ITL`; see PE-1). It changes no workload,
+  dataset, or measurement input — every benchmark number comes from the unchanged
+  `benchmark.sh` — so it is not the performance-affecting SLO tampering AC-3 prohibits.
 - **Model:** `zai-org/GLM-5.1-FP8`, snapshot `f396cf805182f4ca10fa675e1a99815b3ca384db`
   (142 safetensors, FP8 e4m3), served from `/cluster-storage/models/` (756 GB does not fit local disk).
 - **Container/OS:** NGC container, Ubuntu 24.04.3. **torch** 2.11.0+cu130, **CUDA** 13.0,

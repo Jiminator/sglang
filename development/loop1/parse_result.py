@@ -53,7 +53,8 @@ def scrape_server_facts(serve_log):
     m = re.search(r"max_total_num_tokens\D{0,3}(\d[\d,]*)", text)
     if m:
         facts["max_total_num_tokens"] = int(m.group(1).replace(",", ""))
-    m = re.search(r"KV Cache is allocated\.\s*#tokens:\s*(\d[\d,]*)", text)
+    # log line: "KV Cache is allocated. dtype: torch.bfloat16, #tokens: 300352, KV size: ..."
+    m = re.search(r"KV Cache is allocated\..*?#tokens:\s*(\d[\d,]*)", text)
     if m:
         facts["kv_cache_tokens"] = int(m.group(1).replace(",", ""))
     for pat, key in [
