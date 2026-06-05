@@ -9,38 +9,34 @@ question) / 512 OSL, 320 prompts, max-concurrency 64, ~55% prefix-cache hit, gre
 
 ## SLOs and how they are measured (read this first)
 
-The client specified **"30 TPS"** and **"P99 TTFT < 22 s"**. This report presents the per-user
-speed verdict under **two metrics** (a deliberate reconciliation — see Plan Evolution PE-1):
+**Official metric (owner re-baseline, Round 2):** the client specified **"30 TPS"** and **"P99 TTFT
+< 22 s"**. The client's verbatim TPS definition is *"(total latency − TTFT) / total tokens"* — i.e.
+seconds-per-token; **TPS is its inverse, applied to the run totals**:
 
-1. **Plan-designated scalar** (`development/loop1/plan.md` DEC-1, implemented by `parse_result.py`):
-   **`median_itl_ms ≤ 33.3`** (client's stated `1000/ITL` form), `p99_ttft_ms < 22000`. Kept for
-   plan traceability.
-2. **Client ground-truth TPS** (verbatim from the requirements owner, who clarified the draft's
-   "(or 1000/ITL)" was an in-house gloss, since retracted): *"(total latency − TTFT) / total
-   tokens"* → **TPS = Σtokens / Σ(decode_time) ≈ 1000 / mean_tpot_ms**. Treated as authoritative.
+> **TPS = total_output_tokens / (total_latency − TTFT) = Σtokens / Σ(decode_time) ≈ 1000 / mean_tpot_ms**
 
-Why they differ: under EAGLE speculation `1000/median_ITL` is inflated ~2.3× by 3-token bursts
-that deflate median ITL, so it reads "met" while the sustained decode rate (TPS / TPOT) does not.
-Both are reported; the ground-truth TPS is the substantive engineering verdict.
+This is the single official per-user-speed metric (`parse_result.py` computes it; `sweep_table.md`
+ranks on it). The draft's "(or 1000/ITL)" form was an in-house gloss the owner **retracted**;
+`median_itl_ms` is kept only as a **cross-check** because under EAGLE speculation `1000/median_ITL`
+is inflated ~2.3× by 3-token bursts (it reads "met" while sustained TPS does not).
 
-## Result summary
+> Note: the immutable goal/AC-2 still text-references the old `median_itl ≤ 33.3` scalar because the
+> loop hook blocks editing the immutable section; the owner-authorized rebaseline to client TPS is
+> submitted as a Goal Tracker Update Request (round-2 summary) for the reviewer to apply.
+
+## Result summary (official metric = client TPS)
 
 | metric | safe (combo) | best achievable (combo+IndexCache) ⚠ | target | met? |
 |---|---|---|---|---|
-| **Plan scalar** `median_itl_ms` | ~17 ms (~57/s) | ~17 ms (~58/s) | ≤ 33.3 ms | **✅ MET** (both) |
-| **Client ground-truth TPS** `Σtok/Σdecode` | **24.3** | **26.5** | ≥ 30 | ✗ (gap 5.7 / **3.5**) |
-| **P99 TTFT** | 12.1 s | 11.4 s | < 22 s | **✅ MET** (45–48 % margin) |
+| **client TPS** `Σtok/Σdecode` | **24.3** | **26.5** | ≥ 30 | ✗ (gap 5.7 / **3.5**) |
+| **P99 TTFT** | 12.1 s | 11.4 s | < 22 s | ✅ MET (45–48 % margin) |
+| (cross-check, inflated) | median_itl ~17 ms → 1000/itl ~57 | ~17 ms → ~58 | — | not the official metric |
 
-**Verdict:**
-- **Under the plan-designated scalar** (`median_itl ≤ 33.3` AND `p99_ttft < 22 s`): **target MET**
-  by both `combo` and `combo+IndexCache`.
-- **Under the client's ground-truth TPS formula:** **30 TPS NOT met flags-only** — best achievable
-  **26.5 TPS** (combo+IndexCache, accuracy-risk), gap ~3.5 (≈12 %); safe `combo` 24.3 TPS, gap
-  ~5.7 (≈19 %). P99 TTFT met either way.
-
-The divergence is the speculative-burst artifact: the plan scalar is satisfied, but true sustained
-per-user generation (the client's actual formula) falls ~3.5 TPS short. TPOT figures below are
-**sustained-decode-rate analysis**, equivalent to the client TPS metric, not a separate SLO.
+**Verdict: 30 TPS is NOT met flags-only.** Best achievable **26.5 TPS** (combo+IndexCache,
+accuracy-risk), gap ~3.5 (≈12 %); best no-accuracy-risk `combo` 24.3 TPS, gap ~5.7 (≈19 %). P99
+TTFT is met with wide margin. (The decode-rate ceiling is ~26–27 TPS regardless of speculation:
+`nospec` reaches 26.6 TPS too but fails the TTFT gate at 29.6 s — speculation's value here is
+slot-turnover/TTFT, not decode rate.)
 
 > Aggregation note: averaging the *per-request* rate (mean of tokenᵢ/decodeᵢ) reads higher (~29.8
 > for IndexCache) because it over-weights fast short-decode requests; the client's literal
@@ -97,7 +93,7 @@ on attention/KV. Evidence:
 The remaining gap is MoE-decode FLOPs, which no flag addresses without expert parallelism
 (EP / a2a) — explicitly out of scope for this fixed TP8 path.
 
-## Sweep table (20 distinct candidates + 4 confirmation reruns = 24 fresh-server runs)
+## Sweep table (22 distinct candidates + 4 confirmation reruns = 26 fresh-server runs)
 
 See `development/loop1/sweep_table.md` for the full machine-generated table (per-candidate
 changed knob, median/mean/p99 ITL, mean/median/p99 TPOT, p99 TTFT, accept_length, observed
@@ -122,15 +118,21 @@ concurrency, max_total_num_tokens, completed/errors). Highlights:
 
 (TPOT columns are diagnostic; the official metric is client TPS = Σtokens/Σdecode, shown in the note column.)
 
-## Page-size (AC-4 — requirement WAIVED by owner, PE-2)
-The requirements owner stated **"page size 64 is no longer a requirement at all"**, so the AC-4
-page-size-flexibility / no-preference-for-64 requirement is **waived** and no winner-level
-page-size runs were spent. For completeness, the earlier finding stands: `--page-size 32`
-launched + benchmarked but the server resolved **page_size=64** — on CUDA, DSA unconditionally
-sets 64 (`python/sglang/srt/server_args.py:1918-1920`; FlashMLA "only supports a page_size of
-64", `:2852`). So even absent the waiver, GLM-5.1 DSA on H200 supports exactly **one** effective
-page size (64); the CLI accepts alternate `--page-size` flags but the effective size cannot vary
-without source changes.
+## Page-size (AC-4 — requirement WAIVED by owner, PE-2; winner-level evidence recorded)
+The requirements owner stated **"page size 64 is no longer a requirement at all"** (PE-2), so the
+AC-4 page-size-flexibility / no-preference-for-64 requirement is **waived**. Winner-level evidence
+was nonetheless recorded for both reported configs:
+
+| probe | flag | resolved effective page size | result |
+|---|---|---|---|
+| `combo_page32` | `--page-size 32` | **64** (DSA override) | 320/0err, client TPS 24.25 |
+| `indexcache_page32` | `--page-size 32` | **64** (DSA override) | 320/0err, client TPS 26.09 |
+
+Both server logs show `Setting page size to 64 for DeepSeek DSA.` On CUDA, DSA unconditionally
+sets 64 (`python/sglang/srt/server_args.py:1918-1920`; FlashMLA "only supports a page_size of 64",
+`:2852`). So the `--page-size` CLI flag is accepted but the **effective** page size cannot vary
+from 64 without source changes — distinct effective-page-size variation is impossible flags-only on
+this DSA path. Both winners use page 64 by hard architectural constraint, not by preference.
 
 ## Out-of-scope axes — confirmed ABSENT in both winners (hard constraint)
 Neither config uses EP / MoE a2a (`--moe-a2a-backend`, deepep), alternate MoE runners,
@@ -160,8 +162,13 @@ backend swaps are neutral (decode is pinned to `fa3`-class cost). Lower-risk is 
 only the accuracy-risk IndexCache (26.5) moves the metric — satisfying AC-7's ordering.
 
 ## Accuracy-risk ladder (hard constraint) — how it was respected
-Non-accuracy-risk knobs were exhausted first (scheduler capacity, DSA backends under bf16,
-speculative params, DP-vs-TP, page size, schedule policy — see table above). Then, in strict order:
+**Chronology, stated honestly:** the accuracy-risk knobs (FP8 KV, IndexCache) were first probed in
+round 0 *before* the full lower-risk sweep was complete; round 1 then **retrospectively filled the
+lower-risk evidence gap** (mrr80/96, mem0.9+cuda-graph, lighter EAGLE, bf16 DSA backends — table
+above) and confirmed none beats the incumbent. So the *final ranking* is fully supported by
+evidence — no lower-risk knob is left unexplored and every accuracy-risk knob is flagged — but we
+do **not** claim the chronological ladder was walked strictly in order. With that caveat, the
+knob assessment is:
 - **FP8 KV** (`--kv-cache-dtype fp8_e4m3`): **fully permitted** (user-confirmed, not gated).
   Tested in 3 configs (baseline, combo, combo+IndexCache) → **regressed every time** (forces
   slower `flashmla_kv` decode; not capacity-bound) → rejected on merit.

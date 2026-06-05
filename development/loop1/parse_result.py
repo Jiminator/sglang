@@ -13,15 +13,36 @@ import os
 import re
 
 CONCURRENCY = 64
-ITL_TARGET_MS = 33.3
+# OFFICIAL metric (owner re-baseline, round 2): client TPS = total_output_tokens /
+# (total_latency - TTFT) = Sigma tokens / Sigma decode_time per run; target >= 30 TPS.
+# median_itl_ms is retained only as a (speculation-inflated) cross-check.
+TPS_TARGET = 30.0
 TTFT_TARGET_MS = 22000.0
+ITL_TARGET_MS = 33.3  # cross-check only (client's retracted 1000/ITL form)
+
+
+def client_tps_from_record(rec):
+    """Client ground-truth TPS for one run: Sigma output_tokens / Sigma decode_time,
+    where decode_time per request = latency - ttft = sum(itls). Needs --output-details."""
+    itls = rec.get("itls")
+    if not itls:
+        return float("nan")
+    olens = rec.get("output_lens")
+    tot_tok = 0.0
+    tot_dt = 0.0
+    for i, row in enumerate(itls):
+        if not row:
+            continue
+        tot_dt += sum(row)
+        tot_tok += (olens[i] if olens else len(row) + 1)
+    return tot_tok / tot_dt if tot_dt > 0 else float("nan")
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 TABLE = os.path.join(os.path.dirname(__file__), "sweep_table.md")
 FACTS_DIR = os.path.join(os.path.dirname(__file__), "logs")
 
 HEADER = (
-    "| tag | changed knob(s) | median_itl_ms | per_user_tps | mean_tpot_ms | "
+    "| tag | changed knob(s) | **client_TPS** | median_itl_ms | mean_tpot_ms | "
     "thr/req | p99_ttft_ms | p99_itl_ms | accept_len | conc | max_conc | "
     "completed | errors | max_total_num_tokens | target_met | rationale |\n"
     "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"
@@ -107,17 +128,18 @@ def main():
     errs = rec.get("errors", [])
     err_count = sum(1 for e in errs if e) if isinstance(errs, list) else "n/a"
 
-    per_user_tps = 1000.0 / median_itl if median_itl == median_itl and median_itl else float("nan")
+    client_tps = client_tps_from_record(rec)          # OFFICIAL metric (owner re-baseline)
     thr_per_req = out_thr / CONCURRENCY if out_thr == out_thr else float("nan")
     facts = scrape_server_facts(args.serve_log)
 
-    target_met = (median_itl <= ITL_TARGET_MS) and (p99_ttft < TTFT_TARGET_MS)
+    # target_met now uses the client ground-truth TPS (>= 30) AND p99 TTFT (< 22 s).
+    target_met = (client_tps >= TPS_TARGET) and (p99_ttft < TTFT_TARGET_MS)
     valid = (completed == 320) and (err_count == 0)
 
     accept_s = f"{accept:.3f}" if isinstance(accept, (int, float)) else str(accept)
     row = (
-        f"| {args.tag} | {args.extra_args or '(base)'} | {median_itl:.2f} | "
-        f"{per_user_tps:.2f} | {mean_tpot:.2f} | {thr_per_req:.2f} | "
+        f"| {args.tag} | {args.extra_args or '(base)'} | {client_tps:.2f} | "
+        f"{median_itl:.2f} | {mean_tpot:.2f} | {thr_per_req:.2f} | "
         f"{p99_ttft:.1f} | {p99_itl:.2f} | {accept_s} | {conc:.1f} | "
         f"{max_conc} | {completed} | {err_count} | "
         f"{facts['max_total_num_tokens']} | {target_met} | {args.rationale} |\n"
@@ -140,8 +162,9 @@ def main():
 
     print("=" * 64)
     print(f"CANDIDATE {args.tag}   valid={valid}  target_met={target_met}")
-    print(f"  median_itl_ms = {median_itl:.2f}  (target <= {ITL_TARGET_MS};  per_user_tps={per_user_tps:.2f})")
-    print(f"  mean_tpot_ms  = {mean_tpot:.2f}  (cross-check; thr/req={thr_per_req:.2f} tok/s)")
+    print(f"  client_TPS    = {client_tps:.2f}  (OFFICIAL; target >= {TPS_TARGET}; =Sigma tok/Sigma decode)")
+    print(f"  median_itl_ms = {median_itl:.2f}  (cross-check only; 1000/itl={1000.0/median_itl:.2f} — spec-inflated)")
+    print(f"  mean_tpot_ms  = {mean_tpot:.2f}  (1000/mean_tpot={1000.0/mean_tpot:.2f}; thr/req={thr_per_req:.2f})")
     print(f"  p99_ttft_ms   = {p99_ttft:.1f}  (target < {TTFT_TARGET_MS})")
     print(f"  p99_itl_ms    = {p99_itl:.2f}   accept_length={accept_s}")
     print(f"  completed={completed}  errors={err_count}  conc={conc:.1f}  max_conc={max_conc}")

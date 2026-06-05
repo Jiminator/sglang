@@ -127,3 +127,15 @@ swaps neutral (decode pinned to fa3-class cost). Lower-risk EXHAUSTED -> only ac
 IndexCache moves the metric. AC-7 ordering satisfied with evidence.
 Dual-metric verdict: plan scalar median_itl≤33.3 MET (combo & indexcache); client TPS 30 NOT met
 (best 26.5, gap ~3.5). P99 TTFT met (~11-12s) throughout. 24 fresh-server runs total.
+
+## Round 2: owner re-baseline to client TPS (Option C) + winner page-size evidence
+Owner chose to rebaseline the OFFICIAL metric to the client's verbatim TPS = Σtok/Σdecode
+≈ 1000/mean_tpot (median_itl demoted to cross-check). parse_result.py + regenerate_table.py
+now compute client_TPS and set target_met = TPS>=30 AND p99_ttft<22000. Whole sweep table
+regenerated (26 runs): target_met=False for all (none reaches 30). Best valid = combo+IndexCache
+26.56 TPS (acc-risk); safe combo 24.22. nospec ties at 26.55 TPS but fails TTFT (29.6s) — decode
+ceiling ~26-27 TPS regardless of speculation; speculation buys TTFT/slot-turnover.
+Winner page-size probes: combo_page32 + indexcache_page32 both launch+benchmark with --page-size 32
+but DSA forces effective page=64 (server_args.py:1918). AC-4 waived by owner (PE-2); evidence recorded.
+Immutable AC-2 could not be edited (loop hook blocks); rebaseline submitted as Goal Tracker Update
+Request for Codex. harness: run_candidate.sh now propagates benchmark/parse failures (STATUS=*_failed).

@@ -88,10 +88,16 @@ brc=$?
 note "benchmark exit=$brc"
 if [ "$brc" != "0" ]; then
   note "benchmark FAILED — last 30 lines:"; tail -30 "$BENCH_LOG" || true
+  echo "CANDIDATE_RESULT TAG=$TAG STATUS=benchmark_failed"
+  exit 4
 fi
 
-python3 "$DIR/parse_result.py" \
+if ! python3 "$DIR/parse_result.py" \
   --tag "$TAG" --serve-log "$SERVE_LOG" \
-  --extra-args "$EXTRA_ARGS" --rationale "$RATIONALE"
+  --extra-args "$EXTRA_ARGS" --rationale "$RATIONALE"; then
+  note "parse FAILED"
+  echo "CANDIDATE_RESULT TAG=$TAG STATUS=parse_failed"
+  exit 5
+fi
 
 echo "CANDIDATE_RESULT TAG=$TAG STATUS=done"
