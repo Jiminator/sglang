@@ -97,7 +97,7 @@ on attention/KV. Evidence:
 The remaining gap is MoE-decode FLOPs, which no flag addresses without expert parallelism
 (EP / a2a) — explicitly out of scope for this fixed TP8 path.
 
-## Sweep table (14 distinct candidates + 4 confirmation reruns = 18 fresh-server runs)
+## Sweep table (20 distinct candidates + 4 confirmation reruns = 24 fresh-server runs)
 
 See `development/loop1/sweep_table.md` for the full machine-generated table (per-candidate
 changed knob, median/mean/p99 ITL, mean/median/p99 TPOT, p99 TTFT, accept_length, observed
@@ -138,9 +138,30 @@ Neither config uses EP / MoE a2a (`--moe-a2a-backend`, deepep), alternate MoE ru
 (`tp_size=8, ep_size=1, dp_size=1, moe_a2a_backend=none`, verified in server_args). No sweep
 budget was spent crash-probing excluded axes.
 
+## Lower-risk ladder — exhaustion evidence (AC-7)
+Before any accuracy-risk knob is treated as best-achievable, the non-accuracy-risk ladder was
+swept on the safe incumbent base (`combo` = EAGLE steps3/topk1/draft4, mem0.85, mrr64,
+chunked-prefill 4096, lpm), fresh server each, all 320/0 err. Client TPS (Σtok/Σdecode):
+
+| candidate | knob vs combo | client TPS | accept | result |
+|---|---|---|---|---|
+| combo (incumbent) | — | 24.2 | 3.09 | safe reference |
+| combo_mrr80 | max-running-requests 80 | 24.4 | 3.15 | ≈combo (noise; conc capped at 64) |
+| combo_mrr96 | max-running-requests 96 | 24.1 | 3.08 | ≈combo (conc capped at 64) |
+| combo_mem90_cg64 | mem-fraction 0.90 + cuda-graph-max-bs 64 | 23.8 | 2.98 | no gain (not capacity-bound) |
+| eagle_xlight | spec steps1/draft2 | 22.3 | **1.88** | worse (accept collapses) |
+| dsa_decode_sparse | bf16 decode=flashmla_sparse | 23.9 | 3.09 | neutral (≈fa3) |
+| dsa_pf_auto | bf16 prefill=flashmla_auto | 24.0 | 3.09 | neutral |
+
+**Conclusion:** every lower-risk knob lands at ~24 TPS — none beats the incumbent. Admission
+knobs (mrr80/96) can't help because the workload caps concurrency at 64; capacity knobs
+(mem0.9) can't help because bf16 KV is not the constraint; lighter speculation hurts; DSA bf16
+backend swaps are neutral (decode is pinned to `fa3`-class cost). Lower-risk is **exhausted**;
+only the accuracy-risk IndexCache (26.5) moves the metric — satisfying AC-7's ordering.
+
 ## Accuracy-risk ladder (hard constraint) — how it was respected
 Non-accuracy-risk knobs were exhausted first (scheduler capacity, DSA backends under bf16,
-speculative params, DP-vs-TP, page size, schedule policy). Then, in strict order:
+speculative params, DP-vs-TP, page size, schedule policy — see table above). Then, in strict order:
 - **FP8 KV** (`--kv-cache-dtype fp8_e4m3`): **fully permitted** (user-confirmed, not gated).
   Tested in 3 configs (baseline, combo, combo+IndexCache) → **regressed every time** (forces
   slower `flashmla_kv` decode; not capacity-bound) → rejected on merit.
@@ -177,12 +198,15 @@ The capacity check did **not** force early FP8 (AC-7.1): bf16 max_total_num_toke
   mem-fraction 0.85, mrr 64): `max_total_num_tokens=300,352`, KV dtype bf16, DSA
   prefill=flashmla_sparse / decode=fa3, cuda_graph_max_bs=512.
 
-## Bottom line (client formula: TPS = Σtokens / (Σlatency − ΣTTFT))
-- **Deploy A (combo)** for a no-accuracy-risk config at **24.3 TPS**, P99 TTFT ~12 s.
-- **Deploy B (combo+IndexCache)** to reach **26.5 TPS** (closest to 30, gap ~3.5), *after* an
-  accuracy eval validates the IndexCache pattern for your quality bar.
-- **FP8 KV does not help** (regresses in all 3 configs) despite being fully permitted — the
-  bottleneck is not KV/attention.
-- **30 TPS is not achievable flags-only** on GLM-5.1-FP8 at concurrency 64 on 8× H200 in this
-  build — the binding cost is MoE-decode compute, which needs expert parallelism (out of scope
-  here) or a smaller/faster model. P99 TTFT is met with wide margin either way.
+## Bottom line
+- **Plan-designated scalar** (`median_itl ≤ 33.3` AND `p99_ttft < 22 s`): **MET** by both `combo`
+  and `combo+IndexCache` — so against the plan's literal acceptance gates, the target passes.
+- **Client ground-truth TPS** (`Σtokens/(Σlatency−ΣTTFT)`): **not met flags-only** —
+  - **Deploy A (`combo`)** = no-accuracy-risk, **24.3 TPS**, P99 TTFT ~12 s.
+  - **Deploy B (`combo+IndexCache`)** = **26.5 TPS** (closest to 30, gap ~3.5), *after* an accuracy
+    eval validates the IndexCache pattern for your quality bar (accuracy-risk flagged).
+- **Lower-risk ladder exhausted** (mrr80/96, mem0.9+cuda-graph, lighter EAGLE, bf16 DSA backends
+  all ≈24 TPS); **FP8 KV regresses** in all 3 configs (fully permitted, rejected on merit).
+- **30 TPS sustained is not achievable flags-only** on GLM-5.1-FP8 at concurrency 64 on 8× H200 in
+  this build — the binding cost is MoE-decode compute, which needs expert parallelism (out of
+  scope) or a smaller/faster model. P99 TTFT is met with wide margin throughout.

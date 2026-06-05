@@ -111,3 +111,19 @@ is the honest figure. Final client-TPS: baseline 23.8 | combo 24.3 | combo+Index
 (best) | combo+FP8 21.7 | combo+IndexCache+FP8 22.9. Gap to 30: best ~3.5 (12%).
 FP8 KV is FULLY PERMITTED (user) yet regresses in all 3 configs (forces flashmla_kv decode,
 not capacity-bound) → rejected on merit, not accuracy. P99 TTFT met (~11–12s) throughout.
+
+## Round 1: lower-risk ladder exhaustion (AC-7) + dual-metric reconciliation
+Owner directives this round: PE-1 client ground-truth TPS = (latency−TTFT)/tokens ⇒
+TPS=Σtok/Σdecode≈1000/mean_tpot is authoritative (1000/ITL retracted as a non-client gloss);
+report it AND the plan scalar median_itl≤33.3 (dual-metric, not a revert). PE-2 page-size-64
+requirement WAIVED. PE-3 FP8 fully allowed.
+
+Lower-risk ladder on combo base (fresh server each, all 320/0err), client TPS:
+  combo 24.2 | mrr80 24.4 | mrr96 24.1 | mem0.9+cg64 23.8 | eagle_xlight(s1/d2) 22.3 (accept 1.88)
+  | dsa_decode=flashmla_sparse 23.9 | dsa_prefill=flashmla_auto 24.0 | indexcache 26.6 (acc-risk).
+=> All lower-risk ≈24 TPS; none beats combo. mrr80/96 inert (workload caps conc at 64);
+mem0.9 inert (not capacity-bound); lighter spec hurts (accept collapses); bf16 DSA backend
+swaps neutral (decode pinned to fa3-class cost). Lower-risk EXHAUSTED -> only accuracy-risk
+IndexCache moves the metric. AC-7 ordering satisfied with evidence.
+Dual-metric verdict: plan scalar median_itl≤33.3 MET (combo & indexcache); client TPS 30 NOT met
+(best 26.5, gap ~3.5). P99 TTFT met (~11-12s) throughout. 24 fresh-server runs total.
