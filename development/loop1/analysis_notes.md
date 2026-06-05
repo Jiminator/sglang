@@ -101,3 +101,13 @@ dense PREFILL attention (TTFT, which has ~10s slack), not the binding decode TPO
   median_tpot 24.8 tok/s, gap to 30 ~5 tok/s (~17%).
 - BEST-ACHIEVABLE (accuracy-risk, flagged): combo + IndexCache.
   median_tpot 27.5 tok/s, gap ~2.5 tok/s (~8%). p99_ttft 11.4s (both well under 22s).
+
+## Client ground-truth TPS + FP8 fully tested (final)
+Client's verbatim TPS definition: "(total latency − TTFT) / total tokens" (seconds/token);
+TPS = inverse = total_tokens/(latency−ttft). Applied to run totals:
+TPS = Σtokens / Σdecode_time ≈ 1000/mean_tpot. ("per user" was an in-house inference, dropped.)
+Per-request mean-of-rates reads higher (over-weights fast short decodes); the literal total/total
+is the honest figure. Final client-TPS: baseline 23.8 | combo 24.3 | combo+IndexCache 26.5
+(best) | combo+FP8 21.7 | combo+IndexCache+FP8 22.9. Gap to 30: best ~3.5 (12%).
+FP8 KV is FULLY PERMITTED (user) yet regresses in all 3 configs (forces flashmla_kv decode,
+not capacity-bound) → rejected on merit, not accuracy. P99 TTFT met (~11–12s) throughout.
