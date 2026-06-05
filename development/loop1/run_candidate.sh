@@ -92,10 +92,16 @@ if [ "$brc" != "0" ]; then
   exit 4
 fi
 
-if ! python3 "$DIR/parse_result.py" \
+python3 "$DIR/parse_result.py" \
   --tag "$TAG" --serve-log "$SERVE_LOG" \
-  --extra-args "$EXTRA_ARGS" --rationale "$RATIONALE"; then
-  note "parse FAILED"
+  --extra-args "$EXTRA_ARGS" --rationale "$RATIONALE"
+prc=$?
+if [ "$prc" = "6" ]; then
+  note "INVALID benchmark content (non-320 completions / request errors)"
+  echo "CANDIDATE_RESULT TAG=$TAG STATUS=invalid_result"
+  exit 6
+elif [ "$prc" != "0" ]; then
+  note "parse FAILED (rc=$prc)"
   echo "CANDIDATE_RESULT TAG=$TAG STATUS=parse_failed"
   exit 5
 fi

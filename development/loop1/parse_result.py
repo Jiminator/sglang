@@ -2,10 +2,11 @@
 """Parse one bench_serving JSONL result + the matching server startup log into
 a sweep-table row and a human summary.
 
-The official per-user-speed metric is median ITL (client formula 1000/ITL_ms);
-mean_tpot_ms and output_throughput/64 are recorded as robustness cross-checks
-(median ITL can look optimistic under speculative token bursts). Targets:
-median_itl_ms <= 33.3 and p99_ttft_ms < 22000.
+Official per-user-speed metric (owner re-baseline, round 2): client TPS =
+total_output_tokens / (total_latency - TTFT) = Sigma tokens / Sigma decode_time
+(>= 30). median_itl_ms / 1000-over-ITL is retained only as a speculation-inflated
+cross-check (it can look optimistic under speculative token bursts). Gates:
+client_TPS >= 30 and p99_ttft_ms < 22000.
 """
 import argparse
 import json
@@ -171,6 +172,9 @@ def main():
     print(f"  max_total_num_tokens={facts['max_total_num_tokens']}  kv_cache_tokens={facts['kv_cache_tokens']}")
     print(f"  needed >= {CONCURRENCY}*4608 = {CONCURRENCY*4608} tokens")
     print("=" * 64)
+    if not valid:
+        print(f"INVALID_RESULT completed={completed} errors={err_count} (expected 320 / 0)")
+        return 6
     return 0
 
 
