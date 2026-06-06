@@ -6,7 +6,7 @@ incumbent combo_baseline. Reads sweep_table.md (gate metrics), _work/<tag>_triag
 (top kernels + overlap + fuse), and logs/rollup_<tag>.txt or the existing md's
 rollup block (category table). Pure file assembly — no GPU.
 """
-import os, re, sys
+import os, re
 
 ROOT = "/sgl-workspace/sglang/development/loop2"
 PROF = os.path.join(ROOT, "profiling")
@@ -112,7 +112,6 @@ def delta_attribution(prefill, decode, rollup, gate_tps):
                 f"(`dsa_backend.py:1846-1848`), and that cost bleeds into the conc-64 chunked-prefill-interleaved "
                 f"decode (not the steady-state decode kernels captured here).")
     # decode in {fa3, flashmla_sparse}
-    dmoe = (moe - BASE["MoE"]) if moe is not None else 0.0
     return (f"**No bottleneck shift vs incumbent.** Category profile is within noise of `combo_baseline` "
             f"(MoE ~{moe:.0f}% vs 38.3%, total {tms:.0f} ms vs {BASE['total_ms']:.0f} ms); gate {gate_tps} TPS ≈ 24.08. "
             f"`decode={decode}` is FA3-class cost — swapping prefill/decode among "
