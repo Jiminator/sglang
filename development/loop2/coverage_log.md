@@ -15,11 +15,22 @@ EAGLE tree (topk>1) is therefore **infeasible flags-only on this DSA path** — 
 Base = combo (EAGLE steps3/topk1/draft4, mem0.85, mrr64, chunked-prefill 4096, lpm) + `--dsa-prefill-backend P --dsa-decode-backend D`.
 Expected (source): `decode=flashmla_auto` → first-request runtime failure (no `auto` branch in decode dispatch, `dsa_backend.py:1726`); `flashmla_kv` under bf16 → launchable, quantizes whole cache (`dsa_backend.py:1846-1848`), expected slow. Owner decision DEC-3: **no pruning** — every launchable cell fully gate-benchmarked AND profiled.
 
-| prefill \ decode | flashmla_sparse | flashmla_kv | flashmla_auto | fa3 |
-|---|---|---|---|---|
-| flashmla_sparse | pending | pending | expect runtime-fail | **done (combo_baseline = 24.08 TPS)** |
-| flashmla_kv | pending | pending | expect runtime-fail | pending |
-| flashmla_auto | pending | pending | expect runtime-fail | pending |
-| fa3 | pending | pending | expect runtime-fail | pending |
+Gate-sweep **COMPLETE** (all 16 cells launch-attempted). Client TPS (selection metric), bf16:
 
-Results are appended to `sweep_table.md` (gate) and per-cell profiles to `profiling/<tag>.md`. This ledger is updated as cells complete.
+| prefill ＼ decode | flashmla_sparse | flashmla_kv | flashmla_auto | fa3 |
+|---|---|---|---|---|
+| **flashmla_sparse** | 24.10 | 15.18 | ❌ reject | **24.08 (combo_baseline)** |
+| **flashmla_kv** | 20.74 | 13.55 | ❌ reject | 20.76 |
+| **flashmla_auto** | 23.57 | 14.72 | ❌ reject | 23.71 |
+| **fa3** | 24.19 | 14.74 | ❌ reject | **24.35 (best)** |
+
+All launchable cells: 320/0 err, conc ≈ 60–62, p99_ttft 12–17 s (all sub-22s, info), `max_total_num_tokens=300352`.
+
+**Failure taxonomy — `decode=flashmla_auto` (all 4 cells): startup-reject.** Observed (not the `:1726` decode assert the plan predicted): during server warmup forward, `ValueError: Unsupported dsa_impl = 'flashmla_auto' for forward_extend. Consider using an other attention backend.` at `python/sglang/srt/layers/attention/dsa_backend.py:1567`. `flashmla_auto` resolves only on the prefill auto-select path (`dsa_backend.py:335,2273`); it has no decode/extend implementation, so selecting it for decode rejects at warmup before serving. (The `flashmla_auto__flashmla_auto` cell raised twice — prefill+decode both auto.)
+
+**Three regimes (kernel attribution pending per-cell profiles):**
+1. `decode ∈ {fa3, flashmla_sparse}` → ~24 TPS, flat with incumbent (best = fa3/fa3 24.35 ≈ baseline 24.08, within ~1% noise). `prefill ∈ {flashmla_sparse, flashmla_auto, fa3}` all equivalent here.
+2. `decode = flashmla_kv` → **severe regression ~13.5–15.2 TPS** (mean_tpot ~66–74 ms). Confirms `_forward_flashmla_kv` "inefficiently quantize[s] the whole cache" (`dsa_backend.py:1846-1848`) under bf16 — slow, as predicted.
+3. `prefill = flashmla_kv` (with fast decode) → ~20.7 TPS (the prefill-side quantize tax dents TTFT/throughput even when decode is fa3/sparse).
+
+**Verdict so far:** no DSA backend swap beats the incumbent meaningfully; fa3/fa3 (24.35) ≈ combo (24.08). Matrix exhausted (12 launchable measured, 4 rejected — no pruning, DEC-3). Per-cell decode profiles for the 11 non-incumbent launchable cells follow (profile→rollup→delete-raw); they attribute each delta to the responsible kernel.

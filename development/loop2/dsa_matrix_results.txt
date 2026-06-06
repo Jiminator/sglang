@@ -1,0 +1,33 @@
+# DSA matrix gate-sweep started 09:40:51
+>>> 09:40:51 CELL prefill=flashmla_sparse decode=flashmla_sparse (tag=dsa_flashmla_sparse__flashmla_sparse)
+CELL prefill=flashmla_sparse decode=flashmla_sparse rc=0 STATUS=done decisive=[]
+>>> 09:49:55 CELL prefill=flashmla_sparse decode=flashmla_kv (tag=dsa_flashmla_sparse__flashmla_kv)
+CELL prefill=flashmla_sparse decode=flashmla_kv rc=0 STATUS=done decisive=[]
+>>> 10:00:14 CELL prefill=flashmla_sparse decode=flashmla_auto (tag=dsa_flashmla_sparse__flashmla_auto)
+CELL prefill=flashmla_sparse decode=flashmla_auto rc=2 STATUS=launch_failed decisive=[220:    raise ValueError(~]
+CELL prefill=flashmla_sparse decode=fa3 STATUS=already_done(combo_baseline=24.08TPS)
+>>> 10:01:59 CELL prefill=flashmla_kv decode=flashmla_sparse (tag=dsa_flashmla_kv__flashmla_sparse)
+CELL prefill=flashmla_kv decode=flashmla_sparse rc=0 STATUS=done decisive=[]
+>>> 10:11:26 CELL prefill=flashmla_kv decode=flashmla_kv (tag=dsa_flashmla_kv__flashmla_kv)
+CELL prefill=flashmla_kv decode=flashmla_kv rc=0 STATUS=done decisive=[]
+>>> 10:22:12 CELL prefill=flashmla_kv decode=flashmla_auto (tag=dsa_flashmla_kv__flashmla_auto)
+CELL prefill=flashmla_kv decode=flashmla_auto rc=2 STATUS=launch_failed decisive=[219:    raise ValueError(~]
+>>> 10:23:52 CELL prefill=flashmla_kv decode=fa3 (tag=dsa_flashmla_kv__fa3)
+CELL prefill=flashmla_kv decode=fa3 rc=0 STATUS=done decisive=[]
+>>> 10:33:20 CELL prefill=flashmla_auto decode=flashmla_sparse (tag=dsa_flashmla_auto__flashmla_sparse)
+CELL prefill=flashmla_auto decode=flashmla_sparse rc=0 STATUS=done decisive=[]
+>>> 10:42:26 CELL prefill=flashmla_auto decode=flashmla_kv (tag=dsa_flashmla_auto__flashmla_kv)
+CELL prefill=flashmla_auto decode=flashmla_kv rc=0 STATUS=done decisive=[]
+>>> 10:52:50 CELL prefill=flashmla_auto decode=flashmla_auto (tag=dsa_flashmla_auto__flashmla_auto)
+CELL prefill=flashmla_auto decode=flashmla_auto rc=2 STATUS=launch_failed decisive=[219:    raise ValueError(~311:    raise ValueError(~]
+>>> 10:54:35 CELL prefill=flashmla_auto decode=fa3 (tag=dsa_flashmla_auto__fa3)
+CELL prefill=flashmla_auto decode=fa3 rc=0 STATUS=done decisive=[]
+>>> 11:03:41 CELL prefill=fa3 decode=flashmla_sparse (tag=dsa_fa3__flashmla_sparse)
+CELL prefill=fa3 decode=flashmla_sparse rc=0 STATUS=done decisive=[]
+>>> 11:12:45 CELL prefill=fa3 decode=flashmla_kv (tag=dsa_fa3__flashmla_kv)
+CELL prefill=fa3 decode=flashmla_kv rc=0 STATUS=done decisive=[]
+>>> 11:23:02 CELL prefill=fa3 decode=flashmla_auto (tag=dsa_fa3__flashmla_auto)
+CELL prefill=fa3 decode=flashmla_auto rc=2 STATUS=launch_failed decisive=[220:    raise ValueError(~]
+>>> 11:24:48 CELL prefill=fa3 decode=fa3 (tag=dsa_fa3__fa3)
+CELL prefill=fa3 decode=fa3 rc=0 STATUS=done decisive=[]
+DSA_MATRIX_GATE_SWEEP_DONE 11:33:50
