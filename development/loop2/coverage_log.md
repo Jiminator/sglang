@@ -39,11 +39,13 @@ All launchable cells: 320/0 err, conc ≈ 60–62, p99_ttft 12–17 s (all sub-2
 
 Directed by the `combo_baseline` profile (comms 16.5%, attn/indexer ~26% — both material). To be gate+profile measured (or closed with cited evidence — no silent skips):
 
-| candidate | flag(s) | targets profile slice | accuracy-risk? | status |
+| candidate | flag(s) | targets profile slice | result (client TPS) | verdict |
 |---|---|---|---|---|
-| fused MoE-sum + all-reduce | `--enable-fused-moe-sum-all-reduce` | comms 16.5% + moe_sum_reduce | no | pending |
-| DSA topk backend = flashinfer | `--dsa-topk-backend flashinfer` | indexer/topk ~8.5% | no | pending |
-| DSA topk backend = torch | `--dsa-topk-backend torch` | indexer/topk ~8.5% | no | pending |
-| continuous decode steps | `--num-continuous-decode-steps 2` | scheduling/CPU gap | no | pending (profile shows <1% idle → likely inert) |
+| fused MoE-sum + all-reduce | `--enable-fused-moe-sum-all-reduce` | comms 16.5% + moe_sum_reduce | **23.33** | no help (≈ incumbent, slightly worse) — fusing comms does not free decode throughput |
+| DSA topk backend = flashinfer | `--dsa-topk-backend flashinfer` | indexer/topk ~8.5% | **20.15** | regress (slower indexer topk) |
+| DSA topk backend = torch | `--dsa-topk-backend torch` | indexer/topk ~8.5% | **launch-fail** | startup-reject: `RuntimeError: Unsupported <DSATopKBackend.TORCH> for SGLANG_DSA_FUSE_TOPK` at `dsa_topk_backend.py:167` (incompatible with the fused-topk CUDA-graph path) |
+| continuous decode steps | `--num-continuous-decode-steps 2` | scheduling/CPU gap | **24.30** | neutral (≈ incumbent) — confirms profile's <1% idle (no scheduling headroom) |
+
+**task6 conclusion:** no profile-directed flags-only follow-up beats the incumbent. The comms (16.5%) and indexer/topk (~8.5%) slices, though material in the profile, are **not flags-only-addressable** — fusing comms is neutral, the alternate topk backends regress or fail. `--enable-two-batch-overlap`/`-single-batch-overlap` not run: the profile shows <1% exposed idle (GPU compute-saturated under CUDA-graph replay), so there is no idle/overlap gap for them to fill, and batch-splitting at conc 64 shrinks the MoE GEMMs (same mechanism as loop-1's DP-attention regression) — closed with profiler evidence, not a silent skip.
 
 Already-on (not headroom): FlashInfer all-reduce fusion (`enable_flashinfer_allreduce_fusion=True`, auto on SM90), overlap schedule (`disable_overlap_schedule=False`). Two/single-batch-overlap (`--enable-two-batch-overlap`/`-single-batch-overlap`): candidate but high regression risk at conc 64 (batch split shrinks MoE GEMMs; aligns with loop-1 DP-attn per-rank-collapse finding) — will probe or close with the profile's negligible-idle evidence.

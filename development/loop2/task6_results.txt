@@ -2,3 +2,7 @@ t6_fused_moe_sum_ar client_TPS=23.33 (neutral/slightly-worse vs 24.08; comms fus
 >>> 13:42:11 t6_topk_flashinfer : --dsa-topk-backend flashinfer
 RESULT t6_topk_flashinfer rc=0 STATUS=done client_TPS    = 20.15 decisive=[]
 >>> 13:51:42 t6_topk_torch : --dsa-topk-backend torch
+RESULT t6_topk_torch rc=2 STATUS=launch_failed  decisive=[]
+>>> 13:53:25 t6_contdecode2 : --num-continuous-decode-steps 2
+RESULT t6_contdecode2 rc=0 STATUS=done client_TPS    = 24.30 decisive=[]
+TASK6_REST_DONE 14:02:30
