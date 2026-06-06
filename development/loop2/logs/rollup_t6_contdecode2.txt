@@ -1,0 +1,11 @@
+total_kernel_us=2572309  (2572.3 ms)
+category                       ms   share%   launches
+MoE                        924.26    35.9%      12480
+Comms                      513.73    20.0%       6800
+Attn(MLA/DSA)              445.48    17.3%       9720
+GEMM(dense/other)          269.74    10.5%      39840
+topk/indexer               138.88     5.4%      18840
+other                       87.88     3.4%      37200
+DSA-indexer                 75.17     2.9%       6640
+Quantize                    63.29     2.5%      25920
+elementwise/norm            53.87     2.1%      20200

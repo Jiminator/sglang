@@ -11,13 +11,19 @@
 
 ## Result summary (client TPS = Σtok/Σdecode)
 
-| config | client TPS | mean_tpot | p99_ttft | accept | 320/0err | note |
+| config | client TPS (3-run mean ± range) | mean_tpot | p99_ttft | accept | 320/0err | note |
 |---|---:|---:|---:|---|---|---|
-| **combo (incumbent, recommended safe)** | **24.08** | 41.6 ms | 15.2 s | 3.14 | ✓ | loop1 safe winner; bf16, DSA prefill=flashmla_sparse/decode=fa3 |
-| DSA fa3/fa3 (matrix best) | 24.35 | 41.2 ms | 12.1 s | 3.12 | ✓ | ≈ incumbent (within ~1% noise) |
-| best flags-only achievable | **~24.1–24.4** | — | — | — | — | **30 TPS NOT reached flags-only** (gap ~5.6, ~19%) |
+| **combo (incumbent, recommended SAFE)** | **24.06 ± 0.15** (24.08/23.89/24.20) | 41.6 ms | ~12–15 s | 3.14 | ✓ | loop1 safe winner; bf16, DSA prefill=flashmla_sparse/decode=fa3 |
+| DSA fa3/fa3 (safe, alt) | 24.17 ± 0.27 (24.35/23.83/24.32) | 41.2 ms | ~12 s | 3.1 | ✓ | statistically indistinguishable from combo |
+| **combo+IndexCache (recommended BEST-ACHIEVABLE, ⚠ ACCURACY-RISK)** | **26.43 ± 0.38** (26.12/26.87/26.30) | ~38 ms | ~11.4 s | 3.0–3.12 | ✓ | only knob that moves the metric; +2.4 TPS via DSA-indexer reuse |
 
-**Verdict: 30 TPS is not achievable flags-only on this build.** No flag (DSA backend, comms-fusion, topk-backend, scheduling, or speculative) beats the ~24.3 TPS incumbent. P99 TTFT is met with wide margin throughout. The accuracy-risk IndexCache knob (loop1's ~26.5 TPS path) was not re-run in loop 2 (loop 1 already characterized it; out of the profile-driven flags scope here unless requested) — it remains the only knob that moved the binding metric, and only by ~2 TPS, still short of 30.
+**Verdict: 30 TPS is not achievable flags-only on this build.** Best **safe** (no accuracy risk) = **combo ≈ 24.1 TPS**; best **achievable** = **combo+IndexCache ≈ 26.4 TPS** (accuracy-risk, gap to 30 ≈ 3.6 / ~12%). No DSA-backend, comms-fusion, topk-backend, scheduling, or speculative flag beats these. P99 TTFT met with wide margin throughout (report-only).
+
+### Safe finalist resolution (AC-2.1)
+`combo` (24.06 ± 0.15) and `fa3/fa3` (24.17 ± 0.27) overlap within run-to-run variance — **statistically indistinguishable**. We recommend **combo** as the stable default-safe config (it is the loop-1-established incumbent and uses default DSA backends); `fa3/fa3` is an equivalent alternative, not a distinct win.
+
+### Best-achievable (accuracy-risk) — combo+IndexCache
+3 fresh-server gate repeats: **26.12 / 26.87 / 26.30 → 26.43 ± 0.38 TPS**, p99_ttft ~11.4 s, accept ~3.0–3.12, 320/0 err. Mechanism confirmed by profile (`profiling/indexcache_loop2.md`): the DSA-indexer category drops from 3.0% → **1.6%** and indexer-logits kernel launches **halve** (6640 → 3600) because IndexCache reuses the DSA indexer result across layers — total decode-loop kernel time 2436 ms vs 2507 ms incumbent. This is the only knob that cut the *binding decode-path* compute. **⚠ Accuracy-risk:** IndexCache reuses the indexer across layers (`index_topk_pattern`); SGLang docs state "negligible accuracy loss," but this latency benchmark **cannot verify quality** — an accuracy eval must gate any production use. Still short of 30 TPS.
 
 ## Central question — answered with profiler evidence
 
@@ -55,13 +61,14 @@ Client TPS, every cell launch-attempted (12 launchable fully gate+profile measur
 ## EAGLE-tree axis (topk>1) — infeasible flags-only
 `--speculative-eagle-topk 2` → hard `ValueError` at launch (`speculative_hook.py:388`): topk>1 + page_size>1 is only supported for `flashinfer`/`fa3`, but DSA forces `attention_backend=dsa` + `page_size=64`. Closed by citation; the incumbent topk=1 verify/draft cost is characterized from the profile (above).
 
-## Profile-directed follow-ups (flags-only) — none beat incumbent
-| candidate | client TPS | verdict |
-|---|---:|---|
-| `--enable-fused-moe-sum-all-reduce` | 23.33 | neutral/slightly worse (comms fusion no help) |
-| `--dsa-topk-backend flashinfer` | 20.15 | regress |
-| `--dsa-topk-backend torch` | launch-fail | `RuntimeError dsa_topk_backend.py:167` (incompatible with fused-topk CUDA-graph) |
-| `--num-continuous-decode-steps 2` | 24.30 | neutral (confirms <1% idle) |
+## Profile-directed follow-ups (flags-only) — none beat incumbent (all profile-backed)
+Each launchable candidate has a decode-phase profile (`profiling/t6_*.md`); profile-backed attribution:
+| candidate | client TPS | profile evidence | verdict |
+|---|---:|---|---|
+| `--enable-fused-moe-sum-all-reduce` | 23.33 | Comms stays **16.4%** (≈ baseline 16.5%), total 2572 ms ≈ 2507 | no help — fusing MoE-sum into all-reduce doesn't cut exposed comms |
+| `--dsa-topk-backend flashinfer` | 20.15 | total kernel time **rises to 3093 ms** (topk/indexer path slower) | regress |
+| `--dsa-topk-backend torch` | launch-fail | — | startup-reject `RuntimeError dsa_topk_backend.py:167` (incompatible with fused-topk CUDA-graph) |
+| `--num-continuous-decode-steps 2` | 24.30 | profile ≈ incumbent (total 2572 ms) | neutral (confirms <1% idle — no scheduling gap) |
 `--enable-two/single-batch-overlap` not run: profile shows <1% exposed idle (compute-saturated) so no overlap gap to fill, and batch-split shrinks MoE GEMMs at conc 64 (loop-1 DP-attn mechanism) — closed with profiler evidence.
 
 ## Recommended config (safe, no accuracy risk)
@@ -75,8 +82,14 @@ SGLANG_ENABLE_SPEC_V2=1 sglang serve \
   --chunked-prefill-size 4096 --schedule-policy lpm
 ```
 Gate result (unprofiled fresh server): client TPS **24.08**, p99_ttft 15.2 s, accept 3.14, 320/0 err, conc 60.6, `max_total_num_tokens=300352`, bf16 KV, DSA prefill=flashmla_sparse/decode=fa3, page 64.
-Finalist stability (AC-2.1): 3 fresh-server gate repeats = **24.08 / 23.89 / 24.20 → 24.06 ± 0.15 TPS** (all 320/0 err, p99_ttft ~12 s). Stable; consistent with loop-1's combo ×3 (24.2/24.3/24.5).
-(`fa3/fa3` 24.35 is within noise and an equally valid pick.)
+Finalist stability (AC-2.1): 3 fresh-server gate repeats = **24.08 / 23.89 / 24.20 → 24.06 ± 0.15 TPS** (all 320/0 err, p99_ttft ~12 s). Stable; consistent with loop-1's combo ×3 (24.2/24.3/24.5). `fa3/fa3` (24.17 ± 0.27 over 3 repeats) is statistically indistinguishable — combo is recommended as the stable default-safe config.
+
+## Recommended config (best-achievable — ⚠ ACCURACY-RISK)
+Same as the safe config plus:
+```
+  --json-model-override-args '{"index_topk_pattern":"FFSFSSSFSSFFFSSSFFFSFSSSSSSFFSFFSFFSSFFFFFFSFFFFFSFFSSSSSSFSFFFSFSSSFSFFSFFSSS"}'
+```
+Gate (3 repeats): **26.12 / 26.87 / 26.30 → 26.43 ± 0.38 TPS**, p99_ttft ~11.4 s, accept ~3.0–3.12, 320/0 err. Closest to 30 (gap ~3.6). **Must be gated by an accuracy eval before production use** (this latency benchmark cannot verify quality).
 
 ## Scope (AC-8) — flags-only preserved
 `git diff 7800740ad..HEAD -- python sgl-kernel test development/benchmark.sh` is **empty**; `benchmark.sh` byte-unchanged. Resolved args: `tp_size=8, ep_size=1, dp_size=1, moe_a2a_backend=none, enable_torch_compile=False`, no NGRAM/pdmux/deepep/aiter/trtllm. All gate numbers from the unmodified harness.
@@ -89,5 +102,5 @@ Finalist stability (AC-2.1): 3 fresh-server gate repeats = **24.08 / 23.89 / 24.
 - **Harness** `run_candidate.sh` (fresh-server gate), `parse_result.py` (client TPS, TTFT report-only), `profile_candidate.sh` (non-scoring profile-only, steady-state window, no `--profile-by-stage`), `dsa_matrix.sh` / `profile_matrix.sh` / `task6_*` drivers. Profiler insights in `profiling/<tag>.md`; raw traces deleted after extraction (DEC-4). Full gate rows: `sweep_table.md`; coverage: `coverage_log.md`.
 
 ## Bottom line
-- **Best flags-only ≈ 24.1–24.4 TPS** (incumbent combo 24.08 / matrix best fa3/fa3 24.35); **30 TPS not reachable flags-only**, P99 TTFT met throughout.
-- **Profiler-grounded verdict:** MoE/deep-GEMM compute (~49% of decode) is the binding ceiling; the material comms (16.5%) and attention (~26%) slices were each probed flags-only and none helped. Closing the gap requires expert parallelism (EP/a2a — out of scope) or a faster model.
+- **Best SAFE ≈ 24.06 ± 0.15 TPS** (combo; fa3/fa3 indistinguishable). **Best ACHIEVABLE ≈ 26.43 ± 0.38 TPS** (combo+IndexCache, accuracy-risk). **30 TPS not reachable flags-only** (safe gap ~5.9, best-achievable gap ~3.6); P99 TTFT met throughout.
+- **Profiler-grounded verdict:** MoE/deep-GEMM compute (~49% of decode) is the binding ceiling; the material comms (16.5%) and attention (~26%) slices were each probed flags-only and none helped (fused-comms neutral, topk-backends regress/fail, scheduling inert). The **only** knob that cut the binding decode cost is IndexCache (+2.4 TPS, via DSA-indexer reuse 3.0%→1.6% — profile-confirmed), accuracy-risk and still short of 30. Closing the remaining gap requires expert parallelism (EP/a2a — out of scope) or a faster model.

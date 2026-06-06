@@ -1,0 +1,20 @@
+# round1 started 14:33:05
+>>> 14:33:05 GATE indexcache_loop2
+GATE indexcache_loop2 rc=0 client_TPS    = 26.12 STATUS=done 
+>>> 14:41:20 PROFILE indexcache_loop2
+PROFILE indexcache_loop2 prc=0 rollup+triage_ok
+>>> 14:50:12 GATE indexcache_rep2
+GATE indexcache_rep2 rc=0 client_TPS    = 26.87 STATUS=done 
+>>> 14:58:29 GATE indexcache_rep3
+GATE indexcache_rep3 rc=0 client_TPS    = 26.30 STATUS=done 
+>>> 15:06:44 GATE fa3fa3_rep2
+GATE fa3fa3_rep2 rc=0 client_TPS    = 23.83 STATUS=done 
+>>> 15:15:44 GATE fa3fa3_rep3
+GATE fa3fa3_rep3 rc=0 client_TPS    = 24.32 STATUS=done 
+>>> 15:24:42 PROFILE t6_fused_moe_sum_ar
+PROFILE t6_fused_moe_sum_ar prc=0 rollup+triage_ok
+>>> 15:34:32 PROFILE t6_topk_flashinfer
+PROFILE t6_topk_flashinfer prc=0 rollup+triage_ok
+>>> 15:44:44 PROFILE t6_contdecode2
+PROFILE t6_contdecode2 prc=0 rollup+triage_ok
+ROUND1_RUNS_DONE 15:54:30
