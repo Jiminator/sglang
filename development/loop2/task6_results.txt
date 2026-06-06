@@ -1,0 +1,4 @@
+t6_fused_moe_sum_ar client_TPS=23.33 (neutral/slightly-worse vs 24.08; comms fusion no help)
+>>> 13:42:11 t6_topk_flashinfer : --dsa-topk-backend flashinfer
+RESULT t6_topk_flashinfer rc=0 STATUS=done client_TPS    = 20.15 decisive=[]
+>>> 13:51:42 t6_topk_torch : --dsa-topk-backend torch
