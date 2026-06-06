@@ -1,0 +1,24 @@
+# profile-matrix started 11:36:18
+>>> 11:36:18 PROFILE prefill=flashmla_sparse decode=flashmla_sparse (tag=dsa_flashmla_sparse__flashmla_sparse)
+CELL flashmla_sparse__flashmla_sparse prc=0 rollup_written delete_raw
+>>> 11:46:09 PROFILE prefill=flashmla_sparse decode=flashmla_kv (tag=dsa_flashmla_sparse__flashmla_kv)
+CELL flashmla_sparse__flashmla_kv prc=0 rollup_written delete_raw
+>>> 11:57:24 PROFILE prefill=flashmla_kv decode=flashmla_sparse (tag=dsa_flashmla_kv__flashmla_sparse)
+CELL flashmla_kv__flashmla_sparse prc=0 rollup_written delete_raw
+>>> 12:07:35 PROFILE prefill=flashmla_kv decode=flashmla_kv (tag=dsa_flashmla_kv__flashmla_kv)
+CELL flashmla_kv__flashmla_kv prc=0 rollup_written delete_raw
+>>> 12:19:01 PROFILE prefill=flashmla_kv decode=fa3 (tag=dsa_flashmla_kv__fa3)
+CELL flashmla_kv__fa3 prc=0 rollup_written delete_raw
+>>> 12:29:14 PROFILE prefill=flashmla_auto decode=flashmla_sparse (tag=dsa_flashmla_auto__flashmla_sparse)
+CELL flashmla_auto__flashmla_sparse prc=0 rollup_written delete_raw
+>>> 12:39:07 PROFILE prefill=flashmla_auto decode=flashmla_kv (tag=dsa_flashmla_auto__flashmla_kv)
+CELL flashmla_auto__flashmla_kv prc=0 rollup_written delete_raw
+>>> 12:50:20 PROFILE prefill=flashmla_auto decode=fa3 (tag=dsa_flashmla_auto__fa3)
+CELL flashmla_auto__fa3 prc=0 rollup_written delete_raw
+>>> 13:00:14 PROFILE prefill=fa3 decode=flashmla_sparse (tag=dsa_fa3__flashmla_sparse)
+CELL fa3__flashmla_sparse prc=0 rollup_written delete_raw
+>>> 13:10:07 PROFILE prefill=fa3 decode=flashmla_kv (tag=dsa_fa3__flashmla_kv)
+CELL fa3__flashmla_kv prc=0 rollup_written delete_raw
+>>> 13:21:09 PROFILE prefill=fa3 decode=fa3 (tag=dsa_fa3__fa3)
+CELL fa3__fa3 prc=0 rollup_written delete_raw
+PROFILE_MATRIX_DONE 13:30:55

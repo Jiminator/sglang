@@ -34,3 +34,16 @@ All launchable cells: 320/0 err, conc ≈ 60–62, p99_ttft 12–17 s (all sub-2
 3. `prefill = flashmla_kv` (with fast decode) → ~20.7 TPS (the prefill-side quantize tax dents TTFT/throughput even when decode is fa3/sparse).
 
 **Verdict so far:** no DSA backend swap beats the incumbent meaningfully; fa3/fa3 (24.35) ≈ combo (24.08). Matrix exhausted (12 launchable measured, 4 rejected — no pruning, DEC-3). Per-cell decode profiles for the 11 non-incumbent launchable cells follow (profile→rollup→delete-raw); they attribute each delta to the responsible kernel.
+
+## Profile-directed follow-up candidates (task6, flags-only, in-scope)
+
+Directed by the `combo_baseline` profile (comms 16.5%, attn/indexer ~26% — both material). To be gate+profile measured (or closed with cited evidence — no silent skips):
+
+| candidate | flag(s) | targets profile slice | accuracy-risk? | status |
+|---|---|---|---|---|
+| fused MoE-sum + all-reduce | `--enable-fused-moe-sum-all-reduce` | comms 16.5% + moe_sum_reduce | no | pending |
+| DSA topk backend = flashinfer | `--dsa-topk-backend flashinfer` | indexer/topk ~8.5% | no | pending |
+| DSA topk backend = torch | `--dsa-topk-backend torch` | indexer/topk ~8.5% | no | pending |
+| continuous decode steps | `--num-continuous-decode-steps 2` | scheduling/CPU gap | no | pending (profile shows <1% idle → likely inert) |
+
+Already-on (not headroom): FlashInfer all-reduce fusion (`enable_flashinfer_allreduce_fusion=True`, auto on SM90), overlap schedule (`disable_overlap_schedule=False`). Two/single-batch-overlap (`--enable-two-batch-overlap`/`-single-batch-overlap`): candidate but high regression risk at conc 64 (batch split shrinks MoE GEMMs; aligns with loop-1 DP-attn per-rank-collapse finding) — will probe or close with the profile's negligible-idle evidence.
