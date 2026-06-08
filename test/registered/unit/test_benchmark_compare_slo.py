@@ -24,6 +24,7 @@ import os
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 
 def _load_comparator():
@@ -156,6 +157,47 @@ class TestDecodeTpsSloGate(unittest.TestCase):
         # The DS SLO verdict for the 22.0 s row is fail.
         self.assertEqual(BC._slo_verdict(ds), "fail")
         self.assertIn("verdict", report.lower())
+
+
+class TestAbsoluteClientSLOGate(unittest.TestCase):
+    """The R10/R11 absolute client-SLO gate (DEC-2 mandatory-to-land): a column must
+    itself meet decode-TPS p50 >= 30 AND P99 TTFT < 22 s, independent of the DS/DSA ratio."""
+
+    @staticmethod
+    def _m(tps, ttft):
+        return SimpleNamespace(output_tps_p50=tps, ttft_p99_s=ttft)
+
+    def test_locked_ds_rows_fail(self):
+        # The actual R10 locked DS rows (decode-TPS 23.10/17.18/17.16, all < 30) must FAIL.
+        for tps, ttft in [(23.101, 3.670), (17.176, 42.949), (17.164, 79.419)]:
+            v = BC._evaluate_client_slo(self._m(tps, ttft))
+            self.assertFalse(v["pass"])
+            self.assertFalse(v["tps_pass"])
+            self.assertIn("decode-TPS", v["reason"])
+
+    def test_passing_row_passes(self):
+        # decode-TPS >= 30 AND P99 TTFT < 22 -> pass.
+        v = BC._evaluate_client_slo(self._m(31.6, 14.154))
+        self.assertTrue(v["pass"])
+        self.assertTrue(v["tps_pass"])
+        self.assertTrue(v["ttft_pass"])
+        self.assertEqual(v["reason"], "")
+
+    def test_ttft_strict_boundary(self):
+        # 22.000 s fails (strict <); just under passes (with TPS >= 30).
+        self.assertFalse(BC._evaluate_client_slo(self._m(35.0, 22.0))["ttft_pass"])
+        self.assertFalse(BC._evaluate_client_slo(self._m(35.0, 22.0))["pass"])
+        self.assertTrue(BC._evaluate_client_slo(self._m(35.0, 21.999))["pass"])
+
+    def test_tps_boundary(self):
+        # Exactly 30 passes the TPS bar (>=); just under fails.
+        self.assertTrue(BC._evaluate_client_slo(self._m(30.0, 5.0))["tps_pass"])
+        self.assertFalse(BC._evaluate_client_slo(self._m(29.999, 5.0))["tps_pass"])
+
+    def test_missing_data_fails_closed(self):
+        self.assertFalse(BC._evaluate_client_slo(self._m(None, 5.0))["pass"])
+        self.assertFalse(BC._evaluate_client_slo(self._m(35.0, None))["pass"])
+        self.assertIn("missing-data", BC._evaluate_client_slo(self._m(None, None))["reason"])
 
 
 if __name__ == "__main__":

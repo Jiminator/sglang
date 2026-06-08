@@ -471,6 +471,43 @@ def _evaluate_ac11_gates(
     return result
 
 
+def _evaluate_client_slo(m: RunMetrics) -> Dict[str, object]:
+    """Evaluate the ABSOLUTE client-SLO bars for one side at one concurrency.
+
+    The AC-11 gate above is DIRECTIONAL (DS vs DSA ratio). DEC-2 makes the client
+    SLO itself mandatory-to-land, so a column must ALSO meet the absolute bars:
+    decode-TPS p50 >= 30 (SLO_PER_REQUEST_TPS_P50) AND P99 TTFT < 22 s
+    (SLO_TTFT_P99_S, strict). Missing/degenerate inputs fail closed.
+    """
+    result: Dict[str, object] = {
+        "decode_tps_p50": m.output_tps_p50,
+        "ttft_p99_s": m.ttft_p99_s,
+        "tps_pass": False,
+        "ttft_pass": False,
+        "pass": False,
+        "reason": "",
+    }
+    if m.output_tps_p50 is None or m.ttft_p99_s is None:
+        result["reason"] = "missing-data: need output_tps_p50 + ttft_p99_s"
+        return result
+    tps_pass = float(m.output_tps_p50) >= SLO_PER_REQUEST_TPS_P50
+    ttft_pass = float(m.ttft_p99_s) < SLO_TTFT_P99_S
+    reasons: List[str] = []
+    if not tps_pass:
+        reasons.append(
+            f"decode-TPS {m.output_tps_p50:.2f} < {SLO_PER_REQUEST_TPS_P50:.0f}"
+        )
+    if not ttft_pass:
+        reasons.append(
+            f"P99 TTFT {m.ttft_p99_s:.3f} s >= {SLO_TTFT_P99_S:.0f} s"
+        )
+    result["tps_pass"] = tps_pass
+    result["ttft_pass"] = ttft_pass
+    result["pass"] = tps_pass and ttft_pass
+    result["reason"] = "; ".join(reasons)
+    return result
+
+
 # AC-11 reproducibility floors per plan §AC-11 (fixed seed, 120s warmup,
 # 600s measurement).
 AC11_MIN_WARMUP_SECONDS = 120.0
@@ -978,13 +1015,48 @@ def _render_ac11_markdown(
             f"| {_fmt(ds_ach)} | {frac} |"
         )
     rows.append("")
+    _ds_mems = sorted({row.get("ds_mem_fraction") for row in by_conc.values()
+                       if row.get("ds_mem_fraction") is not None})
+    _ds_mem_str = ", ".join(f"{v:g}" for v in _ds_mems) if _ds_mems else "the recorded value"
     rows.append(
-        "When DS achieved concurrency is below nominal while DSA tracks nominal, "
-        "the DS P99 TTFT gap is partly queue/admission-bound (a mem-0.6 KV-pool "
-        "effect), not solely per-request latency. Per DEC-7 a TTFT/TPS miss is a "
-        "recorded directional follow-up, not a build-break."
+        "When DS achieved concurrency is below nominal while DSA tracks nominal, the DS "
+        f"P99 TTFT gap is partly queue/admission-bound (DS mem_fraction_static={_ds_mem_str} "
+        "reserves a smaller KV pool), not solely per-request latency."
     )
     rows.append("")
+
+    # Absolute client-SLO gate (DEC-2 mandatory-to-land): the DS column must itself
+    # meet decode-TPS >= 30 and P99 TTFT < 22 s, not only beat the DS/DSA ratio.
+    rows.append("## Absolute client-SLO gate (DEC-2 mandatory-to-land)")
+    rows.append("")
+    rows.append(
+        f"Bars: decode-TPS p50 ≥ {SLO_PER_REQUEST_TPS_P50:.0f} tok/s AND "
+        f"P99 TTFT < {SLO_TTFT_P99_S:.0f} s (strict)."
+    )
+    rows.append("")
+    rows.append("| Conc | DSA decode-TPS | DSA P99 TTFT | DSA SLO | DS decode-TPS | DS P99 TTFT | DS SLO |")
+    rows.append("|------|----------------|--------------|---------|---------------|-------------|--------|")
+    client_fail_reasons: List[str] = []
+    for conc in sorted(by_conc.keys()):
+        d_slo: Dict[str, object] = by_conc[conc]["dsa_client_slo"]  # type: ignore[assignment]
+        s_slo: Dict[str, object] = by_conc[conc]["ds_client_slo"]   # type: ignore[assignment]
+        rows.append(
+            f"| {conc} | {_fmt(d_slo.get('decode_tps_p50'))} | {_fmt(d_slo.get('ttft_p99_s'))} "
+            f"| {'pass' if d_slo['pass'] else 'FAIL'} "
+            f"| {_fmt(s_slo.get('decode_tps_p50'))} | {_fmt(s_slo.get('ttft_p99_s'))} "
+            f"| {'pass' if s_slo['pass'] else 'FAIL'} |"
+        )
+        if not s_slo["pass"]:
+            client_fail_reasons.append(f"conc={conc}: DS {s_slo['reason']}")
+    rows.append("")
+    if client_fail_reasons:
+        rows.append("**DS client-SLO verdict: FAIL** (DEC-2 mandatory-to-land NOT met for DS-on):")
+        for reason in client_fail_reasons:
+            rows.append(f"- {reason}")
+    else:
+        rows.append("**DS client-SLO verdict: PASS** (DS-on meets the DEC-2 mandatory client bars).")
+    rows.append("")
+
     if overall_fail_reasons:
         rows.append("## AC-11 verdict: FAIL")
         rows.append("")
@@ -1125,6 +1197,7 @@ def _run_ac11_mode(args) -> int:
 
     by_conc: Dict[int, Dict[str, object]] = {}
     any_fail = False
+    client_slo_fail = False
 
     def _read_pair(p: str, *, side: str) -> Tuple[RunContext, RunMetrics, Dict]:
         ctx, m = _read_bench_jsonl(p)
@@ -1221,11 +1294,18 @@ def _run_ac11_mode(args) -> int:
             logger.error("AC-11 median refusal at conc=%d: %s", conc, exc)
             return 2
         gate = _evaluate_ac11_gates(dsa_median, ds_median)
+        ds_slo = _evaluate_client_slo(ds_median)
+        dsa_slo = _evaluate_client_slo(dsa_median)
+        # DS memory reservation from metadata (for the admission note) — not matched.
+        ds_mem = (ds_metas[0].get("server_args") or {}).get("mem_fraction_static")
         by_conc[conc] = {
             "dsa_median": dsa_median, "ds_median": ds_median, "gate": gate,
+            "ds_client_slo": ds_slo, "dsa_client_slo": dsa_slo, "ds_mem_fraction": ds_mem,
         }
         if not gate["tps_pass"] or not gate["ttft_pass"]:
             any_fail = True
+        if not ds_slo["pass"]:
+            client_slo_fail = True
 
     md = _render_ac11_markdown(by_conc)
     if args.output:
@@ -1241,21 +1321,30 @@ def _run_ac11_mode(args) -> int:
                 "ttft_ceil_ratio": AC11_TTFT_CEIL_RATIO,
                 "min_trials": AC11_MIN_TRIALS,
             },
+            "client_slo_bars": {
+                "decode_tps_p50_min": SLO_PER_REQUEST_TPS_P50,
+                "ttft_p99_s_max_exclusive": SLO_TTFT_P99_S,
+            },
             "per_concurrency": {
                 str(conc): {
                     "dsa_median": asdict(row["dsa_median"]),
                     "ds_median": asdict(row["ds_median"]),
                     "gate": row["gate"],
+                    "ds_client_slo": row["ds_client_slo"],
+                    "dsa_client_slo": row["dsa_client_slo"],
                 }
                 for conc, row in by_conc.items()
             },
             "verdict": "FAIL" if any_fail else "PASS",
+            "client_slo_verdict": "FAIL" if client_slo_fail else "PASS",
         }
         with open(args.json_output, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
         logger.info("wrote AC-11 JSON report to %s", args.json_output)
 
-    return 3 if any_fail else 0
+    # Non-zero on EITHER the directional gate or the absolute client-SLO gate, so the
+    # artifacts fail machine-readably on the DEC-2 mandatory client bars, not only ratios.
+    return 3 if (any_fail or client_slo_fail) else 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
