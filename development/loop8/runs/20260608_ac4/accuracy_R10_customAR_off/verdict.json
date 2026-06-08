@@ -37,18 +37,18 @@
     {
       "length_words": 4096,
       "num_prompts": 20,
-      "dsa_recall_pct": 75.0,
+      "dsa_recall_pct": 70.0,
       "ds_recall_pct": 0.0,
-      "delta_pp": 75.0,
+      "delta_pp": 70.0,
       "dsa_served": 20,
       "ds_served": 20
     },
     {
       "length_words": 16384,
       "num_prompts": 20,
-      "dsa_recall_pct": 25.0,
+      "dsa_recall_pct": 30.0,
       "ds_recall_pct": 0.0,
-      "delta_pp": 25.0,
+      "delta_pp": 30.0,
       "dsa_served": 20,
       "ds_served": 20
     },

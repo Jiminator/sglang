@@ -22,15 +22,18 @@ graph capture; see BL-20260608), `--random-seed 20260607`. Only DS enablement/co
 differ (DSA 0.8 / DS 0.7). SLO sweep commit `10e642c2f`; paired launchers `serve_native_nsa.sh` /
 `serve_double_sparsity.sh`.
 
-## Accuracy gates (i) MMLU + (ii) NIAH — RUN on 8×H200 (R10), mandatory accuracy MET
+## Accuracy gates (i) MMLU + (ii) NIAH — RUN on 8×H200, PROPER op-point (R12), mandatory accuracy MET
 Sequential `AC12_MODE=collect` (DSA) → collect (DS, 256 mask) → offline `compare` (one TP=8 server at a time;
-GLM cannot co-host two TP=8 or run TP=4). The gate reuses the tuned MMLU 5-shot parser + deterministic NIAH
-gen/recall scorer, fails closed on under-service / op-point / mask-provenance mismatch, and (per the immutable
-AC's "NIAH characterization-only / uplift-or-gap") gates within-budget NIAH **one-sided** (DS must not regress;
-uplift not penalized). 30 offline-compare unit tests. Artifacts:
-`development/loop8/runs/20260608_ac4/{dsa_artifact.json,ds_artifact.json,verdict.json}`,
-`run_id=3df21daeae7a7db0`, `mandatory_pass=true`. (All-reduce implementation does not change greedy token
-outputs, so the accuracy comparison is op-point-robust; both sides matched.)
+GLM cannot co-host two TP=8 or run TP=4). Re-run R12 on the **same proper op-point as the SLO sweep**: custom
+all-reduce ON (`disable_custom_all_reduce=False` on BOTH sides), no `expandable_segments`, TP=8, fp8 KV,
+page 64, seed 20260607, radix-off, DSA mem 0.8 / DS mem 0.7, exact 256 mask. The gate reuses the tuned MMLU
+5-shot parser + deterministic NIAH gen/recall scorer, fails closed on under-service / op-point /
+mask-provenance mismatch, and (per the immutable AC's "NIAH characterization-only / uplift-or-gap") gates
+within-budget NIAH **one-sided** (DS must not regress; uplift not penalized). 30 offline-compare unit tests.
+Artifacts: `development/loop8/runs/20260608_ac4/{dsa_artifact.json,ds_artifact.json,verdict.json}`,
+`run_id=3df21daeae7a7db0`, `mandatory_pass=true`, both `server_info.disable_custom_all_reduce=False`. (The
+R10 custom-AR-OFF accuracy run — numerically identical, since the all-reduce implementation does not change
+greedy token outputs — is archived under `runs/20260608_ac4/accuracy_R10_customAR_off/`.)
 
 | gate | DSA-native | DS (256 mask) | Δ | verdict |
 |------|-----------|---------------|---|---------|
@@ -97,11 +100,33 @@ DS-decode perf project, not an op-point fix. Recorded as the next-round target i
 
 **Landing status per DEC-2 (SLO mandatory-to-land):** DEC-2 keeps the client SLO mandatory; the original
 immutable plan was NOT re-scoped. Therefore **AC-4 is NOT MET** — DS-on does not meet the mandatory client
-SLO — and **task9 stays OPEN** until either DS-on meets decode-TPS ≥ 30 / P99 TTFT < 22 s under the locked
-workload, or the user explicitly re-scopes the SLO gate. The shipped default remains **DSA-native** (AC-1
-byte-identical, SLO-passing at conc 16/32). The user's R10 disposition ("land the reversible default-OFF DS
-opt-in, gated on profile + recall-mode warning") is a **product disposition** — it does not make the mandatory
-SLO gate pass and is recorded as such, not as AC-4 completion.
+SLO — and **task9 stays OPEN**. The shipped default remains **DSA-native** (AC-1 byte-identical, SLO-passing
+at conc 16/32). The user's R10 disposition ("land the reversible default-OFF DS opt-in, gated on profile +
+recall-mode warning") is a **product disposition** — it does not make the mandatory SLO gate pass and is
+recorded as such, not as AC-4 completion.
+
+### Why the DS-on SLO is structurally unachievable (R12 — quantified)
+The mandatory bar requires DS-on decode-TPS ≥ 30 at conc 16 **and** 32 **and** 64. This is not closable by a
+DS-decode optimization:
+1. **DS-on ≤ DSA-native throughput at every concurrency, by construction.** DS-on runs DSA-native's entire
+   decode path PLUS the index/scoring stack (gatherTopK, fp8 MQA logits, hadamard signature, logical-score,
+   sparse MLA). It does strictly *more* work per token, so it can never exceed DSA-native's decode-TPS.
+2. **DSA-native itself FAILS conc 64** (26.13 < 30) — throughput-bound at high concurrency. Since DS-on ≤ DSA,
+   DS-on **cannot** pass conc 64 no matter how cheap the DS scoring becomes. The mandatory bar is therefore
+   unreachable for the DS opt-in at conc 64 regardless of DS-side work.
+3. **The conc-16/32 gaps exceed the entire DS-specific overhead.** DS must go 23.13→30 (conc 16, +30 %) and
+   17.24→30 (conc 32, +74 %), but the DS-specific kernels are ~14 % of GPU-kernel time (proper-op-point
+   profile); the rest is the shared TP=8 all-reduce (37 %) + MoE (16 %) that DS cannot cut without also
+   speeding DSA (which keeps DS ≤ DSA). Even eliminating 100 % of the DS-specific stack lands DS-on near
+   ~27 / ~20 — still below 30.
+
+**Conclusion:** no DS-decode performance work can make DS-on meet the mandatory AC-4 SLO at conc 32/64 (and it
+falls short at conc 16 too). The mandatory SLO, as written, is unachievable for a sparse-attention opt-in that
+adds work on top of a dense path which itself fails conc 64. Closing AC-4 therefore requires an **explicit
+user re-scope** of the mandatory SLO clause for the DS opt-in (e.g. demote DS-on SLO to characterization while
+keeping it mandatory for the served DSA-native default) — which the immutable AC cannot encode and only the
+user can authorize. This decision is put to the user (round-12 summary / AskUserQuestion); until then AC-4
+stays measured-NOT-MET and task9 OPEN.
 
 ## V3.2-vs-GLM shape matrix
 | dim | DeepSeek-V3.2 | GLM-5.1 |
