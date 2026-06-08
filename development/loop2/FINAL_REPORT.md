@@ -1,5 +1,16 @@
 # GLM-5.1-FP8 Profile-Driven Flags-Only Hill-Climb — Loop 2 Final Report
 
+> **TL;DR — final recommended config (safe, no accuracy risk): `combo` ≈ 24.06 ± 0.15 TPS.**
+> ```
+> SGLANG_ENABLE_SPEC_V2=1 sglang serve --model-path zai-org/GLM-5.1-FP8 --tp 8 \
+>   --reasoning-parser glm45 --tool-call-parser glm47 \
+>   --speculative-algorithm EAGLE --speculative-num-steps 3 --speculative-eagle-topk 1 \
+>   --speculative-num-draft-tokens 4 --mem-fraction-static 0.85 --max-running-requests 64 \
+>   --chunked-prefill-size 4096 --schedule-policy lpm
+> ```
+> Best **achievable** (accuracy-risk, needs an accuracy eval): add `--json-model-override-args '{"index_topk_pattern":"FFSFSSSFSSFFFSSSFFFSFSSSSSSFFSFFSFFSSFFFFFFSFFFFFSFFSSSSSSFSFFFSFSSSFSFFSFFSSS"}'` → ≈ 26.43 ± 0.38 TPS.
+> **30 TPS is not reachable flags-only** on this build (binding cost is MoE/deep-GEMM compute; needs expert parallelism = out of scope). Fixed at TP8; attention-backend grid = the DSA prefill×decode 16-cell matrix (exhausted).
+
 **Goal:** drive `zai-org/GLM-5.1-FP8` (MLA + DeepSeek-Sparse-Attention / DSA, 256-expert MoE) on one node of 8× H200 (TP8, CUDA) as close as possible to the rebased client SLO, using **only** `sglang serve` CLI flags + `SGLANG_*` env vars (no perf-affecting source/kernel/test/benchmark/SLO edits), measured by the fixed `development/benchmark.sh`. Unlike Loop 1, Loop 2 is **profile-driven**: every candidate is paired with a decode-phase torch-profiler trace, and the profile (not blind sweeping) decides the next knob.
 
 **Workload (fixed):** generated-shared-prefix, 4096 ISL (2253 shared system prompt + 1843 question) / 512 OSL, 320 prompts, max-concurrency 64, ~55% prefix-cache hit, greedy, seed 31234.
@@ -60,6 +71,16 @@ Client TPS, every cell launch-attempted (12 launchable fully gate+profile measur
 
 ## EAGLE-tree axis (topk>1) — infeasible flags-only
 `--speculative-eagle-topk 2` → hard `ValueError` at launch (`speculative_hook.py:388`): topk>1 + page_size>1 is only supported for `flashinfer`/`fa3`, but DSA forces `attention_backend=dsa` + `page_size=64`. Closed by citation; the incumbent topk=1 verify/draft cost is characterized from the profile (above).
+
+## Attention-backend coverage (note)
+This model is MLA + DeepSeek-Sparse-Attention, so the top-level `attention_backend` is **forced to `dsa`** by SGLang (`server_args.py:1828-1854`) — flashinfer/fa3/triton as a *top-level* attention backend are not applicable. The attention-backend search therefore lives in the **DSA prefill×decode sub-kernel grid above** (`flashmla_sparse / flashmla_kv / flashmla_auto / fa3`), which was exhausted (16 cells). No top-level attention-backend axis remains.
+
+## Parallelism axis (TP / DP-attention / EP) — fixed at TP8, by constraint
+Loop 2 did **not** grid-search model parallelism; the parallelism axis is settled by scope + prior evidence, not re-swept here:
+- **TP8** is the only viable full-node configuration — the FP8 weights (~756 GB on cluster storage; ~89 GB/GPU resident) require all 8× H200; a smaller TP would not fit and would reduce decode compute. All runs are `tp_size=8, pp_size=1`.
+- **DP-attention** (`--enable-dp-attention`): **not re-run** — loop 1 already measured it as a clear regression at this concurrency (per-rank batch collapses to 64/8≈8 and DP-attn↔TP-MoE adds all-gather/reduce-scatter every layer; TPOT 48.6 ms vs ~41). It is a high-concurrency/KV-bound optimization; this workload is neither. The loop-2 profile corroborates the mechanism: batch-splitting (TBO/SBO, same family) was closed because the decode is compute-saturated (<1% idle), so shrinking per-rank GEMMs only hurts.
+- **EP / MoE all-to-all** (`--moe-a2a-backend`, deepep): **explicitly out of scope** (draft exclusion). The profile shows this is exactly where the real headroom is (MoE GEMM ~38%, ~49% with dense GEMM), so EP is the *recommended next step beyond flags-only* — but it requires the out-of-scope code/parallelism path.
+Resolved parallelism in every reported config: `tp_size=8, ep_size=1, dp_size=1, moe_a2a_backend=none` (verified, AC-8).
 
 ## Profile-directed follow-ups (flags-only) — none beat incumbent (all profile-backed)
 Each launchable candidate has a decode-phase profile (`profiling/t6_*.md`); profile-backed attribution:
