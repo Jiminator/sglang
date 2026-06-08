@@ -1,0 +1,44 @@
+# Community 856
+
+> 9 nodes
+
+## Key Concepts
+
+- **N=576,K=7168,device_name=AMD_Instinct_MI325X,dtype=fp8_w8a8,block_shape=[128, 128].json** (18 connections) — `python/sglang/srt/layers/quantization/configs/N=576,K=7168,device_name=AMD_Instinct_MI325X,dtype=fp8_w8a8,block_shape=[128, 128].json`
+- **96** (8 connections) — `python/sglang/srt/layers/quantization/configs/N=576,K=7168,device_name=AMD_Instinct_MI325X,dtype=fp8_w8a8,block_shape=[128, 128].json`
+- **BLOCK_SIZE_M** (1 connections) — `python/sglang/srt/layers/quantization/configs/N=576,K=7168,device_name=AMD_Instinct_MI325X,dtype=fp8_w8a8,block_shape=[128, 128].json`
+- **BLOCK_SIZE_N** (1 connections) — `python/sglang/srt/layers/quantization/configs/N=576,K=7168,device_name=AMD_Instinct_MI325X,dtype=fp8_w8a8,block_shape=[128, 128].json`
+- **BLOCK_SIZE_K** (1 connections) — `python/sglang/srt/layers/quantization/configs/N=576,K=7168,device_name=AMD_Instinct_MI325X,dtype=fp8_w8a8,block_shape=[128, 128].json`
+- **GROUP_SIZE_M** (1 connections) — `python/sglang/srt/layers/quantization/configs/N=576,K=7168,device_name=AMD_Instinct_MI325X,dtype=fp8_w8a8,block_shape=[128, 128].json`
+- **num_warps** (1 connections) — `python/sglang/srt/layers/quantization/configs/N=576,K=7168,device_name=AMD_Instinct_MI325X,dtype=fp8_w8a8,block_shape=[128, 128].json`
+- **num_stages** (1 connections) — `python/sglang/srt/layers/quantization/configs/N=576,K=7168,device_name=AMD_Instinct_MI325X,dtype=fp8_w8a8,block_shape=[128, 128].json`
+- **waves_per_eu** (1 connections) — `python/sglang/srt/layers/quantization/configs/N=576,K=7168,device_name=AMD_Instinct_MI325X,dtype=fp8_w8a8,block_shape=[128, 128].json`
+
+## Relationships
+
+- [[Community 1350]] (1 shared connections)
+- [[Community 1351]] (1 shared connections)
+- [[Community 1352]] (1 shared connections)
+- [[Community 1353]] (1 shared connections)
+- [[Community 1354]] (1 shared connections)
+- [[Community 1355]] (1 shared connections)
+- [[Community 1356]] (1 shared connections)
+- [[Community 1357]] (1 shared connections)
+- [[Community 1358]] (1 shared connections)
+- [[Community 1359]] (1 shared connections)
+- [[Community 1360]] (1 shared connections)
+- [[Community 1361]] (1 shared connections)
+
+## Source Files
+
+- `python/sglang/srt/layers/quantization/configs/N=576,K=7168,device_name=AMD_Instinct_MI325X,dtype=fp8_w8a8,block_shape=[128, 128].json`
+
+## Audit Trail
+
+- EXTRACTED: 33 (100%)
+- INFERRED: 0 (0%)
+- AMBIGUOUS: 0 (0%)
+
+---
+
+*Part of the graphify knowledge wiki. See [[index]] to navigate.*

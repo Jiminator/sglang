@@ -1,0 +1,43 @@
+# Community 2244
+
+> 8 nodes
+
+## Key Concepts
+
+- **E=64,N=1536,device_name=NVIDIA_H100_80GB_HBM3.json** (19 connections) — `python/sglang/srt/layers/moe/moe_runner/triton_utils/configs/triton_3_5_1/E=64,N=1536,device_name=NVIDIA_H100_80GB_HBM3.json`
+- **16** (7 connections) — `python/sglang/srt/layers/moe/moe_runner/triton_utils/configs/triton_3_5_1/E=64,N=1536,device_name=NVIDIA_H100_80GB_HBM3.json`
+- **BLOCK_SIZE_M** (1 connections) — `python/sglang/srt/layers/moe/moe_runner/triton_utils/configs/triton_3_5_1/E=64,N=1536,device_name=NVIDIA_H100_80GB_HBM3.json`
+- **BLOCK_SIZE_N** (1 connections) — `python/sglang/srt/layers/moe/moe_runner/triton_utils/configs/triton_3_5_1/E=64,N=1536,device_name=NVIDIA_H100_80GB_HBM3.json`
+- **BLOCK_SIZE_K** (1 connections) — `python/sglang/srt/layers/moe/moe_runner/triton_utils/configs/triton_3_5_1/E=64,N=1536,device_name=NVIDIA_H100_80GB_HBM3.json`
+- **GROUP_SIZE_M** (1 connections) — `python/sglang/srt/layers/moe/moe_runner/triton_utils/configs/triton_3_5_1/E=64,N=1536,device_name=NVIDIA_H100_80GB_HBM3.json`
+- **num_warps** (1 connections) — `python/sglang/srt/layers/moe/moe_runner/triton_utils/configs/triton_3_5_1/E=64,N=1536,device_name=NVIDIA_H100_80GB_HBM3.json`
+- **num_stages** (1 connections) — `python/sglang/srt/layers/moe/moe_runner/triton_utils/configs/triton_3_5_1/E=64,N=1536,device_name=NVIDIA_H100_80GB_HBM3.json`
+
+## Relationships
+
+- [[Community 9192]] (1 shared connections)
+- [[Community 9193]] (1 shared connections)
+- [[Community 9194]] (1 shared connections)
+- [[Community 9195]] (1 shared connections)
+- [[Community 9196]] (1 shared connections)
+- [[Community 9197]] (1 shared connections)
+- [[Community 9198]] (1 shared connections)
+- [[Community 9199]] (1 shared connections)
+- [[Community 9200]] (1 shared connections)
+- [[Community 9201]] (1 shared connections)
+- [[Community 9202]] (1 shared connections)
+- [[Community 9203]] (1 shared connections)
+
+## Source Files
+
+- `python/sglang/srt/layers/moe/moe_runner/triton_utils/configs/triton_3_5_1/E=64,N=1536,device_name=NVIDIA_H100_80GB_HBM3.json`
+
+## Audit Trail
+
+- EXTRACTED: 32 (100%)
+- INFERRED: 0 (0%)
+- AMBIGUOUS: 0 (0%)
+
+---
+
+*Part of the graphify knowledge wiki. See [[index]] to navigate.*
