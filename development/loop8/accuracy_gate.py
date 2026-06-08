@@ -46,12 +46,18 @@ MMLU_TOLERANCE_PP = 1.0
 NIAH_WITHIN_BUDGET_TOLERANCE_PP = 5.0
 
 # Stable server-op-point fields both sides must share (fetched from /get_server_info).
-# The ONLY intended column differences are the DS knobs:
+# Includes the CUDA-graph / overlap / piecewise flags proven op-point-defining in
+# this loop (the same fields benchmark_compare.py locks for the SLO sweep). The ONLY
+# intended column differences are the DS knobs (OPPOINT_ALLOWED_DIFF).
 OPPOINT_FIELDS = (
     "model_path", "tp_size", "page_size", "kv_cache_dtype", "disable_radix_cache",
     "dsa_prefill_backend", "dsa_decode_backend", "attention_backend", "random_seed",
+    "disable_piecewise_cuda_graph", "disable_overlap_schedule", "disable_cuda_graph",
 )
 OPPOINT_ALLOWED_DIFF = ("enable_double_sparsity", "mem_fraction_static")
+# DS-side provenance: captured (not required to match — DSA has none) so the verdict
+# proves the DS column measured the intended channel mask.
+OPPOINT_DS_PROVENANCE = ("double_sparsity_config",)
 
 
 def _sha(s: str) -> str:
@@ -84,6 +90,11 @@ def _check_op_point(dsa: Dict[str, Any], ds: Dict[str, Any]) -> None:
              + "; ".join(mismatches))
     _require(da.get("enable_double_sparsity") is False, "dsa side has enable_double_sparsity != False")
     _require(sa.get("enable_double_sparsity") is True, "ds side has enable_double_sparsity != True")
+    # Provenance: the DS column must prove which channel mask it measured.
+    ds_mask = _ds_mask_path(sa)
+    _require(bool(ds_mask),
+             "ds side server_info has no double_sparsity_config.channel_mask_path "
+             "(cannot prove which mask was measured — fail closed)")
 
 
 def _check_mmlu_served(side: str, mm: Dict[str, Any]) -> None:
@@ -173,14 +184,22 @@ def compare(dsa: Dict[str, Any], ds: Dict[str, Any]) -> Dict[str, Any]:
         de, se = d_be[L], s_be[L]
         _require(de.get("prompt_set_hash") and de.get("prompt_set_hash") == se.get("prompt_set_hash"),
                  f"NIAH beyond-budget prompt-set hash mismatch at length {L}")
-        dr = _pct(int(de.get("hits", 0)), max(int(de.get("served", 0)), 1))
-        sr = _pct(int(se.get("hits", 0)), max(int(se.get("served", 0)), 1))
-        beyond_rows.append({"length_words": L, "dsa_recall_pct": round(dr, 2),
-                            "ds_recall_pct": round(sr, 2), "delta_pp": round(dr - sr, 2),
+        dn, sn = int(de.get("num_prompts", 0)), int(se.get("num_prompts", 0))
+        _require(dn > 0 and dn == sn,
+                 f"NIAH beyond-budget num_prompts mismatch/zero at length {L}: dsa={dn} ds={sn}")
+        # Recall over num_prompts (unserved prompts count as misses — matches the
+        # paired harness and the collect artifact's recall_pct). served/errors are
+        # kept as separate admission telemetry, NOT the recall denominator.
+        dr = _pct(int(de.get("hits", 0)), dn)
+        sr = _pct(int(se.get("hits", 0)), sn)
+        beyond_rows.append({"length_words": L, "num_prompts": dn,
+                            "dsa_recall_pct": round(dr, 2), "ds_recall_pct": round(sr, 2),
+                            "delta_pp": round(dr - sr, 2),
                             "dsa_served": de.get("served"), "ds_served": se.get("served")})
 
     return {
         "run_id": dsa["run_id"], "index_topk": index_topk,
+        "ds_channel_mask_path": _ds_mask_path((ds.get("server_info") or {})),
         "mmlu": {"dsa_pct": round(dsa_mmlu, 2), "ds_pct": round(ds_mmlu, 2),
                  "delta_pp": round(mmlu_delta, 2), "tolerance_pp": MMLU_TOLERANCE_PP,
                  "pass": mmlu_pass},
@@ -219,8 +238,22 @@ def _fetch_server_info(base_url: str) -> Dict[str, Any]:
     req = urllib.request.Request(base_url.rstrip("/") + "/get_server_info")
     with urllib.request.urlopen(req, timeout=30) as r:
         info = json.loads(r.read().decode())
-    # /get_server_info already strips private _-prefixed attrs; pick the stable set.
-    return {k: info.get(k) for k in (OPPOINT_FIELDS + OPPOINT_ALLOWED_DIFF)}
+    # /get_server_info already strips private _-prefixed attrs; pick the stable set
+    # plus the DS provenance (config/mask path).
+    return {k: info.get(k) for k in (OPPOINT_FIELDS + OPPOINT_ALLOWED_DIFF + OPPOINT_DS_PROVENANCE)}
+
+
+def _ds_mask_path(server_info: Dict[str, Any]) -> Optional[str]:
+    """Extract channel_mask_path from a DS side's double_sparsity_config (str or dict)."""
+    cfg = server_info.get("double_sparsity_config")
+    if isinstance(cfg, str):
+        try:
+            cfg = json.loads(cfg)
+        except (ValueError, TypeError):
+            return None
+    if isinstance(cfg, dict):
+        return cfg.get("channel_mask_path")
+    return None
 
 
 def _collect_niah(H, base_url, lengths, num, max_new, seed) -> List[Dict[str, Any]]:

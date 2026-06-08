@@ -64,7 +64,7 @@ and conc 32 (31.5 tok/s / 14.2 s), and fails only at conc 64 (24.4 / 28.3 s — 
 so DS is the **reversible default-OFF opt-in fallback**, valuable where the indexer underperforms
 (long-context recall), **not** a throughput win on the standard workload.
 
-## Accuracy gates (i) MMLU + (ii) NIAH — PENDING (executable offline path landed R6)
+## Accuracy gates (i) MMLU + (ii) NIAH — PENDING (executable offline path hardened R8)
 `test/manual/test_double_sparsity_v32.py` requires `DS_BASE_URL` **and** `DSA_BASE_URL` live
 simultaneously (skipUnless); two TP=8 servers cannot co-reside on 8×H200 **and GLM-5.1 cannot run at TP=4**
 (weights ~2× exceed a single H200), so the only viable path is **sequential collect + offline compare**.
@@ -73,9 +73,18 @@ NIAH prompt-gen + recall scorer): `AC12_MODE=collect` scores ONE live server (`A
 `AC12_BASE_URL=…`) and writes a per-side artifact (run_id + prompt-set hashes + hits/totals + index_topk);
 `AC12_MODE=compare` (offline, no server) validates the two sides used the same prompt set and applies the
 mandatory thresholds (MMLU DS within 1.0 pp of DSA; within-budget NIAH DS within 5.0 pp; beyond-budget =
-characterization-only), failing closed on any mismatch. Offline-compare unit tests:
-`test/registered/unit/test_accuracy_gate_compare.py` (9 pass). `AC12_INDEX_TOPK=2048` (GLM index_topk).
-**The scoring RUN (collect DSA → collect DS → compare) on hardware is the next round.**
+characterization-only), failing closed on any mismatch. **Schema v2; publication-safe (R7 fail-closed +
+R8 op-point/provenance hardening).** The offline gate now fails closed when the two sides disagree on the
+full op-point — including `disable_piecewise_cuda_graph`, `disable_overlap_schedule`, `disable_cuda_graph`
+(all proven op-point-defining this loop) — and **requires + records** the DS side's
+`double_sparsity_config.channel_mask_path`, so the verdict proves the 256-sample GLM mask
+(`/models/glm51-fp8-channel-mask-s256.safetensors`, sha 35155ac46ad7) was actually served. Beyond-budget
+NIAH recall is computed as `hits/num_prompts` (harness-consistent: unserved prompts count as misses, NOT
+`hits/served`), requiring matching positive `num_prompts` + prompt-set hash; `served`/error counts are kept
+as separate telemetry. Offline-compare unit tests: `test/registered/unit/test_accuracy_gate_compare.py`
+(23 pass — incl. op-point-mismatch fail-closed for each graph flag, missing-DS-mask fail-closed, and a
+partial-service beyond-budget row reporting 10% not 100% while still not gating). `AC12_INDEX_TOPK=2048`
+(GLM index_topk). **The scoring RUN (collect DSA → collect DS → compare) on hardware is the next round.**
 
 ## DEC-2 landing-policy assessment (preliminary)
 - **AC-1 DS-off byte-identical (mandatory): PASS** (task7, R3 — GLM DSA-native byte-identical HEAD vs

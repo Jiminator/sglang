@@ -35,15 +35,24 @@ WITHIN = (1024, 1536)
 BEYOND = (4096, 16384, 65536)
 
 
-def _server_info(side, *, tp_size=8, random_seed=20260607):
-    return {
+def _server_info(side, *, tp_size=8, random_seed=20260607, piecewise=True,
+                 overlap=True, cuda_graph=False, ds_config="__default__"):
+    si = {
         "model_path": "/glm", "tp_size": tp_size, "page_size": 64,
         "kv_cache_dtype": "fp8_e4m3", "disable_radix_cache": True,
         "dsa_prefill_backend": "flashmla_kv", "dsa_decode_backend": "flashmla_kv",
         "attention_backend": "dsa", "random_seed": random_seed,
+        "disable_piecewise_cuda_graph": piecewise, "disable_overlap_schedule": overlap,
+        "disable_cuda_graph": cuda_graph,
         "enable_double_sparsity": (side == "ds"),
         "mem_fraction_static": 0.7 if side == "ds" else 0.8,  # allowed diff
     }
+    if side == "ds":
+        si["double_sparsity_config"] = (
+            '{"channel_mask_path": "/models/glm51-fp8-channel-mask-s256.safetensors", "top_k": 2048}'
+            if ds_config == "__default__" else ds_config
+        )
+    return si
 
 
 def _side(side, *, mmlu_hits, mmlu_total=200, niah_hits=(19, 18), run_id="RID",
@@ -187,6 +196,56 @@ class TestAccuracyGateCompare(unittest.TestCase):
         with self.assertRaises(AG.GateError) as cm:
             AG.compare(_side("dsa", mmlu_hits=150), ds2)
         self.assertIn("beyond-budget", str(cm.exception))
+
+    def test_clean_pass_records_ds_mask_path(self):
+        v = AG.compare(_side("dsa", mmlu_hits=150), _side("ds", mmlu_hits=149))
+        self.assertTrue(v["mandatory_pass"])
+        self.assertEqual(v["ds_channel_mask_path"],
+                         "/models/glm51-fp8-channel-mask-s256.safetensors")
+
+    def test_piecewise_cuda_graph_mismatch_fails_closed(self):
+        dsa = _side("dsa", mmlu_hits=150, server_info=_server_info("dsa", piecewise=False))
+        ds = _side("ds", mmlu_hits=150, server_info=_server_info("ds", piecewise=True))
+        with self.assertRaises(AG.GateError) as cm:
+            AG.compare(dsa, ds)
+        self.assertIn("op-point", str(cm.exception))
+        self.assertIn("disable_piecewise_cuda_graph", str(cm.exception))
+
+    def test_overlap_and_cuda_graph_mismatch_fail_closed(self):
+        for kw in ("overlap", "cuda_graph"):
+            dsa = _side("dsa", mmlu_hits=150, server_info=_server_info("dsa", **{kw: True}))
+            ds = _side("ds", mmlu_hits=150, server_info=_server_info("ds", **{kw: False}))
+            with self.assertRaises(AG.GateError):
+                AG.compare(dsa, ds)
+
+    def test_ds_missing_mask_path_fails_closed(self):
+        dsa = _side("dsa", mmlu_hits=150)
+        ds = _side("ds", mmlu_hits=150, server_info=_server_info("ds", ds_config="{}"))
+        with self.assertRaises(AG.GateError) as cm:
+            AG.compare(dsa, ds)
+        self.assertIn("channel_mask_path", str(cm.exception))
+
+    def test_beyond_budget_recall_counts_unserved_as_misses(self):
+        # served=1/num_prompts=10/hits=1 must report 10% (not 100%), and not gate.
+        dsa = _side("dsa", mmlu_hits=150)
+        ds = _side("ds", mmlu_hits=150)
+        for art in (dsa, ds):
+            art["niah_beyond_budget"][0].update(num_prompts=10, served=1, hits=1)
+        v = AG.compare(dsa, ds)
+        self.assertTrue(v["mandatory_pass"])  # beyond-budget never gates
+        row = next(r for r in v["niah_beyond_budget_characterization"]
+                   if r["length_words"] == BEYOND[0])
+        self.assertEqual(row["dsa_recall_pct"], 10.0)  # hits/num_prompts, NOT hits/served
+        self.assertEqual(row["ds_recall_pct"], 10.0)
+        self.assertEqual(row["dsa_served"], 1)
+
+    def test_beyond_budget_num_prompts_mismatch_fails_closed(self):
+        dsa = _side("dsa", mmlu_hits=150)
+        ds = _side("ds", mmlu_hits=150)
+        ds["niah_beyond_budget"][0]["num_prompts"] = 8  # != dsa's 10
+        with self.assertRaises(AG.GateError) as cm:
+            AG.compare(dsa, ds)
+        self.assertIn("beyond-budget num_prompts", str(cm.exception))
 
     def test_default_mmlu_data_dir_resolves_repo_path(self):
         # Codex #4: empty AC12_MMLU_DATA_DIR must not reach os.makedirs("").
