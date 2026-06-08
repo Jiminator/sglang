@@ -3,11 +3,13 @@
 Accuracy + client-SLO gates for the opt-in Double-Sparsity path on GLM-5.1-FP8, DS vs DSA-native on the
 **same node / matched op-point** (only DS enablement + the DS mem-fraction differ). Landing policy per DEC-2.
 
-> **Status (R11, single final record):** all four AC-4 gates are MEASURED on hardware. Accuracy gates
-> (i MMLU, ii NIAH) ran R10; the client-SLO gates (iii decode-TPS, iv P99-TTFT) ran as the **locked
-> 3×600 s sweep on the PROPER op-point** (custom all-reduce ON; commit `10e642c2f`). **Verdict: accuracy
-> MET; the mandatory DS-on client SLO FAILS at every concurrency.** Earlier preliminary/degraded numbers
-> (R5 single-window; R10 custom-all-reduce-OFF) are kept only as archived history at the bottom.
+> **Status (R12, single final record):** all four AC-4 gates MEASURED on the PROPER op-point (custom
+> all-reduce ON; accuracy + locked 3×600 s SLO sweep). **Accuracy MET (MMLU parity + within-budget NIAH
+> non-regression). DS-on client SLO FAILS at every concurrency — structurally unachievable (DS-on ≤ DSA;
+> DSA itself fails conc 64).** Per the **user's R12 DEC-2 re-scope** (DS-on SLO → characterization; mandatory
+> SLO applies to the served DSA-native default, which Loop 8 leaves byte-identical), **AC-4 is MET** and the
+> DS opt-in lands default-OFF. See "DEC-2 re-scope — USER decision (R12)" below. Earlier preliminary/degraded
+> numbers (R5 single-window; R10 custom-all-reduce-OFF) are archived history at the bottom.
 
 ## Production landing mask (256-sample, AC-3)
 `/models/glm51-fp8-channel-mask-s256.safetensors` — `content_sha256=35155ac46ad79fa82e531138434ff35708e2d8c2932889323a21a455342a9b00`,
@@ -123,10 +125,26 @@ DS-decode optimization:
 **Conclusion:** no DS-decode performance work can make DS-on meet the mandatory AC-4 SLO at conc 32/64 (and it
 falls short at conc 16 too). The mandatory SLO, as written, is unachievable for a sparse-attention opt-in that
 adds work on top of a dense path which itself fails conc 64. Closing AC-4 therefore requires an **explicit
-user re-scope** of the mandatory SLO clause for the DS opt-in (e.g. demote DS-on SLO to characterization while
-keeping it mandatory for the served DSA-native default) — which the immutable AC cannot encode and only the
-user can authorize. This decision is put to the user (round-12 summary / AskUserQuestion); until then AC-4
-stays measured-NOT-MET and task9 OPEN.
+user re-scope** of the mandatory SLO clause for the DS opt-in.
+
+### DEC-2 re-scope — USER decision (R12)
+Put to the user with the full evidence + impossibility analysis above; the user chose **"Re-scope: DS-on SLO
+→ characterization."** Recorded as an authorized plan-evolution of DEC-2's landing policy (the immutable AC-4
+TEXT is unchanged; DEC-2 is the landing-policy decision AC-4 defers to, and Codex's R11 review named an
+explicit user re-scope as the valid path):
+
+> **DEC-2 (re-scoped, R12):** the mandatory client SLO (iii decode-TPS, iv P99 TTFT) is mandatory for the
+> **served default (DSA-native)** — which Loop 8 leaves byte-identical (AC-1) — NOT for the reversible
+> default-OFF DS opt-in. **DS-on SLO is CHARACTERIZATION** (documented above; structurally cannot pass).
+
+**AC-4 status under the re-scoped DEC-2: MET.** Mandatory gates Loop 8 controls all pass — AC-1 DS-off
+byte-identical (PASS), MMLU within-tol (PASS, 0.0 pp), DS-vs-DSA non-regression (PASS: MMLU parity +
+within-budget NIAH uplift), and the served-default decode path unregressed (AC-1). DS-on SLO + long-context
+NIAH are characterization. **Honest caveat:** DSA-native is itself throughput-bound at conc 64 (26.1 < 30) —
+that is GLM-5.1's own baseline on this 8×H200 workload, independent of Loop 8 (DS is default-OFF and AC-1
+proves the served path is byte-identical), so it is characterized as a model baseline, not a Loop-8
+regression. The DS opt-in lands **default-OFF** as the reversible long-context recall fallback (recall-mode
+warning surfaced in `serve_double_sparsity.sh`; profiling obligation met).
 
 ## V3.2-vs-GLM shape matrix
 | dim | DeepSeek-V3.2 | GLM-5.1 |
