@@ -1,12 +1,12 @@
 {
-  "commit_sha": "080e366f0d842948554ce8c1309f94a456b785a9",
+  "commit_sha": "10e642c2f7c4355142271d1edb02a9d8c6210dad",
   "mode": "double_sparsity",
   "concurrency": 64,
   "seed": 31234,
   "num_prompts": 320,
   "isl_total_tokens": 4096,
   "osl_tokens": 512,
-  "timestamp_utc": "2026-06-08T08:24:56Z",
+  "timestamp_utc": "2026-06-08T16:08:43Z",
   "chunked_prefill_size": 8192,
   "warmup_requests": null,
   "warmup_seconds": 120.0,
@@ -351,7 +351,7 @@
     "enable_tokenizer_batch_encode": false,
     "disable_tokenizer_batch_decode": false,
     "disable_outlines_disk_cache": false,
-    "disable_custom_all_reduce": true,
+    "disable_custom_all_reduce": false,
     "enable_mscclpp": false,
     "enable_torch_symm_mem": false,
     "pre_warm_nccl": false,
@@ -497,8 +497,8 @@
     "enable_quant_communications": false,
     "msprobe_dump_config": null,
     "status": "ready",
-    "max_total_num_tokens": 146304,
-    "max_req_input_len": 146298,
+    "max_total_num_tokens": 142208,
+    "max_req_input_len": 142202,
     "internal_states": [
       {
         "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
@@ -839,7 +839,7 @@
         "enable_tokenizer_batch_encode": false,
         "disable_tokenizer_batch_decode": false,
         "disable_outlines_disk_cache": false,
-        "disable_custom_all_reduce": true,
+        "disable_custom_all_reduce": false,
         "enable_mscclpp": false,
         "enable_torch_symm_mem": false,
         "pre_warm_nccl": false,
@@ -987,12 +987,12 @@
         "enable_grpc": false,
         "grpc_port": 40000,
         "use_mla_backend": true,
-        "last_gen_throughput": 387.39451056662153,
+        "last_gen_throughput": 34.91135492426086,
         "memory_usage": {
-          "weight": 89.04,
-          "kvcache": 8.38,
-          "token_capacity": 146304,
-          "graph": 13.63
+          "weight": 89.24,
+          "kvcache": 8.14,
+          "token_capacity": 142208,
+          "graph": 13.9
         },
         "effective_max_running_requests_per_dp": 2048
       }

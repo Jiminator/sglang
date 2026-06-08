@@ -1,208 +1,107 @@
-# Loop 8 / task9 — GLM-5.1 DS-vs-DSA-native gate record (8×H200, 2026-06-08)
+# Loop 8 / task9 — GLM-5.1 DS-vs-DSA-native gate record (8×H200) — FINAL
 
 Accuracy + client-SLO gates for the opt-in Double-Sparsity path on GLM-5.1-FP8, DS vs DSA-native on the
-**same node/op-point** (only DS enablement + the required DS mem-fraction differ). Landing policy per DEC-2.
+**same node / matched op-point** (only DS enablement + the DS mem-fraction differ). Landing policy per DEC-2.
 
-> **Status of this record:** the **SLO gates (iii decode-TPS, iv P99-TTFT)** are measured live with real
-> DS-vs-DSA numbers below, but at a **PRELIMINARY op-point** (concurrency 32, 64 prompts, single trial, no
-> 120 s/600 s window) — **NOT the final locked landing sweep** (conc 16/32/64 × 3 trials × 600 s). The
-> **accuracy gates (i MMLU, ii NIAH)** are **PENDING** (the harness needs both DS+DSA servers live, which
-> two TP=8 servers cannot do on 8 GPUs — execution plan below). Final landing numbers require the locked
-> sweep; nothing here is marked "final/passed-to-land".
+> **Status (R11, single final record):** all four AC-4 gates are MEASURED on hardware. Accuracy gates
+> (i MMLU, ii NIAH) ran R10; the client-SLO gates (iii decode-TPS, iv P99-TTFT) ran as the **locked
+> 3×600 s sweep on the PROPER op-point** (custom all-reduce ON; commit `10e642c2f`). **Verdict: accuracy
+> MET; the mandatory DS-on client SLO FAILS at every concurrency.** Earlier preliminary/degraded numbers
+> (R5 single-window; R10 custom-all-reduce-OFF) are kept only as archived history at the bottom.
 
 ## Production landing mask (256-sample, AC-3)
-- Path `/models/glm51-fp8-channel-mask-s256.safetensors`, `content_sha256=35155ac46ad7…`,
-  `num_samples=256`, `calibration_source=real`, `label_dim=32`, `head_dim=192`, `layers=78`,
-  `page_size=64`, `dtype=fp8_e4m3`, indices ∈ [0,191]. `load_channel_mask` re-verifies the hash;
-  `verify_bind_shapes(qk_nope=192, label_dim=32, layers=78, TP=8)` PASS. DS server binds it (bind shape
-  gate PASS all 78 layers/8 ranks) and serves. This is the production landing artifact (supersedes the
-  32-sample bring-up mask `e7dbf4c9308f` used for R0 smoke).
+`/models/glm51-fp8-channel-mask-s256.safetensors` — `content_sha256=35155ac46ad79fa82e531138434ff35708e2d8c2932889323a21a455342a9b00`,
+tensor `(78, 64, 32)`, `head_dim=192`, `label_dim=32`, `page_size=64`, `dtype=fp8_e4m3`, `num_samples=256`.
+The accuracy gate proved the DS column served exactly this mask (path + content sha recorded in the verdict).
 
-## Op-point (both columns, same node — R5 preliminary, parity caveat)
-Both columns booted via the **paired locked-op-point launchers** (`serve_native_nsa.sh` DSA-native /
-`serve_double_sparsity.sh` DS) with the GLM model + 256 mask. From each JSONL's `server_info`, the columns
-match on **TP=8, page 64, kv_cache_dtype fp8_e4m3, disable_radix_cache=True, disable_piecewise_cuda_graph=
-True, disable_overlap_schedule=True, dsa_prefill/decode_backend=flashmla_kv** (this **fixes the R4
-op-point mismatch** — R4's DSA had `disable_piecewise_cuda_graph=False`). **Caveat (R6 review):** the
-recorded R5 artifacts still differ on `server_info.random_seed` (DSA 515248618 / DS 689475326) because the
-launchers did not yet pin a seed; the intended config diffs are `enable_double_sparsity` (False/True) and
-`mem_fraction_static` (DSA 0.8 / DS 0.7 — the inherent DS TokenLabelTable reservation). **R6 added a fixed
-`RANDOM_SEED` (20260607, `--random-seed`) to BOTH launchers**, so the **final locked sweep** will be
-seed-matched; this R5 curve is **preliminary** and not seed-matched. Workload: gsp 4096 ISL (sys 2253 +
-q 1843, ~55% prefix cache) / 512 OSL, seed 431.
+## Op-point (both columns, same node — FINAL, proper)
+TP=8, page 64, fp8_e4m3 KV, `--dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv`,
+`--disable-overlap-schedule --disable-piecewise-cuda-graph`, radix cache OFF, **custom all-reduce ON**
+(NOT `expandable_segments` — that CUDA-VMM allocator breaks custom-all-reduce-v2 IPC handles at GLM TP=8
+graph capture; see BL-20260608), `--random-seed 20260607`. Only DS enablement/config + `mem_fraction_static`
+differ (DSA 0.8 / DS 0.7). SLO sweep commit `10e642c2f`; paired launchers `serve_native_nsa.sh` /
+`serve_double_sparsity.sh`.
 
-## SLO gates (iii) decode TPS + (iv) P99 TTFT — parity conc curve (R5, PRELIMINARY window)
-Decode TPS = `output_tokens / (e2e_latency − ttft)` per request (DEC-4). Via `bench_serving` →
-`benchmark_compare.py` (decode-TPS primary, strict `P99 TTFT < 22 s`). **PRELIMINARY:** `num_prompts =
-concurrency`, single pass, NO 120 s/600 s window — short cold runs, not the locked landing sweep (esp.
-conc 64 TTFT is cold-burst-inflated, per BL-20260530-cold-flood-not-steady-state-slo).
-
-| conc | DSA decode P50 | DSA P99 TTFT | DSA verdict | DS decode P50 | DS P99 TTFT | DS verdict |
-|-----:|---------------:|-------------:|:-----------:|--------------:|------------:|:----------:|
-| 16 | **38.69** | 7.24 s | **PASS** | **23.16** | 3.68 s | FAIL (TPS) |
-| 32 | **31.52** | 14.19 s | **PASS** | **17.09** | 37.17 s | FAIL |
-| 64 | 24.35 | 28.32 s | FAIL (cold-burst) | 17.11 | 74.33 s | FAIL |
-
-(DS achieved concurrency 16.0 / 22.6 / 40.2 — admission-bound at conc 32/64 by the smaller DS KV pool.)
-
-**Findings (authoritative for the preliminary window):**
-- **DS-on FAILS the decode-TPS ≥ 30 bar at EVERY concurrency** (best case conc-16 = 23.16 < 30), and the
-  P99-TTFT bar at conc 32/64. Confirmed via the parity-matched comparator (DS SLO verdict: **fail**).
-- **DSA-native PASSES the SLO at conc 16 and 32** (decode ≥ 30 + TTFT < 22 s) and fails only at conc 64
-  (24.35 TPS / 28 s TTFT — a cold-burst short run; re-confirm under the locked steady-state window).
-- DS-on is consistently ~1.4–1.7× slower decode than DSA-native — the expected posture (GLM ships a strong
-  trained DSA indexer; DS is the default-off long-context-recall fallback, not a throughput win here).
-- Artifacts: `runs/20260607_glm51_loop8/parity_{dsa,ds}_c{16,32,64}.jsonl`.
-
-### Reading (characterization) — R5 parity numbers
-At the standard client op-point, **DS-on is slower than DSA-native** (decode P50 17.1 vs 31.5 tok/s at
-conc 32) and its P99 TTFT is admission-bound by the smaller DS KV pool (mem 0.7 + per-rank
-TokenLabelTable → achieved conc 22.6 < 32). **DSA-native PASSES** the SLO at conc 16 (38.7 tok/s / 7.2 s)
-and conc 32 (31.5 tok/s / 14.2 s), and fails only at conc 64 (24.4 / 28.3 s — a cold-burst short run).
-**DS-on fails the decode-TPS ≥ 30 bar at EVERY concurrency** (23.2 / 17.1 / 17.1). Decode is **coherent**
-(not degenerate). This is the **expected** posture from the plan: GLM ships a strong trained DSA indexer,
-so DS is the **reversible default-OFF opt-in fallback**, valuable where the indexer underperforms
-(long-context recall), **not** a throughput win on the standard workload.
-
-## Accuracy gates (i) MMLU + (ii) NIAH — PENDING (executable offline path hardened R9)
-`test/manual/test_double_sparsity_v32.py` requires `DS_BASE_URL` **and** `DSA_BASE_URL` live
-simultaneously (skipUnless); two TP=8 servers cannot co-reside on 8×H200 **and GLM-5.1 cannot run at TP=4**
-(weights ~2× exceed a single H200), so the only viable path is **sequential collect + offline compare**.
-`development/loop8/accuracy_gate.py` provides it (reusing the harness's tuned MMLU parser + deterministic
-NIAH prompt-gen + recall scorer): `AC12_MODE=collect` scores ONE live server (`AC12_SIDE=dsa|ds`,
-`AC12_BASE_URL=…`) and writes a per-side artifact (run_id + prompt-set hashes + hits/totals + index_topk);
-`AC12_MODE=compare` (offline, no server) validates the two sides used the same prompt set and applies the
-mandatory thresholds (MMLU DS within 1.0 pp of DSA; within-budget NIAH DS within 5.0 pp; beyond-budget =
-characterization-only), failing closed on any mismatch. **Schema v3; publication-safe (R7 fail-closed +
-R8 denominator/graph-flags + R9 full-op-point + exact-mask provenance).**
-
-**Op-point (R9): no hand whitelist.** The gate reuses the EXACT stable launch-arg projection
-`development/benchmark_compare.py` derives from `dataclasses.fields(ServerArgs)` (shared via
-`_bench_compare()` so the accuracy and SLO gates cannot drift and a new sglang launch flag is
-auto-protected). It compares the FULL stable ServerArgs set minus only the DS knobs
-(`enable_double_sparsity`/`double_sparsity_config`/radix-fixture) and the DS-vs-DSA memory reservation
-(`mem_fraction_static`). The exact contract: every locked Option-B field (`model_path`, `tp_size`,
-`page_size`, `kv_cache_dtype`, DSA backends, radix, the three CUDA-graph/overlap/piecewise flags) MUST be
-present + non-null on both sides (so a `None == None` "agreement" cannot pass); and the captured stable
-fields are compared by **union**, so any field present on one side only, or differing on both (e.g. `dtype`,
-`max_total_tokens`), fails closed. (A non-locked stable field omitted from BOTH synthetic artifacts is not
-itself rejected — but `collect()` captures the full stable `/get_server_info` projection, so real artifacts
-always carry it.) Unlike the throughput sweep, the accuracy gate **requires `random_seed` parity**
-(greedy/deterministic scoring + this loop's seed-parity mandate).
-
-**Mask provenance (R9): exact path + content hash.** The DS column must prove it served the exact 256-sample
-GLM landing mask: `compare()` fails closed unless `double_sparsity_config.channel_mask_path` equals
-`/models/glm51-fp8-channel-mask-s256.safetensors` **and** the recorded safetensors `content_sha256` equals
-`35155ac46ad79fa82e531138434ff35708e2d8c2932889323a21a455342a9b00` (collect reads the header at score time;
-overridable via `AC12_EXPECTED_DS_MASK_PATH`/`AC12_EXPECTED_DS_MASK_SHA256`). The verdict records both. A
-non-empty-but-wrong path, a wrong/missing hash, and a malformed DS config all fail closed.
-
-**Mandatory accuracy = MMLU within 1.0 pp + within-budget NIAH NON-regression (R10).** The immutable AC-4
-makes NIAH "characterization-only / uplift-or-gap", and the mandatory clause is DS-vs-DSA **non-regression**.
-So within-budget NIAH uses a **one-sided** check — DS must not be *worse* than DSA by more than 5.0 pp (a
-regression fails closed) — and DS *uplift* (DS better) is NOT penalized; the symmetric `within_tolerance` is
-still reported for characterization. Beyond-budget NIAH recall is `hits/num_prompts` (harness-consistent:
-unserved prompts count as misses), pure characterization (DS's `top_k` index budget bounds long-context
-recall by design). Offline-compare unit tests: `test/registered/unit/test_accuracy_gate_compare.py`
-(**30 pass** — incl. within-budget regression fail-closed, within-budget uplift NOT penalized,
-locked-field-missing-from-both, `dtype`-mismatch, wrong/missing-mask-path + wrong/missing-mask-sha +
-malformed-config, per-graph-flag mismatch, partial-service beyond-budget 10%-not-100%). `AC12_INDEX_TOPK=2048`.
-
-### Accuracy RESULT — RUN on 8×H200 (R10), DS-vs-DSA-native on the same node
-Sequential collect → collect → offline compare; matched op-point (TP=8, page 64, fp8 KV, radix-off,
-`--disable-overlap-schedule --disable-piecewise-cuda-graph --disable-custom-all-reduce`, seed 20260607; only
-DS enablement/config + mem-fraction differ — DSA 0.8 / DS 0.7). DS column proven to have served the exact 256
-mask (`channel_mask_path` + `content_sha256=35155ac4…2a9b00`). Artifacts + verdict in
-`development/loop8/runs/20260608_ac4/` (`dsa_artifact.json`, `ds_artifact.json`, `verdict.json`; the original
-symmetric-tolerance verdict preserved as `verdict_symmetric_tolerance_prefix.json`). `run_id=3df21daeae7a7db0`.
+## Accuracy gates (i) MMLU + (ii) NIAH — RUN on 8×H200 (R10), mandatory accuracy MET
+Sequential `AC12_MODE=collect` (DSA) → collect (DS, 256 mask) → offline `compare` (one TP=8 server at a time;
+GLM cannot co-host two TP=8 or run TP=4). The gate reuses the tuned MMLU 5-shot parser + deterministic NIAH
+gen/recall scorer, fails closed on under-service / op-point / mask-provenance mismatch, and (per the immutable
+AC's "NIAH characterization-only / uplift-or-gap") gates within-budget NIAH **one-sided** (DS must not regress;
+uplift not penalized). 30 offline-compare unit tests. Artifacts:
+`development/loop8/runs/20260608_ac4/{dsa_artifact.json,ds_artifact.json,verdict.json}`,
+`run_id=3df21daeae7a7db0`, `mandatory_pass=true`. (All-reduce implementation does not change greedy token
+outputs, so the accuracy comparison is op-point-robust; both sides matched.)
 
 | gate | DSA-native | DS (256 mask) | Δ | verdict |
 |------|-----------|---------------|---|---------|
 | **MMLU** (200 ex, 5-shot, served 200/200 both) | **87.5 %** (175/200) | **87.5 %** (175/200) | 0.0 pp | **PASS** (≤1.0 pp, mandatory) |
-| **NIAH within-budget** L=1024 (20 prompts) | 40.0 % | 65.0 % | DS +25 pp | **non-regression PASS** (DS uplift) |
-| **NIAH within-budget** L=1536 (20 prompts) | 45.0 % | 70.0 % | DS +25 pp | **non-regression PASS** (DS uplift) |
+| NIAH within-budget L=1024 (20 prompts) | 40.0 % | 65.0 % | DS +25 pp | **non-regression PASS** (DS uplift) |
+| NIAH within-budget L=1536 (20 prompts) | 45.0 % | 70.0 % | DS +25 pp | **non-regression PASS** (DS uplift) |
 | NIAH beyond-budget L=4096 (char-only) | 70.0 % | 0.0 % | DS −70 pp | characterization (beyond `top_k`=2048 budget) |
 | NIAH beyond-budget L=16384 (char-only) | 30.0 % | 0.0 % | DS −30 pp | characterization |
 | NIAH beyond-budget L=65536 (char-only) | 5.0 % | 0.0 % | DS −5 pp | characterization |
 
-**Mandatory accuracy verdict: PASS** (`mandatory_pass=true`). DS-on **matches MMLU exactly** and does **not
-regress** within-budget NIAH (it is actually higher within budget). Beyond the 2048-token index budget DS
-recall drops to 0 — the **expected, by-design DS long-context limitation** (the mask indexes only `top_k`
-tokens), recorded as characterization, NOT a mandatory failure. Repro: `AC12_MODE=collect AC12_SIDE=dsa|ds
-AC12_BASE_URL=… AC12_INDEX_TOPK=2048 python development/loop8/accuracy_gate.py` (one server at a time), then
-`AC12_MODE=compare AC12_DSA_ARTIFACT=… AC12_DS_ARTIFACT=…`.
+**Mandatory accuracy verdict: PASS.** DS-on matches MMLU exactly and does not regress within-budget NIAH
+(it is higher). Beyond the 2048-token index budget DS recall is 0 by design (the mask indexes only `top_k`
+tokens) — characterized, not a mandatory failure.
 
-### SLO RESULT — locked sweep on 8×H200 (R10), DS-vs-DSA-native, same node
-Seed-matched paired launchers (radix-off, `--disable-overlap-schedule --disable-piecewise-cuda-graph
---disable-custom-all-reduce`, seed 20260607; DSA mem 0.8 / DS mem 0.7), gsp 4096 ISL / 512 OSL, conc
-16/32/64 × **3 trials × 120 s warmup × 600 s window** (the locked window — supersedes the R5 preliminary
-`num_prompts=conc` numbers). `development/benchmark.sh` → `benchmark_compare.py --ac11`. Artifacts:
-`development/results/{native_nsa,double_sparsity}_gsp_isl4096_osl512_c{16,32,64}_t{1,2,3}.jsonl`; AC-11 report
-`development/loop8/runs/20260608_ac4/slo_ac11_report.txt`.
+## SLO gates (iii) decode-TPS + (iv) P99 TTFT — RUN locked 3×600 s on the PROPER op-point (R11), mandatory FAIL
+Locked sweep: conc 16/32/64 × **3 trials × 120 s warmup × 600 s window**, gsp 4096 ISL / 512 OSL, seed-matched
+paired launchers, **custom all-reduce ON** both columns, commit `10e642c2f`. `benchmark.sh` →
+`benchmark_compare.py --ac11` (directional ratio gate **+ the new absolute client-SLO gate**). Artifacts:
+`development/results/{native_nsa,double_sparsity}_gsp_isl4096_osl512_c{16,32,64}_t{1,2,3}.jsonl` (+ metas),
+report `development/loop8/runs/20260608_ac4/slo2_ac11_report.txt`, JSON `slo2_ac11.json` (comparator exit 3).
 
-| conc | DSA decode-TPS (p50) | DS decode-TPS (p50) | DSA P99 TTFT | DS P99 TTFT | DSA SLO | DS SLO |
-|------|----------------------|---------------------|--------------|-------------|---------|--------|
-| 16 | **41.82** | **23.10** | 7.18 s | 3.67 s | **PASS** | **FAIL** (TPS < 30) |
-| 32 | **31.60** | **17.18** | 14.15 s | 42.95 s | **PASS** | **FAIL** (TPS + TTFT) |
-| 64 | 26.12 | 17.16 | 28.23 s | 79.42 s | FAIL (TPS + TTFT) | **FAIL** (TPS + TTFT) |
+| conc | DSA decode-TPS p50 | DS decode-TPS p50 | DS/DSA | DSA P99 TTFT | DS P99 TTFT | DSA SLO | DS SLO |
+|------|--------------------|-------------------|--------|--------------|-------------|---------|--------|
+| 16 | **42.13** | **23.13** | 0.549 | 7.17 s | 3.65 s | **PASS** | **FAIL** (TPS < 30) |
+| 32 | **31.61** | **17.24** | 0.545 | 14.16 s | 42.78 s | **PASS** | **FAIL** (TPS + TTFT) |
+| 64 | 26.13 | 17.24 | 0.660 | 28.26 s | 78.95 s | FAIL (TPS + TTFT) | **FAIL** (TPS + TTFT) |
 
-Client SLO bars: decode-TPS ≥ 30 (new def `output_tokens/(e2e−ttft)`), P99 TTFT < 22 s. **DS-on FAILS
+Client bars: decode-TPS ≥ 30 (new def `output_tokens/(e2e−ttft)`), P99 TTFT < 22 s (strict). **DS-on FAILS
 decode-TPS at every concurrency** (23/17/17 ≪ 30) and TTFT at conc 32/64; trials are tight (±0.1 TPS).
-DSA-native passes conc 16/32 and is throughput-bound at conc 64. AC-11 directional verdict: **FAIL** (DS/DSA
-TPS ratio 0.55/0.54/0.66 < 0.95 at all conc). Effective-vs-nominal concurrency shows DS achieves 100/97/93 %
-of nominal, so part of the conc-32/64 DS TTFT gap is queue/admission-bound (mem-0.7 KV-pool), not solely
-per-request latency. Per the comparator's profiling obligation, a captured DS profile is the documented
-directional follow-up for the failing rows (does not change the SLO verdict).
+DSA-native passes conc 16/32, throughput-bound at conc 64. AC-11 directional verdict FAIL (DS/DSA ratio
+0.55/0.55/0.66 < 0.95). Achieved-vs-nominal concurrency: DS 100 / 96 / 91 % (DS mem 0.7 reserves a smaller
+KV pool → part of the conc-32/64 DS TTFT gap is queue/admission-bound).
 
-## DEC-2 landing-policy assessment — FINAL (R10, all mandatory gates measured)
-- **AC-1 DS-off byte-identical (mandatory): PASS** (task7, R3 — GLM DSA-native byte-identical vs d018026f9).
-- **MMLU within tolerance of DSA (mandatory): PASS** — DSA 87.5 % == DS 87.5 % (Δ 0.0 pp ≤ 1.0).
-- **DS-vs-DSA non-regression (mandatory): PASS** — served default is DSA-native (unregressed by AC-1); and
-  DS-on does not regress within-budget NIAH (DS is higher: 65/70 % vs 40/45 %).
-- **SLO decode-TPS ≥ 30 + P99 TTFT < 22 s (mandatory): DS-on FAILS at every concurrency** (locked 3×600 s
-  sweep above; 23.10/17.18/17.16 tok/s ≪ 30). DSA-native passes conc 16/32.
-- **NIAH / long-context recall (characterization-only):** DS uplift within budget; DS recall 0 beyond the
-  2048-token index budget (by design) — characterized, not gated.
+**Note — custom all-reduce did not move the throughput.** The R11 proper-op-point numbers are within noise of
+the R10 custom-all-reduce-OFF numbers (DSA 41.8/31.6/26.1, DS 23.1/17.1/17.1). Custom all-reduce only handles
+small tensors; the large TP=8 all-reduces fall back to NCCL regardless (the profile below shows NCCL
+all-reduce at 37 % even with custom-AR ON). The R10 op-point was a confound (now removed) but **immaterial to
+the verdict**: DS-on fails the SLO structurally.
 
-**Landing status per DEC-2 (SLO mandatory):** DS-on meets every mandatory accuracy gate but **does not meet
-the mandatory SLO**. DEC-2 makes the SLO mandatory-to-land, so **DS-on cannot be the served default**. The
-shipped default remains **DSA-native** (AC-1 byte-identical, SLO-passing at conc 16/32). The Loop-8
-deliverable is the **reversible, default-OFF DS opt-in** — coherent, accuracy-parity, mask-validated — whose
-value is long-context recall scenarios where the trained indexer underperforms, NOT a throughput win on this
-standard workload (GLM's trained DSA indexer is strong).
-
-**DEC-2 DECISION (R10, user): LAND the default-OFF opt-in, GATED on (a) the AC-11 profiling obligation +
-(b) a surfaced recall-mode warning.** The user resolved DEC-2 to land the reversible default-OFF DS opt-in
-despite the DS-on SLO miss (DSA-native stays the served default), conditioned on two prerequisites before the
-opt-in is documented as usable:
-1. **Profiling obligation** — a captured DS decode profile for the failing concurrency rows. Tool:
-   `development/profile_ds.sh` (boots DS, captures a torch-profiler trace at a failing conc, summarizes the
-   top GPU kernels behind the throughput gap). Artifact: `development/loop8/runs/20260608_ac4/profile_ds_c32/`
-   (`trace/`, `profile_summary.txt`). [See "DS profile" below.]
-2. **Recall-mode warning surfaced** — `development/serve_double_sparsity.sh` now prints a startup banner that
-   DS is a default-OFF recall-mode opt-in that does NOT meet the throughput SLO (decode-TPS ~23/17/17 ≪ 30),
-   that native DSA is the served default, and that DS should be enabled only for long-context recall.
-
-Recorded as plan evolution (goal tracker). DSA-native remains the served default; DS lands as the reversible
-recall-mode opt-in.
-
-### DS profile (profiling obligation, conc 32 failing row)
-`development/profile_ds.sh PROFILE_CONC=32` booted DS, captured a torch-profiler trace over 40 decode steps
-(bench confirms DS ~16.9 tok/s, matching the locked sweep), and summarized the top GPU kernels (rank TP-0,
-`development/loop8/runs/20260608_ac4/profile_ds_c32/profile_summary.txt`). Top of the DS decode profile:
+### DS profile (profiling obligation, proper op-point, conc 32)
+`development/profile_ds.sh PROFILE_CONC=32` (custom-AR ON, no expandable_segments) →
+`development/loop8/runs/20260608_ac4/profile_ds_c32/profile_summary.txt` (rank TP-0, 136 GPU kernels). Top:
 
 | share | kernel | nature |
 |-------|--------|--------|
-| 35.4 % | `ncclDevKernel_AllReduce_Sum_bf16` | TP all-reduce — inflated because this op-point runs `--disable-custom-all-reduce` (NCCL fallback, forced by the GLM TP=8 custom-all-reduce-v2 boot bug); affects DSA and DS **equally** |
-| 16.0 % | `fused_moe_kernel` | MoE — model-inherent (both columns) |
-| ~13 % (sum) | `gatherTopK` 3.1 %, `topk_transform_prefill` 2.2 %, `sm90_fp8_mqa_logits` 1.9 %, `fast_hadamard_transform` 1.9 %, `_logical_score_kernel` 1.3 %, `per_token_group_quant` (scoring), `flash_fwd_splitkv_mla_fp8_sparse` 0.7 % | **DS-specific** index/scoring/sparse-decode overhead — the per-step cost behind the DS throughput gap |
+| 37.1 % | `ncclDevKernel_AllReduce_Sum_bf16` (+2.9 % f32) | TP=8 all-reduce — inherent, shared with DSA (custom-AR doesn't cover the large all-reduces) |
+| 16.4 % | `fused_moe_kernel` | MoE — model-inherent (both columns) |
+| ~14 % (sum) | `gatherTopK` 3.2 %, `topk_transform_prefill` 2.2 %, `per_token_group_quant` (scoring) 2.2 %, `sm90_fp8_mqa_logits` 2.0 %, `fast_hadamard_transform` 2.0 %, `_logical_score_kernel` 1.5 %, `flash_fwd_splitkv_mla_fp8_sparse` 0.7 % | **DS-specific** index/scoring/sparse-decode overhead — the per-step cost on top of the shared base |
 
-**Reading:** the DS throughput gap is the inherent per-decode-step cost of the DS index/scoring path
-(top-k selection + fp8 MQA logits + hadamard signature + logical scoring + sparse MLA) added on top of the
-base model, NOT a pathological hotspot. Caveat: the 35 % NCCL all-reduce is depressed-absolute for BOTH
-columns because custom-all-reduce is disabled at this op-point (GLM TP=8 boot workaround); fixing the
-upstream custom-all-reduce-v2 capture bug would raise both columns' absolute TPS (DSA could clear conc 64;
-DS would improve but the relative DS scoring overhead remains) — a recorded directional follow-up.
+**Reading:** the DS throughput gap is the inherent per-decode-step DS index/scoring stack added on top of the
+TP=8 all-reduce + MoE base, not a single pathological hotspot. Closing it to ≥ 30 TPS would require materially
+cheaper DS scoring (the gatherTopK / fp8 MQA logits / hadamard / logical-score / sparse-MLA path) — a
+DS-decode perf project, not an op-point fix. Recorded as the next-round target if DS-on must meet the SLO.
+
+## DEC-2 landing-policy assessment — FINAL (all mandatory gates measured on the proper op-point)
+- **AC-1 DS-off byte-identical (mandatory): PASS** (task7, R3).
+- **MMLU within tolerance of DSA (mandatory): PASS** — 87.5 % == 87.5 % (Δ 0.0 pp).
+- **DS-vs-DSA non-regression (mandatory): PASS** — served default is DSA-native (unregressed by AC-1); DS-on
+  does not regress within-budget NIAH (it is higher).
+- **SLO decode-TPS ≥ 30 + P99 TTFT < 22 s (mandatory): DS-on FAILS at every concurrency** (locked, proper
+  op-point). DSA-native passes conc 16/32.
+- **NIAH / long-context recall (characterization-only):** DS uplift within budget; DS 0 beyond the 2048 index
+  budget (by design).
+
+**Landing status per DEC-2 (SLO mandatory-to-land):** DEC-2 keeps the client SLO mandatory; the original
+immutable plan was NOT re-scoped. Therefore **AC-4 is NOT MET** — DS-on does not meet the mandatory client
+SLO — and **task9 stays OPEN** until either DS-on meets decode-TPS ≥ 30 / P99 TTFT < 22 s under the locked
+workload, or the user explicitly re-scopes the SLO gate. The shipped default remains **DSA-native** (AC-1
+byte-identical, SLO-passing at conc 16/32). The user's R10 disposition ("land the reversible default-OFF DS
+opt-in, gated on profile + recall-mode warning") is a **product disposition** — it does not make the mandatory
+SLO gate pass and is recorded as such, not as AC-4 completion.
 
 ## V3.2-vs-GLM shape matrix
 | dim | DeepSeek-V3.2 | GLM-5.1 |
@@ -223,38 +122,39 @@ DS would improve but the relative DS scoring overhead remains) — a recorded di
 The same inherited DS wiring + bind-time `verify_bind_shapes` gate serve both shapes live (V3.2 128/128,
 GLM 192/256) — see task6_serving_smoke.md.
 
-## Repro
-**SLO — sequential per column via the PAIRED launchers (launch-arg parity; seed-matched as of R6):**
+## Repro (final artifacts)
 ```bash
 GLM=/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db
-# DSA-native column:
-MODEL_PATH=$GLM MEM_FRACTION_STATIC=0.8 DISABLE_RADIX_CACHE=1 RANDOM_SEED=20260607 PORT=30000 \
-  bash development/serve_native_nsa.sh   # then bench_serving (gsp 2253+1843/512) per conc -> parity_dsa_c{16,32,64}.jsonl
-# DS column (shut DSA first):
+# --- Accuracy (one TP=8 server at a time; NOT expandable_segments) ---
+MODEL_PATH=$GLM MEM_FRACTION_STATIC=0.8 DISABLE_RADIX_CACHE=1 RANDOM_SEED=20260607 \
+  bash development/serve_native_nsa.sh    # then: AC12_MODE=collect AC12_SIDE=dsa AC12_BASE_URL=… AC12_INDEX_TOPK=2048 python development/loop8/accuracy_gate.py
+# shut DSA, boot DS (256 mask):
 MODEL_PATH=$GLM CHANNEL_MASK_PATH=/models/glm51-fp8-channel-mask-s256.safetensors \
-  MEM_FRACTION_STATIC=0.7 RANDOM_SEED=20260607 PORT=30000 \
-  bash development/serve_double_sparsity.sh   # then the same bench_serving per conc -> parity_ds_c{16,32,64}.jsonl
-python development/benchmark_compare.py --baseline parity_dsa_c32.jsonl --ds parity_ds_c32.jsonl
-```
-**Full locked landing sweep (next round):** `development/benchmark_baseline.sh` (MODE=native_nsa) +
-`benchmark.sh` (MODE=double_sparsity) with `CONCURRENCIES="16 32 64" NUM_PROMPTS=320 TRIALS=3
-WARMUP_SECONDS=120 MEASUREMENT_WINDOW_S=600 RANDOM_SEED=20260607`, then `benchmark_compare.py --ac11`.
-**Accuracy — sequential collect + offline compare (the executable path; both-URLs-at-once is infeasible):**
-```bash
-# boot DSA-native, then:
-AC12_MODE=collect AC12_SIDE=dsa AC12_BASE_URL=http://127.0.0.1:30000 AC12_INDEX_TOPK=2048 \
-  python development/loop8/accuracy_gate.py
-# shut DSA, boot DS (256 mask), then:
-AC12_MODE=collect AC12_SIDE=ds  AC12_BASE_URL=http://127.0.0.1:30000 AC12_INDEX_TOPK=2048 \
-  python development/loop8/accuracy_gate.py
-# offline (no server):
-AC12_MODE=compare AC12_DSA_ARTIFACT=<dsa.json> AC12_DS_ARTIFACT=<ds.json> \
-  python development/loop8/accuracy_gate.py   # exit 0 iff MMLU within 1.0pp AND within-budget NIAH within 5.0pp
+  MEM_FRACTION_STATIC=0.7 TOP_K=2048 RANDOM_SEED=20260607 \
+  bash development/serve_double_sparsity.sh   # then: AC12_MODE=collect AC12_SIDE=ds AC12_BASE_URL=… AC12_INDEX_TOPK=2048 python development/loop8/accuracy_gate.py
+AC12_MODE=compare AC12_DSA_ARTIFACT=runs/20260608_ac4/dsa_artifact.json \
+  AC12_DS_ARTIFACT=runs/20260608_ac4/ds_artifact.json python development/loop8/accuracy_gate.py   # -> verdict.json (exit 0 iff mandatory accuracy passes)
+
+# --- Locked SLO sweep (proper op-point: custom-AR ON, NOT expandable_segments) ---
+# DSA: serve_native_nsa.sh (mem 0.8, DISABLE_RADIX_CACHE=1); DS: serve_double_sparsity.sh (mem 0.7, 256 mask);
+# for each: MODE=<native_nsa|double_sparsity> CONCURRENCIES="16 32 64" TRIALS=3 NUM_PROMPTS=320 \
+#   WARMUP_SECONDS=120 MEASUREMENT_WINDOW_S=600 bash development/benchmark.sh
+python development/benchmark_compare.py --ac11 \
+  --ac11-baseline-results development/results/native_nsa_gsp_isl4096_osl512_c*_t*.jsonl \
+  --ac11-ds-results development/results/double_sparsity_gsp_isl4096_osl512_c*_t*.jsonl \
+  --output runs/20260608_ac4/slo2_ac11_report.txt --json-output runs/20260608_ac4/slo2_ac11.json
+#   exit 3 on the directional ratio OR the absolute client-SLO bars (DS fails both).
+# --- DS decode profile (profiling obligation) ---
+PROFILE_CONC=32 bash development/profile_ds.sh   # -> runs/20260608_ac4/profile_ds_c32/profile_summary.txt
 ```
 
-## Remaining for the final landing record
-1. **Accuracy gates** — RUN the collect→collect→compare flow on hardware (path landed R6, scoring run next).
-2. **Full locked SLO sweep** (conc 16/32/64 × 3 trials × 600 s) for landing-grade steady-state numbers.
-3. **DEC-2 landing decision (user)** — DS-on fails the mandatory SLO at all concurrencies; whether a
-   default-off DS opt-in may land anyway (plan framing) vs literal DEC-2 SLO-mandatory is the user's call,
-   recorded as plan evolution if relaxed.
+---
+## Archived historical context (superseded — NOT the final record)
+- **R5 preliminary SLO** (single window, `num_prompts=conc`, no 120 s/600 s): DSA 38.7/31.5/24.4, DS
+  23.2/17.1/17.1 tok/s — directionally identical to the locked sweep, kept only for history; superseded by
+  the R11 locked sweep above.
+- **R10 degraded-op-point locked SLO** (`--disable-custom-all-reduce` NCCL fallback, forced by the
+  then-undiagnosed boot bug): DSA 41.8/31.6/26.1, DS 23.1/17.2/17.2 tok/s. Artifacts archived under
+  `development/loop8/runs/20260608_ac4/slo_R10_degraded_customAR_off/`. Within noise of the proper op-point —
+  the R11 sweep above is the authoritative record; this is retained to show the op-point confound was
+  immaterial to the verdict.

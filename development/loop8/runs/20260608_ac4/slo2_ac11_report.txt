@@ -1,0 +1,42 @@
+# AC-11 Directional Comparator — DS vs DSA
+
+Gates: DS TPS ≥ 95% of DSA TPS; DS P99 TTFT ≤ DSA P99 TTFT × 1.10. At least 3 trials per concurrency, median.
+
+| Conc | DSA TPS p50 | DS TPS p50 | TPS ratio | TPS gate | DSA TTFT p99 | DS TTFT p99 | TTFT ratio | TTFT gate |
+|------|-------------|------------|-----------|----------|--------------|-------------|------------|-----------|
+| 16 | 42.132 | 23.134 | 0.549 | FAIL | 7.172 | 3.654 | 0.510 | pass |
+| 32 | 31.610 | 17.240 | 0.545 | FAIL | 14.162 | 42.784 | 3.021 | FAIL |
+| 64 | 26.127 | 17.235 | 0.660 | FAIL | 28.260 | 78.954 | 2.794 | FAIL |
+
+## Effective vs nominal concurrency (#F)
+
+| Conc (nominal) | DSA achieved | DS achieved | DS/nominal |
+|----------------|--------------|-------------|------------|
+| 16 | 15.997 | 15.998 | 100% |
+| 32 | 31.992 | 30.704 | 96% |
+| 64 | 63.970 | 58.308 | 91% |
+
+When DS achieved concurrency is below nominal while DSA tracks nominal, the DS P99 TTFT gap is partly queue/admission-bound (DS mem_fraction_static=0.7 reserves a smaller KV pool), not solely per-request latency.
+
+## Absolute client-SLO gate (DEC-2 mandatory-to-land)
+
+Bars: decode-TPS p50 ≥ 30 tok/s AND P99 TTFT < 22 s (strict).
+
+| Conc | DSA decode-TPS | DSA P99 TTFT | DSA SLO | DS decode-TPS | DS P99 TTFT | DS SLO |
+|------|----------------|--------------|---------|---------------|-------------|--------|
+| 16 | 42.132 | 7.172 | pass | 23.134 | 3.654 | FAIL |
+| 32 | 31.610 | 14.162 | pass | 17.240 | 42.784 | FAIL |
+| 64 | 26.127 | 28.260 | FAIL | 17.235 | 78.954 | FAIL |
+
+**DS client-SLO verdict: FAIL** (DEC-2 mandatory-to-land NOT met for DS-on):
+- conc=16: DS decode-TPS 23.13 < 30
+- conc=32: DS decode-TPS 17.24 < 30; P99 TTFT 42.784 s >= 22 s
+- conc=64: DS decode-TPS 17.23 < 30; P99 TTFT 78.954 s >= 22 s
+
+## AC-11 verdict: FAIL
+
+**Profiling obligation:** the failing concurrencies below require a captured profile (`development/profile_ds.sh` or equivalent) before the comparator row can be published.
+
+- conc=16: AC-11 TPS gate failed: DS/DSA = 0.5491 < 0.95 (DS=23.13 tok/s, DSA=42.13 tok/s)
+- conc=32: AC-11 TPS gate failed: DS/DSA = 0.5454 < 0.95 (DS=17.24 tok/s, DSA=31.61 tok/s); AC-11 TTFT gate failed: DS/DSA P99 = 3.0211 > 1.1 (DS=42.784 s, DSA=14.162 s)
+- conc=64: AC-11 TPS gate failed: DS/DSA = 0.6596 < 0.95 (DS=17.23 tok/s, DSA=26.13 tok/s); AC-11 TTFT gate failed: DS/DSA P99 = 2.7938 > 1.1 (DS=78.954 s, DSA=28.260 s)

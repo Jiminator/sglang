@@ -1,0 +1,198 @@
+{
+  "ac11_gates": {
+    "tps_floor_ratio": 0.95,
+    "ttft_ceil_ratio": 1.1,
+    "min_trials": 3
+  },
+  "client_slo_bars": {
+    "decode_tps_p50_min": 30.0,
+    "ttft_p99_s_max_exclusive": 22.0
+  },
+  "per_concurrency": {
+    "16": {
+      "dsa_median": {
+        "concurrency": 16,
+        "num_prompts": 320,
+        "isl": 4096,
+        "osl": 512,
+        "output_tps_p50": 42.132210042400175,
+        "output_tps_p99": 44.317865850422876,
+        "ttft_p50_s": 7.065478218719363,
+        "ttft_p99_s": 7.17162278227508,
+        "tpot_p50_ms": 23.781257763563303,
+        "tpot_p99_ms": 36.0266372938358,
+        "goodput_under_slo": null,
+        "selected_tokens_mean": null,
+        "dense_fallback_total": null,
+        "total_tokens_mean": null,
+        "duration_s": 767.0163628552109,
+        "achieved_concurrency": 15.996716371296232
+      },
+      "ds_median": {
+        "concurrency": 16,
+        "num_prompts": 320,
+        "isl": 4096,
+        "osl": 512,
+        "output_tps_p50": 23.134078187101426,
+        "output_tps_p99": 23.23545508465091,
+        "ttft_p50_s": 3.5756703689694405,
+        "ttft_p99_s": 3.6544213027134536,
+        "tpot_p50_ms": 43.31086542814562,
+        "tpot_p99_ms": 49.630685829595755,
+        "goodput_under_slo": null,
+        "selected_tokens_mean": null,
+        "dense_fallback_total": null,
+        "total_tokens_mean": null,
+        "duration_s": 1028.4086164738983,
+        "achieved_concurrency": 15.997527110532408
+      },
+      "gate": {
+        "tps_ratio": 0.5490829501661606,
+        "ttft_ratio": 0.5095668600620609,
+        "tps_pass": false,
+        "ttft_pass": true,
+        "reason": "AC-11 TPS gate failed: DS/DSA = 0.5491 < 0.95 (DS=23.13 tok/s, DSA=42.13 tok/s)"
+      },
+      "ds_client_slo": {
+        "decode_tps_p50": 23.134078187101426,
+        "ttft_p99_s": 3.6544213027134536,
+        "tps_pass": false,
+        "ttft_pass": true,
+        "pass": false,
+        "reason": "decode-TPS 23.13 < 30"
+      },
+      "dsa_client_slo": {
+        "decode_tps_p50": 42.132210042400175,
+        "ttft_p99_s": 7.17162278227508,
+        "tps_pass": true,
+        "ttft_pass": true,
+        "pass": true,
+        "reason": ""
+      }
+    },
+    "32": {
+      "dsa_median": {
+        "concurrency": 32,
+        "num_prompts": 320,
+        "isl": 4096,
+        "osl": 512,
+        "output_tps_p50": 31.61033142882522,
+        "output_tps_p99": 33.00427845259173,
+        "ttft_p50_s": 14.114599860273302,
+        "ttft_p99_s": 14.162090391032399,
+        "tpot_p50_ms": 31.69713514162603,
+        "tpot_p99_ms": 57.52001696413861,
+        "goodput_under_slo": null,
+        "selected_tokens_mean": null,
+        "dense_fallback_total": null,
+        "total_tokens_mean": null,
+        "duration_s": 603.2155854199082,
+        "achieved_concurrency": 31.991680650885336
+      },
+      "ds_median": {
+        "concurrency": 32,
+        "num_prompts": 320,
+        "isl": 4096,
+        "osl": 512,
+        "output_tps_p50": 17.24041924266789,
+        "output_tps_p99": 17.31967205014025,
+        "ttft_p50_s": 6.483511148951948,
+        "ttft_p99_s": 42.78440413374454,
+        "tpot_p50_ms": 58.11673910366171,
+        "tpot_p99_ms": 69.16411203982896,
+        "goodput_under_slo": null,
+        "selected_tokens_mean": null,
+        "dense_fallback_total": null,
+        "total_tokens_mean": null,
+        "duration_s": 825.9210498128086,
+        "achieved_concurrency": 30.70362203558616
+      },
+      "gate": {
+        "tps_ratio": 0.5454045707014158,
+        "ttft_ratio": 3.021051479860355,
+        "tps_pass": false,
+        "ttft_pass": false,
+        "reason": "AC-11 TPS gate failed: DS/DSA = 0.5454 < 0.95 (DS=17.24 tok/s, DSA=31.61 tok/s); AC-11 TTFT gate failed: DS/DSA P99 = 3.0211 > 1.1 (DS=42.784 s, DSA=14.162 s)"
+      },
+      "ds_client_slo": {
+        "decode_tps_p50": 17.24041924266789,
+        "ttft_p99_s": 42.78440413374454,
+        "tps_pass": false,
+        "ttft_pass": false,
+        "pass": false,
+        "reason": "decode-TPS 17.24 < 30; P99 TTFT 42.784 s >= 22 s"
+      },
+      "dsa_client_slo": {
+        "decode_tps_p50": 31.61033142882522,
+        "ttft_p99_s": 14.162090391032399,
+        "tps_pass": true,
+        "ttft_pass": true,
+        "pass": true,
+        "reason": ""
+      }
+    },
+    "64": {
+      "dsa_median": {
+        "concurrency": 64,
+        "num_prompts": 320,
+        "isl": 4096,
+        "osl": 512,
+        "output_tps_p50": 26.127431892121194,
+        "output_tps_p99": 27.28626711590762,
+        "ttft_p50_s": 28.051441277377307,
+        "ttft_p99_s": 28.260439579803496,
+        "tpot_p50_ms": 38.34884938348354,
+        "tpot_p99_ms": 90.01881431383597,
+        "goodput_under_slo": null,
+        "selected_tokens_mean": null,
+        "dense_fallback_total": null,
+        "total_tokens_mean": null,
+        "duration_s": 713.8004514668137,
+        "achieved_concurrency": 63.97006293697837
+      },
+      "ds_median": {
+        "concurrency": 64,
+        "num_prompts": 320,
+        "isl": 4096,
+        "osl": 512,
+        "output_tps_p50": 17.23461063055767,
+        "output_tps_p99": 17.304215512180804,
+        "ttft_p50_s": 42.681139626540244,
+        "ttft_p99_s": 78.9543818111159,
+        "tpot_p50_ms": 58.13632629367062,
+        "tpot_p99_ms": 69.9448873456604,
+        "goodput_under_slo": null,
+        "selected_tokens_mean": null,
+        "dense_fallback_total": null,
+        "total_tokens_mean": null,
+        "duration_s": 825.8869883809239,
+        "achieved_concurrency": 58.30845605707765
+      },
+      "gate": {
+        "tps_ratio": 0.6596366111188607,
+        "ttft_ratio": 2.7938129408128933,
+        "tps_pass": false,
+        "ttft_pass": false,
+        "reason": "AC-11 TPS gate failed: DS/DSA = 0.6596 < 0.95 (DS=17.23 tok/s, DSA=26.13 tok/s); AC-11 TTFT gate failed: DS/DSA P99 = 2.7938 > 1.1 (DS=78.954 s, DSA=28.260 s)"
+      },
+      "ds_client_slo": {
+        "decode_tps_p50": 17.23461063055767,
+        "ttft_p99_s": 78.9543818111159,
+        "tps_pass": false,
+        "ttft_pass": false,
+        "pass": false,
+        "reason": "decode-TPS 17.23 < 30; P99 TTFT 78.954 s >= 22 s"
+      },
+      "dsa_client_slo": {
+        "decode_tps_p50": 26.127431892121194,
+        "ttft_p99_s": 28.260439579803496,
+        "tps_pass": false,
+        "ttft_pass": false,
+        "pass": false,
+        "reason": "decode-TPS 26.13 < 30; P99 TTFT 28.260 s >= 22 s"
+      }
+    }
+  },
+  "verdict": "FAIL",
+  "client_slo_verdict": "FAIL"
+}

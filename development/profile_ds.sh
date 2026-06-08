@@ -17,7 +17,9 @@ MASK="${CHANNEL_MASK_PATH:-/models/glm51-fp8-channel-mask-s256.safetensors}"
 PROFILE_CONC="${PROFILE_CONC:-32}"          # a failing AC-11 row (fails TPS + TTFT)
 PROFILE_NUM_STEPS="${PROFILE_NUM_STEPS:-40}"
 OUT="${OUT:-development/loop8/runs/20260608_ac4/profile_ds_c${PROFILE_CONC}}"
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# Profile the PROPER serving op-point: custom all-reduce ON, so do NOT set
+# expandable_segments (CUDA VMM breaks custom-all-reduce-v2 IPC handles → boot fail).
+unset PYTORCH_CUDA_ALLOC_CONF || true
 export SGLANG_TORCH_PROFILER_DIR="$(pwd)/${OUT}/trace"
 mkdir -p "$SGLANG_TORCH_PROFILER_DIR"
 
@@ -26,7 +28,7 @@ sleep 15; rm -f /dev/shm/psm_* /dev/shm/sem.mp-* 2>/dev/null || true
 
 echo ">>> boot DS (mask=$MASK, conc=$PROFILE_CONC, trace=$SGLANG_TORCH_PROFILER_DIR)"
 MODEL_PATH="$GLM" CHANNEL_MASK_PATH="$MASK" MEM_FRACTION_STATIC="${MEM_FRACTION_STATIC:-0.7}" TOP_K=2048 \
-  DISABLE_CUSTOM_ALL_REDUCE=1 RANDOM_SEED=20260607 SGLANG_TORCH_PROFILER_DIR="$SGLANG_TORCH_PROFILER_DIR" \
+  RANDOM_SEED=20260607 SGLANG_TORCH_PROFILER_DIR="$SGLANG_TORCH_PROFILER_DIR" \
   bash development/serve_double_sparsity.sh > "$OUT/serve.log" 2>&1 &
 ready=0
 for i in $(seq 1 150); do

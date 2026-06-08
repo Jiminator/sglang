@@ -1,12 +1,12 @@
 {
-  "commit_sha": "080e366f0d842948554ce8c1309f94a456b785a9",
+  "commit_sha": "10e642c2f7c4355142271d1edb02a9d8c6210dad",
   "mode": "native_nsa",
   "concurrency": 32,
   "seed": 431,
   "num_prompts": 320,
   "isl_total_tokens": 4096,
   "osl_tokens": 512,
-  "timestamp_utc": "2026-06-08T04:20:28Z",
+  "timestamp_utc": "2026-06-08T18:03:35Z",
   "chunked_prefill_size": 8192,
   "warmup_requests": null,
   "warmup_seconds": 120.0,
@@ -351,7 +351,7 @@
     "enable_tokenizer_batch_encode": false,
     "disable_tokenizer_batch_decode": false,
     "disable_outlines_disk_cache": false,
-    "disable_custom_all_reduce": true,
+    "disable_custom_all_reduce": false,
     "enable_mscclpp": false,
     "enable_torch_symm_mem": false,
     "pre_warm_nccl": false,
@@ -497,7 +497,7 @@
     "enable_quant_communications": false,
     "msprobe_dump_config": null,
     "status": "ready",
-    "max_total_num_tokens": 414656,
+    "max_total_num_tokens": 410560,
     "max_req_input_len": 202746,
     "internal_states": [
       {
@@ -839,7 +839,7 @@
         "enable_tokenizer_batch_encode": false,
         "disable_tokenizer_batch_decode": false,
         "disable_outlines_disk_cache": false,
-        "disable_custom_all_reduce": true,
+        "disable_custom_all_reduce": false,
         "enable_mscclpp": false,
         "enable_torch_symm_mem": false,
         "pre_warm_nccl": false,
@@ -987,12 +987,12 @@
         "enable_grpc": false,
         "grpc_port": 40000,
         "use_mla_backend": true,
-        "last_gen_throughput": 1033.4294915216744,
+        "last_gen_throughput": 1017.3436899808269,
         "memory_usage": {
-          "weight": 89.04,
-          "kvcache": 23.74,
-          "token_capacity": 414656,
-          "graph": 2.35
+          "weight": 89.24,
+          "kvcache": 23.51,
+          "token_capacity": 410560,
+          "graph": 2.73
         },
         "effective_max_running_requests_per_dp": 2048
       }
