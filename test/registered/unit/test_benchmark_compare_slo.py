@@ -200,5 +200,43 @@ class TestAbsoluteClientSLOGate(unittest.TestCase):
         self.assertIn("missing-data", BC._evaluate_client_slo(self._m(None, None))["reason"])
 
 
+class TestCustomAllReduceLockedField(unittest.TestCase):
+    """R12: the AC-11 comparator must REFUSE the degraded custom-all-reduce-OFF op-point
+    (matched-but-wrong), not merely score it. disable_custom_all_reduce is a locked
+    publication field required present + exactly False on every DSA/DS trial."""
+
+    @staticmethod
+    def _normalized(custom_ar=False, drop=False):
+        d = {
+            "model_path": "/glm", "tp_size": 8, "page_size": 64, "kv_cache_dtype": "fp8_e4m3",
+            "dsa_prefill_backend": "flashmla_kv", "dsa_decode_backend": "flashmla_kv",
+            "disable_overlap_schedule": True, "disable_piecewise_cuda_graph": True,
+            "disable_radix_cache": True, "disable_cuda_graph": False,
+            "disable_custom_all_reduce": custom_ar,
+        }
+        if drop:
+            del d["disable_custom_all_reduce"]
+        return d
+
+    def test_custom_ar_false_passes(self):
+        # proper op-point: custom all-reduce ON (disable_custom_all_reduce=False)
+        BC._require_option_b_locked_fields(self._normalized(custom_ar=False), side="DS", path="p")
+
+    def test_custom_ar_true_refused(self):
+        # R10 degraded NCCL-fallback op-point must be refused, not scored
+        with self.assertRaises(ValueError) as cm:
+            BC._require_option_b_locked_fields(self._normalized(custom_ar=True), side="DS", path="p")
+        self.assertIn("disable_custom_all_reduce", str(cm.exception))
+
+    def test_custom_ar_missing_fails_closed(self):
+        with self.assertRaises(ValueError) as cm:
+            BC._require_option_b_locked_fields(self._normalized(drop=True), side="DSA", path="p")
+        self.assertIn("disable_custom_all_reduce", str(cm.exception))
+
+    def test_custom_ar_is_a_locked_field(self):
+        self.assertIn("disable_custom_all_reduce", BC._AC11_OPTION_B_LOCKED_FIELDS)
+        self.assertEqual(BC._AC11_REQUIRED_FIELD_VALUES["disable_custom_all_reduce"], False)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -588,7 +588,17 @@ _AC11_OPTION_B_LOCKED_FIELDS = frozenset({
     "disable_piecewise_cuda_graph",
     "disable_radix_cache",
     "disable_cuda_graph",
+    "disable_custom_all_reduce",
 })
+
+# Locked publication fields that must hold an EXACT value on every trial (not just
+# agree cross-side). GLM TP=8 must serve with custom all-reduce ON: the degraded
+# `--disable-custom-all-reduce` NCCL-fallback op-point (forced by an inherited
+# expandable_segments allocator, R10) is matched-but-wrong, so a cross-side equality
+# check alone would accept it. Refuse it as a wrong op-point, not score it.
+_AC11_REQUIRED_FIELD_VALUES = {
+    "disable_custom_all_reduce": False,
+}
 
 
 def _sidecar_path(result_path: str) -> str:
@@ -721,6 +731,14 @@ def _require_option_b_locked_fields(
             f"missing locked Option B field(s) {missing!r}; the sidecar "
             "must record every Option B launch flag (plan §13 / DEC-1)."
         )
+    for field, required in _AC11_REQUIRED_FIELD_VALUES.items():
+        if normalized.get(field) != required:
+            raise ValueError(
+                f"AC-11 sidecar {side}={path}: {field}={normalized.get(field)!r} "
+                f"but the proper GLM op-point requires {field}={required!r} "
+                "(the custom-all-reduce-OFF NCCL-fallback op-point is matched-but-wrong "
+                "— refuse, do not score)."
+            )
 
 
 def _validate_ac11_side_identity(

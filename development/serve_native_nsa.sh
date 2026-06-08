@@ -68,15 +68,26 @@ if [[ "${DISABLE_RADIX_CACHE}" == "1" ]]; then
   RADIX_CACHE_ARG="--disable-radix-cache"
 fi
 
-# GLM-5.1 TP=8 trips the custom-all-reduce-v2 path during CUDA-graph capture
-# (share_graph_inputs -> custom_all_reduce.cuh: CUDA error: invalid argument) on
-# this node; the NCCL all-reduce fallback captures cleanly. Default OFF (keep
-# stock behavior); set DISABLE_CUSTOM_ALL_REDUCE=1 for the GLM op-point. Apply
-# the SAME value to the paired DS launcher so the comparison op-point matches.
+# Custom all-reduce: the PROPER GLM op-point keeps custom all-reduce ON (default OFF
+# knob here). The R10 boot failure (`custom_all_reduce.cuh: CUDA error: invalid
+# argument` during CUDA-graph capture) was NOT the v2 path itself — it was an
+# inherited `PYTORCH_CUDA_ALLOC_CONF=expandable_segments` (CUDA VMM, used for the
+# calibration OOM): `cudaIpcGetMemHandle` does not work on VMM memory, so
+# custom-all-reduce-v2's graph-input registration fails. The fix is to NOT set
+# expandable_segments for serving (guarded below), keeping custom all-reduce ON.
+# DISABLE_CUSTOM_ALL_REDUCE=1 remains ONLY as a degraded NCCL-fallback diagnostic
+# (the AC-11 comparator refuses that op-point for publication).
 DISABLE_CUSTOM_ALL_REDUCE="${DISABLE_CUSTOM_ALL_REDUCE:-0}"
 CUSTOM_AR_ARG=""
 if [[ "${DISABLE_CUSTOM_ALL_REDUCE}" == "1" ]]; then
   CUSTOM_AR_ARG="--disable-custom-all-reduce"
+fi
+# Guard: an inherited expandable_segments allocator breaks custom all-reduce at GLM
+# TP=8 graph capture. Strip it for serving unless the operator deliberately took the
+# degraded DISABLE_CUSTOM_ALL_REDUCE=1 path.
+if [[ "${DISABLE_CUSTOM_ALL_REDUCE}" != "1" && "${PYTORCH_CUDA_ALLOC_CONF:-}" == *expandable_segments* ]]; then
+  echo ">>> WARN: stripping PYTORCH_CUDA_ALLOC_CONF='${PYTORCH_CUDA_ALLOC_CONF}' (expandable_segments breaks custom all-reduce at GLM TP=8); custom all-reduce stays ON."
+  unset PYTORCH_CUDA_ALLOC_CONF
 fi
 
 mkdir -p "${LOG_DIR}"
