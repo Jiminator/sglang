@@ -129,6 +129,16 @@ else
   RADIX_ARGS=(--disable-radix-cache)
 fi
 
+# GLM-5.1 TP=8 trips the custom-all-reduce-v2 path during CUDA-graph capture on
+# this node; the NCCL fallback captures cleanly. Default OFF; set
+# DISABLE_CUSTOM_ALL_REDUCE=1 for the GLM op-point. Keep the SAME value as the
+# paired native_nsa launcher so the DS-vs-DSA comparison op-point matches.
+if [[ "${DISABLE_CUSTOM_ALL_REDUCE:-0}" == "1" ]]; then
+  CUSTOM_AR_ARGS=(--disable-custom-all-reduce)
+else
+  CUSTOM_AR_ARGS=()
+fi
+
 LOG_FILE="${LOG_DIR}/server_double_sparsity_$(date +%Y%m%d-%H%M%S).log"
 echo ">>> Starting Double Sparsity server (standalone)"
 echo "    model            = ${MODEL_PATH}"
@@ -161,6 +171,7 @@ exec python3 -m sglang.launch_server \
   --double-sparsity-config "${DS_CONFIG}" \
   --random-seed "${RANDOM_SEED}" \
   "${CUDA_GRAPH_ARGS[@]}" \
+  "${CUSTOM_AR_ARGS[@]}" \
   `# Radix cache: --disable-radix-cache (default radix-off) or the` \
   `# fixtures-passed artifact path (radix-on), selected above.` \
   "${RADIX_ARGS[@]}" \

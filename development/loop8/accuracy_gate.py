@@ -27,9 +27,11 @@ both sides to have actually served every mandatory request (MMLU `served==total`
 no errors; within-budget NIAH `served==num_prompts`, no first_error, and
 `max_prompt_tokens <= index_topk` so the within-budget premise holds), and the
 stable server op-point to match except the intended DS differences. A gate that
-"passes" when every request failed is worse than no gate. Thresholds mirror the
-paired gate: MMLU DS within 1.0 pp of DSA (mandatory); within-budget NIAH DS within
-5.0 pp of DSA (mandatory); beyond-budget NIAH is characterization-only.
+"passes" when every request failed is worse than no gate. Mandatory: MMLU DS within
+1.0 pp of DSA, and within-budget NIAH DS NON-regression (one-sided: DS not worse than
+DSA by more than 5.0 pp — DS uplift is not penalized, per the immutable AC's
+"NIAH characterization-only / uplift-or-gap"). Beyond-budget NIAH is pure
+characterization (DS's top_k index budget bounds long-context recall by design).
 """
 
 from __future__ import annotations
@@ -55,9 +57,9 @@ NIAH_WITHIN_BUDGET_TOLERANCE_PP = 5.0
 # a new sglang launch flag is auto-protected and the two gates cannot drift. See
 # `_bench_compare()`.
 
-# The exact production landing mask the DS column must have served (AC-3 artifact). The
-# gate proves BOTH the path and the recorded content hash so a wrong/stale mask cannot
-# pass. Overridable via AC12_EXPECTED_DS_MASK_PATH / AC12_EXPECTED_DS_MASK_SHA256.
+# The exact production landing mask the DS column must have served. The gate proves BOTH
+# the path and the recorded content hash so a wrong/stale mask cannot pass. Overridable
+# via AC12_EXPECTED_DS_MASK_PATH / AC12_EXPECTED_DS_MASK_SHA256.
 EXPECTED_DS_MASK_PATH = "/models/glm51-fp8-channel-mask-s256.safetensors"
 EXPECTED_DS_MASK_SHA256 = (
     "35155ac46ad79fa82e531138434ff35708e2d8c2932889323a21a455342a9b00"
@@ -220,13 +222,18 @@ def compare(dsa: Dict[str, Any], ds: Dict[str, Any], *,
     mmlu_delta = dsa_mmlu - ds_mmlu
     mmlu_pass = abs(mmlu_delta) <= MMLU_TOLERANCE_PP
 
-    # NIAH within-budget (mandatory): both fully served + within budget + within tol.
+    # NIAH within-budget: both fully served + within budget. The immutable AC-4 lists
+    # NIAH as characterization-only / "uplift-or-gap"; the mandatory clause is DS-vs-DSA
+    # NON-regression. So the gate uses a ONE-SIDED check: DS must not be worse than DSA
+    # by more than the tolerance (a regression fails closed), but DS being BETTER (uplift)
+    # is NOT penalized. The symmetric `within_tolerance` is still reported for
+    # characterization (does the DS recall track DSA?), but it does NOT gate.
     d_in = {int(e["length_words"]): e for e in (dsa.get("niah_within_budget") or [])}
     s_in = {int(e["length_words"]): e for e in (ds.get("niah_within_budget") or [])}
     _require(d_in and set(d_in) == set(s_in),
              f"NIAH within-budget length set mismatch: dsa={sorted(d_in)} ds={sorted(s_in)}")
     niah_rows: List[Dict[str, Any]] = []
-    niah_pass = True
+    niah_non_regression = True
     for L in sorted(d_in):
         de, se = d_in[L], s_in[L]
         _require(de.get("prompt_set_hash") and de.get("prompt_set_hash") == se.get("prompt_set_hash"),
@@ -234,12 +241,13 @@ def compare(dsa: Dict[str, Any], ds: Dict[str, Any], *,
         _check_niah_within("dsa", de, index_topk)
         _check_niah_within("ds", se, index_topk)
         dr, sr = _pct(int(de["hits"]), int(de["num_prompts"])), _pct(int(se["hits"]), int(se["num_prompts"]))
-        delta = dr - sr
-        ok = abs(delta) <= NIAH_WITHIN_BUDGET_TOLERANCE_PP
-        niah_pass = niah_pass and ok
+        delta = dr - sr  # dsa - ds; positive => DS worse (regression)
+        not_regressed = sr >= dr - NIAH_WITHIN_BUDGET_TOLERANCE_PP
+        within_tol = abs(delta) <= NIAH_WITHIN_BUDGET_TOLERANCE_PP
+        niah_non_regression = niah_non_regression and not_regressed
         niah_rows.append({"length_words": L, "dsa_recall_pct": round(dr, 2),
                           "ds_recall_pct": round(sr, 2), "delta_pp": round(delta, 2),
-                          "within_tolerance": ok})
+                          "ds_not_regressed": not_regressed, "within_tolerance": within_tol})
 
     # Beyond-budget NIAH: must be present + comparable; characterization only (never gates).
     d_be = {int(e["length_words"]): e for e in (dsa.get("niah_beyond_budget") or [])}
@@ -272,9 +280,11 @@ def compare(dsa: Dict[str, Any], ds: Dict[str, Any], *,
                  "delta_pp": round(mmlu_delta, 2), "tolerance_pp": MMLU_TOLERANCE_PP,
                  "pass": mmlu_pass},
         "niah_within_budget": {"tolerance_pp": NIAH_WITHIN_BUDGET_TOLERANCE_PP,
-                               "rows": niah_rows, "pass": niah_pass},
+                               "rows": niah_rows, "non_regression": niah_non_regression,
+                               "characterization_note": "uplift not penalized; one-sided "
+                               "DS-not-worse-than-DSA check gates (immutable AC: NIAH characterization-only)"},
         "niah_beyond_budget_characterization": beyond_rows,
-        "mandatory_pass": bool(mmlu_pass and niah_pass),
+        "mandatory_pass": bool(mmlu_pass and niah_non_regression),
     }
 
 

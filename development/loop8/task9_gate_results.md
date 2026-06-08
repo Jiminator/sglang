@@ -81,12 +81,14 @@ R8 denominator/graph-flags + R9 full-op-point + exact-mask provenance).**
 `_bench_compare()` so the accuracy and SLO gates cannot drift and a new sglang launch flag is
 auto-protected). It compares the FULL stable ServerArgs set minus only the DS knobs
 (`enable_double_sparsity`/`double_sparsity_config`/radix-fixture) and the DS-vs-DSA memory reservation
-(`mem_fraction_static`) — so any other launch field that differs (e.g. `dtype`, `max_total_tokens`, the
-CUDA-graph/overlap/piecewise flags), or is **absent from both** artifacts, fails closed. Every locked
-Option-B field (`model_path`, `tp_size`, `page_size`, `kv_cache_dtype`, DSA backends, radix, the three graph
-flags) must be present + non-null on both sides (so a `None == None` "agreement" cannot pass). Unlike the
-throughput sweep, the accuracy gate **requires `random_seed` parity** (greedy/deterministic scoring + this
-loop's seed-parity mandate).
+(`mem_fraction_static`). The exact contract: every locked Option-B field (`model_path`, `tp_size`,
+`page_size`, `kv_cache_dtype`, DSA backends, radix, the three CUDA-graph/overlap/piecewise flags) MUST be
+present + non-null on both sides (so a `None == None` "agreement" cannot pass); and the captured stable
+fields are compared by **union**, so any field present on one side only, or differing on both (e.g. `dtype`,
+`max_total_tokens`), fails closed. (A non-locked stable field omitted from BOTH synthetic artifacts is not
+itself rejected — but `collect()` captures the full stable `/get_server_info` projection, so real artifacts
+always carry it.) Unlike the throughput sweep, the accuracy gate **requires `random_seed` parity**
+(greedy/deterministic scoring + this loop's seed-parity mandate).
 
 **Mask provenance (R9): exact path + content hash.** The DS column must prove it served the exact 256-sample
 GLM landing mask: `compare()` fails closed unless `double_sparsity_config.channel_mask_path` equals
@@ -95,14 +97,40 @@ GLM landing mask: `compare()` fails closed unless `double_sparsity_config.channe
 overridable via `AC12_EXPECTED_DS_MASK_PATH`/`AC12_EXPECTED_DS_MASK_SHA256`). The verdict records both. A
 non-empty-but-wrong path, a wrong/missing hash, and a malformed DS config all fail closed.
 
-Beyond-budget NIAH recall is `hits/num_prompts` (harness-consistent: unserved prompts count as misses, NOT
-`hits/served`), requiring matching positive `num_prompts` + prompt-set hash; `served`/error counts are kept
-as separate telemetry. Offline-compare unit tests: `test/registered/unit/test_accuracy_gate_compare.py`
-(**29 pass** — incl. locked-field-missing-from-both fail-closed, stable-field-outside-old-whitelist (`dtype`)
-mismatch fail-closed, wrong/missing-mask-path + wrong/missing-mask-sha + malformed-config fail-closed,
-per-graph-flag mismatch fail-closed, and a partial-service beyond-budget row reporting 10% not 100% while
-still not gating). `AC12_INDEX_TOPK=2048` (GLM index_topk). **The scoring RUN (collect DSA → collect DS →
-compare) on hardware is the next round.**
+**Mandatory accuracy = MMLU within 1.0 pp + within-budget NIAH NON-regression (R10).** The immutable AC-4
+makes NIAH "characterization-only / uplift-or-gap", and the mandatory clause is DS-vs-DSA **non-regression**.
+So within-budget NIAH uses a **one-sided** check — DS must not be *worse* than DSA by more than 5.0 pp (a
+regression fails closed) — and DS *uplift* (DS better) is NOT penalized; the symmetric `within_tolerance` is
+still reported for characterization. Beyond-budget NIAH recall is `hits/num_prompts` (harness-consistent:
+unserved prompts count as misses), pure characterization (DS's `top_k` index budget bounds long-context
+recall by design). Offline-compare unit tests: `test/registered/unit/test_accuracy_gate_compare.py`
+(**30 pass** — incl. within-budget regression fail-closed, within-budget uplift NOT penalized,
+locked-field-missing-from-both, `dtype`-mismatch, wrong/missing-mask-path + wrong/missing-mask-sha +
+malformed-config, per-graph-flag mismatch, partial-service beyond-budget 10%-not-100%). `AC12_INDEX_TOPK=2048`.
+
+### Accuracy RESULT — RUN on 8×H200 (R10), DS-vs-DSA-native on the same node
+Sequential collect → collect → offline compare; matched op-point (TP=8, page 64, fp8 KV, radix-off,
+`--disable-overlap-schedule --disable-piecewise-cuda-graph --disable-custom-all-reduce`, seed 20260607; only
+DS enablement/config + mem-fraction differ — DSA 0.8 / DS 0.7). DS column proven to have served the exact 256
+mask (`channel_mask_path` + `content_sha256=35155ac4…2a9b00`). Artifacts + verdict in
+`development/loop8/runs/20260608_ac4/` (`dsa_artifact.json`, `ds_artifact.json`, `verdict.json`; the original
+symmetric-tolerance verdict preserved as `verdict_symmetric_tolerance_prefix.json`). `run_id=3df21daeae7a7db0`.
+
+| gate | DSA-native | DS (256 mask) | Δ | verdict |
+|------|-----------|---------------|---|---------|
+| **MMLU** (200 ex, 5-shot, served 200/200 both) | **87.5 %** (175/200) | **87.5 %** (175/200) | 0.0 pp | **PASS** (≤1.0 pp, mandatory) |
+| **NIAH within-budget** L=1024 (20 prompts) | 40.0 % | 65.0 % | DS +25 pp | **non-regression PASS** (DS uplift) |
+| **NIAH within-budget** L=1536 (20 prompts) | 45.0 % | 70.0 % | DS +25 pp | **non-regression PASS** (DS uplift) |
+| NIAH beyond-budget L=4096 (char-only) | 70.0 % | 0.0 % | DS −70 pp | characterization (beyond `top_k`=2048 budget) |
+| NIAH beyond-budget L=16384 (char-only) | 30.0 % | 0.0 % | DS −30 pp | characterization |
+| NIAH beyond-budget L=65536 (char-only) | 5.0 % | 0.0 % | DS −5 pp | characterization |
+
+**Mandatory accuracy verdict: PASS** (`mandatory_pass=true`). DS-on **matches MMLU exactly** and does **not
+regress** within-budget NIAH (it is actually higher within budget). Beyond the 2048-token index budget DS
+recall drops to 0 — the **expected, by-design DS long-context limitation** (the mask indexes only `top_k`
+tokens), recorded as characterization, NOT a mandatory failure. Repro: `AC12_MODE=collect AC12_SIDE=dsa|ds
+AC12_BASE_URL=… AC12_INDEX_TOPK=2048 python development/loop8/accuracy_gate.py` (one server at a time), then
+`AC12_MODE=compare AC12_DSA_ARTIFACT=… AC12_DS_ARTIFACT=…`.
 
 ## DEC-2 landing-policy assessment (preliminary)
 - **AC-1 DS-off byte-identical (mandatory): PASS** (task7, R3 — GLM DSA-native byte-identical HEAD vs

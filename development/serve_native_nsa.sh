@@ -68,6 +68,17 @@ if [[ "${DISABLE_RADIX_CACHE}" == "1" ]]; then
   RADIX_CACHE_ARG="--disable-radix-cache"
 fi
 
+# GLM-5.1 TP=8 trips the custom-all-reduce-v2 path during CUDA-graph capture
+# (share_graph_inputs -> custom_all_reduce.cuh: CUDA error: invalid argument) on
+# this node; the NCCL all-reduce fallback captures cleanly. Default OFF (keep
+# stock behavior); set DISABLE_CUSTOM_ALL_REDUCE=1 for the GLM op-point. Apply
+# the SAME value to the paired DS launcher so the comparison op-point matches.
+DISABLE_CUSTOM_ALL_REDUCE="${DISABLE_CUSTOM_ALL_REDUCE:-0}"
+CUSTOM_AR_ARG=""
+if [[ "${DISABLE_CUSTOM_ALL_REDUCE}" == "1" ]]; then
+  CUSTOM_AR_ARG="--disable-custom-all-reduce"
+fi
+
 mkdir -p "${LOG_DIR}"
 
 LOG_FILE="${LOG_DIR}/server_native_nsa_$(date +%Y%m%d-%H%M%S).log"
@@ -96,5 +107,6 @@ exec python3 -m sglang.launch_server \
   --disable-piecewise-cuda-graph \
   --random-seed "${RANDOM_SEED}" \
   ${RADIX_CACHE_ARG} \
+  ${CUSTOM_AR_ARG} \
   --trust-remote-code \
   2>&1 | tee "${LOG_FILE}"

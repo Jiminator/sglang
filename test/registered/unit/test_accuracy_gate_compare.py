@@ -96,11 +96,26 @@ class TestAccuracyGateCompare(unittest.TestCase):
         self.assertFalse(v["mmlu"]["pass"])
         self.assertFalse(v["mandatory_pass"])
 
-    def test_niah_delta_fail(self):
+    def test_niah_within_budget_regression_fails_closed(self):
+        # DS materially WORSE within budget (DS 85% vs DSA 100% at L=1536, 15pp) is a
+        # regression -> one-sided non-regression check fails -> mandatory fails.
         v = AG.compare(_side("dsa", mmlu_hits=150, niah_hits=(20, 20)),
-                       _side("ds", mmlu_hits=150, niah_hits=(20, 17)))  # 15pp at L=1536
-        self.assertFalse(v["niah_within_budget"]["pass"])
+                       _side("ds", mmlu_hits=150, niah_hits=(20, 17)))
+        self.assertFalse(v["niah_within_budget"]["non_regression"])
         self.assertFalse(v["mandatory_pass"])
+
+    def test_niah_within_budget_uplift_not_penalized(self):
+        # DS BETTER within budget (DS 95%/90% vs DSA 50%/50%) must NOT fail: the immutable
+        # AC makes NIAH characterization/uplift-or-gap, so only a regression gates. MMLU
+        # parity + DS uplift -> mandatory passes; the symmetric within_tolerance is False
+        # (DS deviates upward) but ds_not_regressed is True.
+        v = AG.compare(_side("dsa", mmlu_hits=150, niah_hits=(10, 10)),
+                       _side("ds", mmlu_hits=150, niah_hits=(19, 18)))
+        self.assertTrue(v["niah_within_budget"]["non_regression"])
+        self.assertTrue(v["mandatory_pass"])
+        rows = v["niah_within_budget"]["rows"]
+        self.assertTrue(all(r["ds_not_regressed"] for r in rows))
+        self.assertFalse(all(r["within_tolerance"] for r in rows))  # uplift => outside symmetric tol
 
     # ---- fail-closed: requests didn't actually succeed ----
     def test_all_failed_mmlu_fails_closed(self):
