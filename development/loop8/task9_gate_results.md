@@ -64,7 +64,7 @@ and conc 32 (31.5 tok/s / 14.2 s), and fails only at conc 64 (24.4 / 28.3 s — 
 so DS is the **reversible default-OFF opt-in fallback**, valuable where the indexer underperforms
 (long-context recall), **not** a throughput win on the standard workload.
 
-## Accuracy gates (i) MMLU + (ii) NIAH — PENDING (executable offline path hardened R8)
+## Accuracy gates (i) MMLU + (ii) NIAH — PENDING (executable offline path hardened R9)
 `test/manual/test_double_sparsity_v32.py` requires `DS_BASE_URL` **and** `DSA_BASE_URL` live
 simultaneously (skipUnless); two TP=8 servers cannot co-reside on 8×H200 **and GLM-5.1 cannot run at TP=4**
 (weights ~2× exceed a single H200), so the only viable path is **sequential collect + offline compare**.
@@ -73,18 +73,36 @@ NIAH prompt-gen + recall scorer): `AC12_MODE=collect` scores ONE live server (`A
 `AC12_BASE_URL=…`) and writes a per-side artifact (run_id + prompt-set hashes + hits/totals + index_topk);
 `AC12_MODE=compare` (offline, no server) validates the two sides used the same prompt set and applies the
 mandatory thresholds (MMLU DS within 1.0 pp of DSA; within-budget NIAH DS within 5.0 pp; beyond-budget =
-characterization-only), failing closed on any mismatch. **Schema v2; publication-safe (R7 fail-closed +
-R8 op-point/provenance hardening).** The offline gate now fails closed when the two sides disagree on the
-full op-point — including `disable_piecewise_cuda_graph`, `disable_overlap_schedule`, `disable_cuda_graph`
-(all proven op-point-defining this loop) — and **requires + records** the DS side's
-`double_sparsity_config.channel_mask_path`, so the verdict proves the 256-sample GLM mask
-(`/models/glm51-fp8-channel-mask-s256.safetensors`, sha 35155ac46ad7) was actually served. Beyond-budget
-NIAH recall is computed as `hits/num_prompts` (harness-consistent: unserved prompts count as misses, NOT
+characterization-only), failing closed on any mismatch. **Schema v3; publication-safe (R7 fail-closed +
+R8 denominator/graph-flags + R9 full-op-point + exact-mask provenance).**
+
+**Op-point (R9): no hand whitelist.** The gate reuses the EXACT stable launch-arg projection
+`development/benchmark_compare.py` derives from `dataclasses.fields(ServerArgs)` (shared via
+`_bench_compare()` so the accuracy and SLO gates cannot drift and a new sglang launch flag is
+auto-protected). It compares the FULL stable ServerArgs set minus only the DS knobs
+(`enable_double_sparsity`/`double_sparsity_config`/radix-fixture) and the DS-vs-DSA memory reservation
+(`mem_fraction_static`) — so any other launch field that differs (e.g. `dtype`, `max_total_tokens`, the
+CUDA-graph/overlap/piecewise flags), or is **absent from both** artifacts, fails closed. Every locked
+Option-B field (`model_path`, `tp_size`, `page_size`, `kv_cache_dtype`, DSA backends, radix, the three graph
+flags) must be present + non-null on both sides (so a `None == None` "agreement" cannot pass). Unlike the
+throughput sweep, the accuracy gate **requires `random_seed` parity** (greedy/deterministic scoring + this
+loop's seed-parity mandate).
+
+**Mask provenance (R9): exact path + content hash.** The DS column must prove it served the exact 256-sample
+GLM landing mask: `compare()` fails closed unless `double_sparsity_config.channel_mask_path` equals
+`/models/glm51-fp8-channel-mask-s256.safetensors` **and** the recorded safetensors `content_sha256` equals
+`35155ac46ad79fa82e531138434ff35708e2d8c2932889323a21a455342a9b00` (collect reads the header at score time;
+overridable via `AC12_EXPECTED_DS_MASK_PATH`/`AC12_EXPECTED_DS_MASK_SHA256`). The verdict records both. A
+non-empty-but-wrong path, a wrong/missing hash, and a malformed DS config all fail closed.
+
+Beyond-budget NIAH recall is `hits/num_prompts` (harness-consistent: unserved prompts count as misses, NOT
 `hits/served`), requiring matching positive `num_prompts` + prompt-set hash; `served`/error counts are kept
 as separate telemetry. Offline-compare unit tests: `test/registered/unit/test_accuracy_gate_compare.py`
-(23 pass — incl. op-point-mismatch fail-closed for each graph flag, missing-DS-mask fail-closed, and a
-partial-service beyond-budget row reporting 10% not 100% while still not gating). `AC12_INDEX_TOPK=2048`
-(GLM index_topk). **The scoring RUN (collect DSA → collect DS → compare) on hardware is the next round.**
+(**29 pass** — incl. locked-field-missing-from-both fail-closed, stable-field-outside-old-whitelist (`dtype`)
+mismatch fail-closed, wrong/missing-mask-path + wrong/missing-mask-sha + malformed-config fail-closed,
+per-graph-flag mismatch fail-closed, and a partial-service beyond-budget row reporting 10% not 100% while
+still not gating). `AC12_INDEX_TOPK=2048` (GLM index_topk). **The scoring RUN (collect DSA → collect DS →
+compare) on hardware is the next round.**
 
 ## DEC-2 landing-policy assessment (preliminary)
 - **AC-1 DS-off byte-identical (mandatory): PASS** (task7, R3 — GLM DSA-native byte-identical HEAD vs

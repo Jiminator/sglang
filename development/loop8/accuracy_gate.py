@@ -41,23 +41,27 @@ import sys
 import urllib.request
 from typing import Any, Dict, List, Optional
 
-SCHEMA = "ac12_accuracy_side_v2"
+SCHEMA = "ac12_accuracy_side_v3"
 MMLU_TOLERANCE_PP = 1.0
 NIAH_WITHIN_BUDGET_TOLERANCE_PP = 5.0
 
-# Stable server-op-point fields both sides must share (fetched from /get_server_info).
-# Includes the CUDA-graph / overlap / piecewise flags proven op-point-defining in
-# this loop (the same fields benchmark_compare.py locks for the SLO sweep). The ONLY
-# intended column differences are the DS knobs (OPPOINT_ALLOWED_DIFF).
-OPPOINT_FIELDS = (
-    "model_path", "tp_size", "page_size", "kv_cache_dtype", "disable_radix_cache",
-    "dsa_prefill_backend", "dsa_decode_backend", "attention_backend", "random_seed",
-    "disable_piecewise_cuda_graph", "disable_overlap_schedule", "disable_cuda_graph",
+# The stable server op-point both sides must share is NOT a hand whitelist (a whitelist
+# silently drops any launch flag not listed, and a `da.get(k) != sa.get(k)` compare
+# treats `None == None` as agreement when both artifacts omit a field). We reuse the
+# EXACT projection `benchmark_compare.py` derives from `dataclasses.fields(ServerArgs)`
+# — the full stable launch-arg set, minus the DS-only knobs (legitimately different) and
+# the recorded-not-matched keys (`random_seed`, `mem_fraction_static`) — and require
+# every locked Option-B field present + non-null on both sides. Sharing the source means
+# a new sglang launch flag is auto-protected and the two gates cannot drift. See
+# `_bench_compare()`.
+
+# The exact production landing mask the DS column must have served (AC-3 artifact). The
+# gate proves BOTH the path and the recorded content hash so a wrong/stale mask cannot
+# pass. Overridable via AC12_EXPECTED_DS_MASK_PATH / AC12_EXPECTED_DS_MASK_SHA256.
+EXPECTED_DS_MASK_PATH = "/models/glm51-fp8-channel-mask-s256.safetensors"
+EXPECTED_DS_MASK_SHA256 = (
+    "35155ac46ad79fa82e531138434ff35708e2d8c2932889323a21a455342a9b00"
 )
-OPPOINT_ALLOWED_DIFF = ("enable_double_sparsity", "mem_fraction_static")
-# DS-side provenance: captured (not required to match — DSA has none) so the verdict
-# proves the DS column measured the intended channel mask.
-OPPOINT_DS_PROVENANCE = ("double_sparsity_config",)
 
 
 def _sha(s: str) -> str:
@@ -80,21 +84,80 @@ def _pct(hits: int, total: int) -> float:
     return 100.0 * hits / total if total else 0.0
 
 
-def _check_op_point(dsa: Dict[str, Any], ds: Dict[str, Any]) -> None:
-    """Fail closed unless the stable server op-point matches (only DS knobs differ)."""
+_BENCH_COMPARE = None
+
+
+def _bench_compare():
+    """Load development/benchmark_compare.py once and reuse its stable-launch-arg
+    projection so the accuracy gate and the SLO comparator cannot drift."""
+    global _BENCH_COMPARE
+    if _BENCH_COMPARE is None:
+        import importlib.util
+        path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "benchmark_compare.py"))
+        spec = importlib.util.spec_from_file_location("_ac12_bench_compare", path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["_ac12_bench_compare"] = mod
+        spec.loader.exec_module(mod)
+        _BENCH_COMPARE = mod
+    return _BENCH_COMPARE
+
+
+# The accuracy gate permits ONLY the DS knobs and the DS-vs-DSA memory-reservation
+# difference to differ — NOT random_seed. Unlike the throughput sweep (which records
+# seed but cannot match it across sequential trials), accuracy is greedy/deterministic
+# and this loop mandates seed parity for the final evidence, so a seed difference must
+# fail closed. We still reuse benchmark_compare's ServerArgs-derived field universe +
+# DS-only set so a new launch flag is auto-protected and the two gates cannot drift.
+_ACCURACY_RECORDED_NOT_MATCHED = frozenset({"mem_fraction_static"})
+
+
+def _comparable_op_point(server_info: Dict[str, Any]) -> Dict[str, Any]:
+    """Project a /get_server_info dict onto the stable ServerArgs launch fields that
+    must match across DSA and DS — the full ServerArgs set minus the DS-only knobs and
+    the memory-reservation difference. Dynamic telemetry is dropped because it is not a
+    ServerArgs field."""
+    bc = _bench_compare()
+    excluded = bc._DS_ONLY_SERVER_ARG_KEYS | _ACCURACY_RECORDED_NOT_MATCHED
+    keys = (server_info.keys() & bc._AC11_STABLE_LAUNCH_ARG_KEYS) - excluded
+    return {k: server_info[k] for k in keys}
+
+
+def _check_op_point(dsa: Dict[str, Any], ds: Dict[str, Any], *,
+                    expected_mask_path: str, expected_mask_sha256: Optional[str]) -> None:
+    """Fail closed unless the full stable server op-point matches (only DS knobs may
+    differ) AND the DS column proves it served the expected production mask."""
     da, sa = dsa.get("server_info") or {}, ds.get("server_info") or {}
     _require(bool(da) and bool(sa), "missing server_info in one or both artifacts")
-    mismatches = [f"{k}: dsa={da.get(k)!r} ds={sa.get(k)!r}"
-                  for k in OPPOINT_FIELDS if da.get(k) != sa.get(k)]
-    _require(not mismatches, "server op-point mismatch (only DS knobs may differ): "
-             + "; ".join(mismatches))
     _require(da.get("enable_double_sparsity") is False, "dsa side has enable_double_sparsity != False")
     _require(sa.get("enable_double_sparsity") is True, "ds side has enable_double_sparsity != True")
-    # Provenance: the DS column must prove which channel mask it measured.
+
+    dproj, sproj = _comparable_op_point(da), _comparable_op_point(sa)
+    # Every locked Option-B launch field must be present + non-null on BOTH sides, so a
+    # missing field cannot pass as `None == None` (reuse benchmark_compare's locked set).
+    locked = _bench_compare()._AC11_OPTION_B_LOCKED_FIELDS
+    for side, proj in (("dsa", dproj), ("ds", sproj)):
+        missing = sorted(f for f in locked if proj.get(f) is None)
+        _require(not missing,
+                 f"{side} server op-point missing/null locked field(s) {missing} "
+                 "(cannot prove the operating point — fail closed)")
+    # Compare the UNION of stable keys so a field present on one side only, or differing
+    # (including launch flags outside any hand whitelist, e.g. dtype), fails closed.
+    mismatches = [f"{k}: dsa={dproj.get(k)!r} ds={sproj.get(k)!r}"
+                  for k in (dproj.keys() | sproj.keys()) if dproj.get(k) != sproj.get(k)]
+    _require(not mismatches, "server op-point mismatch (only DS knobs may differ): "
+             + "; ".join(sorted(mismatches)))
+
+    # Provenance: the DS column must prove it served the EXACT expected mask — both the
+    # path and the recorded content hash (a non-empty-but-wrong path must fail closed).
     ds_mask = _ds_mask_path(sa)
-    _require(bool(ds_mask),
-             "ds side server_info has no double_sparsity_config.channel_mask_path "
-             "(cannot prove which mask was measured — fail closed)")
+    _require(ds_mask == expected_mask_path,
+             f"ds double_sparsity_config.channel_mask_path={ds_mask!r} != expected "
+             f"{expected_mask_path!r} (cannot prove the 256-sample GLM mask — fail closed)")
+    if expected_mask_sha256:
+        ds_sha = sa.get("_ds_channel_mask_sha256")
+        _require(ds_sha == expected_mask_sha256,
+                 f"ds channel-mask content sha256={ds_sha!r} != expected "
+                 f"{expected_mask_sha256!r} (wrong/unrecorded mask — fail closed)")
 
 
 def _check_mmlu_served(side: str, mm: Dict[str, Any]) -> None:
@@ -122,11 +185,14 @@ def _check_niah_within(side: str, e: Dict[str, Any], index_topk: int) -> None:
              "(not within budget — fail closed)")
 
 
-def compare(dsa: Dict[str, Any], ds: Dict[str, Any]) -> Dict[str, Any]:
+def compare(dsa: Dict[str, Any], ds: Dict[str, Any], *,
+            expected_ds_mask_path: str = EXPECTED_DS_MASK_PATH,
+            expected_ds_mask_sha256: Optional[str] = EXPECTED_DS_MASK_SHA256) -> Dict[str, Any]:
     """Compare a DSA-native and a DS accuracy artifact. Fail closed.
 
-    Validates schema, op-point parity (only DS knobs differ), the same prompt set
-    (run_id + per-test hashes + index_topk + length sets), and that both sides
+    Validates schema, the full stable op-point (only DS knobs differ; locked fields
+    required present), the exact expected DS mask (path + content sha), the same prompt
+    set (run_id + per-test hashes + index_topk + length sets), and that both sides
     actually served every mandatory request, before applying the thresholds.
     """
     for name, art in (("dsa", dsa), ("ds", ds)):
@@ -139,7 +205,8 @@ def compare(dsa: Dict[str, Any], ds: Dict[str, Any]) -> Dict[str, Any]:
     index_topk = int(dsa.get("index_topk", -1))
     _require(index_topk == int(ds.get("index_topk", -2)),
              f"index_topk mismatch: dsa={dsa.get('index_topk')} ds={ds.get('index_topk')}")
-    _check_op_point(dsa, ds)
+    _check_op_point(dsa, ds, expected_mask_path=expected_ds_mask_path,
+                    expected_mask_sha256=expected_ds_mask_sha256)
 
     # MMLU (mandatory): both sides fully served, same example set, DS within tol.
     dmm, smm = dsa.get("mmlu") or {}, ds.get("mmlu") or {}
@@ -200,6 +267,7 @@ def compare(dsa: Dict[str, Any], ds: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "run_id": dsa["run_id"], "index_topk": index_topk,
         "ds_channel_mask_path": _ds_mask_path((ds.get("server_info") or {})),
+        "ds_channel_mask_sha256": (ds.get("server_info") or {}).get("_ds_channel_mask_sha256"),
         "mmlu": {"dsa_pct": round(dsa_mmlu, 2), "ds_pct": round(ds_mmlu, 2),
                  "delta_pp": round(mmlu_delta, 2), "tolerance_pp": MMLU_TOLERANCE_PP,
                  "pass": mmlu_pass},
@@ -233,14 +301,35 @@ def _default_mmlu_data_dir() -> str:
         os.path.join(os.path.dirname(__file__), "..", "..", "benchmark", "mmlu", "data"))
 
 
+def _read_mask_content_sha256(path: str) -> Optional[str]:
+    """Read `__metadata__.content_sha256` from a safetensors header without loading
+    tensors (the value `save_channel_mask` stamps + the bind-time gate validated).
+    Returns None if the file is unreadable/malformed — compare then fails closed."""
+    try:
+        with open(path, "rb") as fh:
+            n = int.from_bytes(fh.read(8), "little")
+            header = json.loads(fh.read(n).decode("utf-8"))
+        meta = header.get("__metadata__") or {}
+        return meta.get("content_sha256")
+    except (OSError, ValueError, TypeError):
+        return None
+
+
 def _fetch_server_info(base_url: str) -> Dict[str, Any]:
-    """Fetch the stable op-point fields from /get_server_info (fail closed)."""
+    """Fetch the full stable ServerArgs launch projection from /get_server_info, plus
+    the DS channel-mask content hash for provenance (fail closed)."""
     req = urllib.request.Request(base_url.rstrip("/") + "/get_server_info")
     with urllib.request.urlopen(req, timeout=30) as r:
         info = json.loads(r.read().decode())
-    # /get_server_info already strips private _-prefixed attrs; pick the stable set
-    # plus the DS provenance (config/mask path).
-    return {k: info.get(k) for k in (OPPOINT_FIELDS + OPPOINT_ALLOWED_DIFF + OPPOINT_DS_PROVENANCE)}
+    # Record the full stable ServerArgs launch projection (the same field universe
+    # benchmark_compare.py protects) so compare can prove the whole op-point; dynamic
+    # /get_server_info telemetry is dropped because it is not a ServerArgs field.
+    stable = _bench_compare()._AC11_STABLE_LAUNCH_ARG_KEYS
+    server_info = {k: info[k] for k in info.keys() & stable}
+    mask_path = _ds_mask_path(server_info)
+    if mask_path:
+        server_info["_ds_channel_mask_sha256"] = _read_mask_content_sha256(mask_path)
+    return server_info
 
 
 def _ds_mask_path(server_info: Dict[str, Any]) -> Optional[str]:
@@ -351,7 +440,11 @@ def main(argv: List[str]) -> int:
             dsa = json.load(f)
         with open(os.environ["AC12_DS_ARTIFACT"]) as f:
             ds = json.load(f)
-        verdict = compare(dsa, ds)
+        verdict = compare(
+            dsa, ds,
+            expected_ds_mask_path=os.environ.get("AC12_EXPECTED_DS_MASK_PATH", EXPECTED_DS_MASK_PATH),
+            expected_ds_mask_sha256=os.environ.get("AC12_EXPECTED_DS_MASK_SHA256", EXPECTED_DS_MASK_SHA256),
+        )
         print(json.dumps(verdict, indent=2))
         return 0 if verdict["mandatory_pass"] else 1
     print("set AC12_MODE=collect (AC12_SIDE, AC12_BASE_URL) or "

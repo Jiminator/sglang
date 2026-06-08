@@ -35,13 +35,18 @@ WITHIN = (1024, 1536)
 BEYOND = (4096, 16384, 65536)
 
 
+EXPECTED_MASK = AG.EXPECTED_DS_MASK_PATH
+EXPECTED_SHA = AG.EXPECTED_DS_MASK_SHA256
+
+
 def _server_info(side, *, tp_size=8, random_seed=20260607, piecewise=True,
-                 overlap=True, cuda_graph=False, ds_config="__default__"):
+                 overlap=True, cuda_graph=False, dtype="fp8_e4m3",
+                 ds_config="__default__", mask_sha="__default__"):
     si = {
         "model_path": "/glm", "tp_size": tp_size, "page_size": 64,
         "kv_cache_dtype": "fp8_e4m3", "disable_radix_cache": True,
         "dsa_prefill_backend": "flashmla_kv", "dsa_decode_backend": "flashmla_kv",
-        "attention_backend": "dsa", "random_seed": random_seed,
+        "attention_backend": "dsa", "random_seed": random_seed, "dtype": dtype,
         "disable_piecewise_cuda_graph": piecewise, "disable_overlap_schedule": overlap,
         "disable_cuda_graph": cuda_graph,
         "enable_double_sparsity": (side == "ds"),
@@ -49,9 +54,10 @@ def _server_info(side, *, tp_size=8, random_seed=20260607, piecewise=True,
     }
     if side == "ds":
         si["double_sparsity_config"] = (
-            '{"channel_mask_path": "/models/glm51-fp8-channel-mask-s256.safetensors", "top_k": 2048}'
+            '{"channel_mask_path": "%s", "top_k": 2048}' % EXPECTED_MASK
             if ds_config == "__default__" else ds_config
         )
+        si["_ds_channel_mask_sha256"] = EXPECTED_SHA if mask_sha == "__default__" else mask_sha
     return si
 
 
@@ -197,11 +203,11 @@ class TestAccuracyGateCompare(unittest.TestCase):
             AG.compare(_side("dsa", mmlu_hits=150), ds2)
         self.assertIn("beyond-budget", str(cm.exception))
 
-    def test_clean_pass_records_ds_mask_path(self):
+    def test_clean_pass_records_ds_mask_path_and_sha(self):
         v = AG.compare(_side("dsa", mmlu_hits=150), _side("ds", mmlu_hits=149))
         self.assertTrue(v["mandatory_pass"])
-        self.assertEqual(v["ds_channel_mask_path"],
-                         "/models/glm51-fp8-channel-mask-s256.safetensors")
+        self.assertEqual(v["ds_channel_mask_path"], EXPECTED_MASK)
+        self.assertEqual(v["ds_channel_mask_sha256"], EXPECTED_SHA)
 
     def test_piecewise_cuda_graph_mismatch_fails_closed(self):
         dsa = _side("dsa", mmlu_hits=150, server_info=_server_info("dsa", piecewise=False))
@@ -246,6 +252,57 @@ class TestAccuracyGateCompare(unittest.TestCase):
         with self.assertRaises(AG.GateError) as cm:
             AG.compare(dsa, ds)
         self.assertIn("beyond-budget num_prompts", str(cm.exception))
+
+    # ---- fail-closed: incomplete op-point + wrong/missing mask provenance (R9) ----
+    def test_locked_field_missing_from_both_fails_closed(self):
+        # Codex R8 repro: if BOTH artifacts omit a locked launch field, a None==None
+        # compare treated it as agreement. Presence is now required.
+        dsa_si, ds_si = _server_info("dsa"), _server_info("ds")
+        del dsa_si["disable_cuda_graph"]
+        del ds_si["disable_cuda_graph"]
+        with self.assertRaises(AG.GateError) as cm:
+            AG.compare(_side("dsa", mmlu_hits=150, server_info=dsa_si),
+                       _side("ds", mmlu_hits=150, server_info=ds_si))
+        self.assertIn("locked field", str(cm.exception))
+        self.assertIn("disable_cuda_graph", str(cm.exception))
+
+    def test_stable_field_outside_old_whitelist_differs_fails_closed(self):
+        # Codex R8 repro: a stable launch field outside the old hand whitelist (dtype)
+        # could differ and pass. The ServerArgs-derived projection now catches it.
+        dsa = _side("dsa", mmlu_hits=150, server_info=_server_info("dsa", dtype="fp8_e4m3"))
+        ds = _side("ds", mmlu_hits=150, server_info=_server_info("ds", dtype="bfloat16"))
+        with self.assertRaises(AG.GateError) as cm:
+            AG.compare(dsa, ds)
+        self.assertIn("op-point", str(cm.exception))
+        self.assertIn("dtype", str(cm.exception))
+
+    def test_wrong_ds_mask_path_fails_closed(self):
+        # Codex R8 repro: any non-empty path passed. Now it must equal the expected mask.
+        ds = _side("ds", mmlu_hits=150, server_info=_server_info(
+            "ds", ds_config='{"channel_mask_path": "/tmp/wrong-mask.safetensors"}'))
+        with self.assertRaises(AG.GateError) as cm:
+            AG.compare(_side("dsa", mmlu_hits=150), ds)
+        self.assertIn("channel_mask_path", str(cm.exception))
+        self.assertIn("expected", str(cm.exception))
+
+    def test_malformed_ds_config_fails_closed(self):
+        ds = _side("ds", mmlu_hits=150, server_info=_server_info("ds", ds_config="not json at all"))
+        with self.assertRaises(AG.GateError) as cm:
+            AG.compare(_side("dsa", mmlu_hits=150), ds)
+        self.assertIn("channel_mask_path", str(cm.exception))
+
+    def test_ds_mask_sha_mismatch_fails_closed(self):
+        # Right path, wrong recorded content hash -> stale/wrong mask -> fail closed.
+        ds = _side("ds", mmlu_hits=150, server_info=_server_info("ds", mask_sha="deadbeef"))
+        with self.assertRaises(AG.GateError) as cm:
+            AG.compare(_side("dsa", mmlu_hits=150), ds)
+        self.assertIn("sha256", str(cm.exception))
+
+    def test_ds_mask_sha_missing_fails_closed(self):
+        ds = _side("ds", mmlu_hits=150, server_info=_server_info("ds", mask_sha=None))
+        with self.assertRaises(AG.GateError) as cm:
+            AG.compare(_side("dsa", mmlu_hits=150), ds)
+        self.assertIn("sha256", str(cm.exception))
 
     def test_default_mmlu_data_dir_resolves_repo_path(self):
         # Codex #4: empty AC12_MMLU_DATA_DIR must not reach os.makedirs("").
