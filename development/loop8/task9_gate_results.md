@@ -132,26 +132,45 @@ tokens), recorded as characterization, NOT a mandatory failure. Repro: `AC12_MOD
 AC12_BASE_URL=… AC12_INDEX_TOPK=2048 python development/loop8/accuracy_gate.py` (one server at a time), then
 `AC12_MODE=compare AC12_DSA_ARTIFACT=… AC12_DS_ARTIFACT=…`.
 
-## DEC-2 landing-policy assessment (preliminary)
-- **AC-1 DS-off byte-identical (mandatory): PASS** (task7, R3 — GLM DSA-native byte-identical HEAD vs
-  d018026f9, 6/6 prompts).
-- **MMLU within tolerance of DSA (mandatory): PENDING** (offline gate path landed R6; scoring run next).
-- **DS-vs-DSA non-regression of the shipped default (mandatory): PASS** — the served default is DSA-native
-  (DS default-off); AC-1 proves it unregressed.
-- **SLO decode-TPS ≥ 30 + P99 TTFT < 22 s (mandatory): DS-on FAILS (R5 parity, preliminary window)** —
-  decode P50 17.1 < 30 at every concurrency (23.2/17.1/17.1) and P99 TTFT fails at conc 32/64. The
-  **DSA-native** column PASSES the SLO at conc 16/32 (38.7/31.5 tok/s ≥ 30, TTFT < 22 s) and fails conc 64
-  (cold-burst). Preliminary window (`num_prompts=conc`, no 600 s); the locked 3×600 s sweep is needed for
-  the authoritative steady-state numbers (esp. conc 64).
-- **NIAH / long-context recall (characterization-only): PENDING.**
+### SLO RESULT — locked sweep on 8×H200 (R10), DS-vs-DSA-native, same node
+Seed-matched paired launchers (radix-off, `--disable-overlap-schedule --disable-piecewise-cuda-graph
+--disable-custom-all-reduce`, seed 20260607; DSA mem 0.8 / DS mem 0.7), gsp 4096 ISL / 512 OSL, conc
+16/32/64 × **3 trials × 120 s warmup × 600 s window** (the locked window — supersedes the R5 preliminary
+`num_prompts=conc` numbers). `development/benchmark.sh` → `benchmark_compare.py --ac11`. Artifacts:
+`development/results/{native_nsa,double_sparsity}_gsp_isl4096_osl512_c{16,32,64}_t{1,2,3}.jsonl`; AC-11 report
+`development/loop8/runs/20260608_ac4/slo_ac11_report.txt`.
 
-**Landing status per DEC-2 (unchanged — SLO mandatory):** DEC-2 resolves "parity + SLO mandatory-to-land".
-On the R5 parity (preliminary-window) data, **DS-on does not meet the mandatory SLO** (fails decode-TPS at
-all concurrencies + TTFT at conc 32/64), while DSA-native passes at conc 16/32. This record does **not**
-reinterpret DEC-2. Resolving the landing therefore requires the authoritative conc-16/32/64 + locked-window
-numbers and, if DS-on still fails (expected, given GLM's strong trained indexer makes DS the default-off
-recall fallback rather than a throughput win), an **explicit user plan-evolution decision** on whether a
-default-off DS opt-in may land despite a DS-on SLO miss — recorded as plan evolution if so, not assumed here.
+| conc | DSA decode-TPS (p50) | DS decode-TPS (p50) | DSA P99 TTFT | DS P99 TTFT | DSA SLO | DS SLO |
+|------|----------------------|---------------------|--------------|-------------|---------|--------|
+| 16 | **41.82** | **23.10** | 7.18 s | 3.67 s | **PASS** | **FAIL** (TPS < 30) |
+| 32 | **31.60** | **17.18** | 14.15 s | 42.95 s | **PASS** | **FAIL** (TPS + TTFT) |
+| 64 | 26.12 | 17.16 | 28.23 s | 79.42 s | FAIL (TPS + TTFT) | **FAIL** (TPS + TTFT) |
+
+Client SLO bars: decode-TPS ≥ 30 (new def `output_tokens/(e2e−ttft)`), P99 TTFT < 22 s. **DS-on FAILS
+decode-TPS at every concurrency** (23/17/17 ≪ 30) and TTFT at conc 32/64; trials are tight (±0.1 TPS).
+DSA-native passes conc 16/32 and is throughput-bound at conc 64. AC-11 directional verdict: **FAIL** (DS/DSA
+TPS ratio 0.55/0.54/0.66 < 0.95 at all conc). Effective-vs-nominal concurrency shows DS achieves 100/97/93 %
+of nominal, so part of the conc-32/64 DS TTFT gap is queue/admission-bound (mem-0.7 KV-pool), not solely
+per-request latency. Per the comparator's profiling obligation, a captured DS profile is the documented
+directional follow-up for the failing rows (does not change the SLO verdict).
+
+## DEC-2 landing-policy assessment — FINAL (R10, all mandatory gates measured)
+- **AC-1 DS-off byte-identical (mandatory): PASS** (task7, R3 — GLM DSA-native byte-identical vs d018026f9).
+- **MMLU within tolerance of DSA (mandatory): PASS** — DSA 87.5 % == DS 87.5 % (Δ 0.0 pp ≤ 1.0).
+- **DS-vs-DSA non-regression (mandatory): PASS** — served default is DSA-native (unregressed by AC-1); and
+  DS-on does not regress within-budget NIAH (DS is higher: 65/70 % vs 40/45 %).
+- **SLO decode-TPS ≥ 30 + P99 TTFT < 22 s (mandatory): DS-on FAILS at every concurrency** (locked 3×600 s
+  sweep above; 23.10/17.18/17.16 tok/s ≪ 30). DSA-native passes conc 16/32.
+- **NIAH / long-context recall (characterization-only):** DS uplift within budget; DS recall 0 beyond the
+  2048-token index budget (by design) — characterized, not gated.
+
+**Landing status per DEC-2 (SLO mandatory):** DS-on meets every mandatory accuracy gate but **does not meet
+the mandatory SLO**. DEC-2 makes the SLO mandatory-to-land, so **DS-on cannot be the served default**. The
+shipped default remains **DSA-native** (AC-1 byte-identical, SLO-passing at conc 16/32). The Loop-8
+deliverable is the **reversible, default-OFF DS opt-in** — coherent, accuracy-parity, mask-validated — whose
+value is long-context recall scenarios where the trained indexer underperforms, NOT a throughput win on this
+standard workload (GLM's trained DSA indexer is strong). Whether the default-OFF opt-in code may LAND despite
+the DS-on SLO miss is the explicit DEC-2 plan-evolution decision (see Plan Evolution Log / round-10 summary).
 
 ## V3.2-vs-GLM shape matrix
 | dim | DeepSeek-V3.2 | GLM-5.1 |
