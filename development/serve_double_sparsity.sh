@@ -154,6 +154,13 @@ echo "    signature_dtype  = ${SIGNATURE_DTYPE}"
 echo "    recall_oracle    = ${RECALL_ORACLE} (eager: ${#CUDA_GRAPH_ARGS[@]} cuda-graph arg(s))"
 echo "    radix_cache      = $([[ -n "${RADIX_FIXTURE_ARTIFACT}" ]] && echo "ENABLED (fixture artifact: ${RADIX_FIXTURE_ARTIFACT})" || echo "disabled (no fixture artifact)")"
 echo "    log              = ${LOG_FILE}"
+echo ""
+echo "    *** RECALL-MODE OPT-IN — NOT A THROUGHPUT DEFAULT ***"
+echo "    Double Sparsity is a reversible, DEFAULT-OFF opt-in. On the GLM-5.1 client"
+echo "    workload it does NOT meet the throughput SLO (locked sweep: decode-TPS ~23/17/17"
+echo "    tok/s << 30 at conc 16/32/64; see development/loop8/task9_gate_results.md). The"
+echo "    served default is native DSA. Enable DS only for long-context recall scenarios"
+echo "    where the trained indexer underperforms — not to raise standard-workload throughput."
 
 exec python3 -m sglang.launch_server \
   --model-path "${MODEL_PATH}" \

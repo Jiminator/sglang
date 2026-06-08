@@ -169,8 +169,40 @@ the mandatory SLO**. DEC-2 makes the SLO mandatory-to-land, so **DS-on cannot be
 shipped default remains **DSA-native** (AC-1 byte-identical, SLO-passing at conc 16/32). The Loop-8
 deliverable is the **reversible, default-OFF DS opt-in** — coherent, accuracy-parity, mask-validated — whose
 value is long-context recall scenarios where the trained indexer underperforms, NOT a throughput win on this
-standard workload (GLM's trained DSA indexer is strong). Whether the default-OFF opt-in code may LAND despite
-the DS-on SLO miss is the explicit DEC-2 plan-evolution decision (see Plan Evolution Log / round-10 summary).
+standard workload (GLM's trained DSA indexer is strong).
+
+**DEC-2 DECISION (R10, user): LAND the default-OFF opt-in, GATED on (a) the AC-11 profiling obligation +
+(b) a surfaced recall-mode warning.** The user resolved DEC-2 to land the reversible default-OFF DS opt-in
+despite the DS-on SLO miss (DSA-native stays the served default), conditioned on two prerequisites before the
+opt-in is documented as usable:
+1. **Profiling obligation** — a captured DS decode profile for the failing concurrency rows. Tool:
+   `development/profile_ds.sh` (boots DS, captures a torch-profiler trace at a failing conc, summarizes the
+   top GPU kernels behind the throughput gap). Artifact: `development/loop8/runs/20260608_ac4/profile_ds_c32/`
+   (`trace/`, `profile_summary.txt`). [See "DS profile" below.]
+2. **Recall-mode warning surfaced** — `development/serve_double_sparsity.sh` now prints a startup banner that
+   DS is a default-OFF recall-mode opt-in that does NOT meet the throughput SLO (decode-TPS ~23/17/17 ≪ 30),
+   that native DSA is the served default, and that DS should be enabled only for long-context recall.
+
+Recorded as plan evolution (goal tracker). DSA-native remains the served default; DS lands as the reversible
+recall-mode opt-in.
+
+### DS profile (profiling obligation, conc 32 failing row)
+`development/profile_ds.sh PROFILE_CONC=32` booted DS, captured a torch-profiler trace over 40 decode steps
+(bench confirms DS ~16.9 tok/s, matching the locked sweep), and summarized the top GPU kernels (rank TP-0,
+`development/loop8/runs/20260608_ac4/profile_ds_c32/profile_summary.txt`). Top of the DS decode profile:
+
+| share | kernel | nature |
+|-------|--------|--------|
+| 35.4 % | `ncclDevKernel_AllReduce_Sum_bf16` | TP all-reduce — inflated because this op-point runs `--disable-custom-all-reduce` (NCCL fallback, forced by the GLM TP=8 custom-all-reduce-v2 boot bug); affects DSA and DS **equally** |
+| 16.0 % | `fused_moe_kernel` | MoE — model-inherent (both columns) |
+| ~13 % (sum) | `gatherTopK` 3.1 %, `topk_transform_prefill` 2.2 %, `sm90_fp8_mqa_logits` 1.9 %, `fast_hadamard_transform` 1.9 %, `_logical_score_kernel` 1.3 %, `per_token_group_quant` (scoring), `flash_fwd_splitkv_mla_fp8_sparse` 0.7 % | **DS-specific** index/scoring/sparse-decode overhead — the per-step cost behind the DS throughput gap |
+
+**Reading:** the DS throughput gap is the inherent per-decode-step cost of the DS index/scoring path
+(top-k selection + fp8 MQA logits + hadamard signature + logical scoring + sparse MLA) added on top of the
+base model, NOT a pathological hotspot. Caveat: the 35 % NCCL all-reduce is depressed-absolute for BOTH
+columns because custom-all-reduce is disabled at this op-point (GLM TP=8 boot workaround); fixing the
+upstream custom-all-reduce-v2 capture bug would raise both columns' absolute TPS (DSA could clear conc 64;
+DS would improve but the relative DS scoring overhead remains) — a recorded directional follow-up.
 
 ## V3.2-vs-GLM shape matrix
 | dim | DeepSeek-V3.2 | GLM-5.1 |
