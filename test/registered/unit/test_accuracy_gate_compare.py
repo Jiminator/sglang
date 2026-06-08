@@ -40,7 +40,7 @@ EXPECTED_SHA = AG.EXPECTED_DS_MASK_SHA256
 
 
 def _server_info(side, *, tp_size=8, random_seed=20260607, piecewise=True,
-                 overlap=True, cuda_graph=False, dtype="fp8_e4m3",
+                 overlap=True, cuda_graph=False, dtype="fp8_e4m3", custom_ar=False,
                  ds_config="__default__", mask_sha="__default__"):
     si = {
         "model_path": "/glm", "tp_size": tp_size, "page_size": 64,
@@ -48,7 +48,7 @@ def _server_info(side, *, tp_size=8, random_seed=20260607, piecewise=True,
         "dsa_prefill_backend": "flashmla_kv", "dsa_decode_backend": "flashmla_kv",
         "attention_backend": "dsa", "random_seed": random_seed, "dtype": dtype,
         "disable_piecewise_cuda_graph": piecewise, "disable_overlap_schedule": overlap,
-        "disable_cuda_graph": cuda_graph,
+        "disable_cuda_graph": cuda_graph, "disable_custom_all_reduce": custom_ar,
         "enable_double_sparsity": (side == "ds"),
         "mem_fraction_static": 0.7 if side == "ds" else 0.8,  # allowed diff
     }
