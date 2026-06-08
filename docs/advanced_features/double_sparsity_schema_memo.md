@@ -16,9 +16,9 @@ Goal: zero schema rewrites once any of these targets ship. The file format and v
 | `channel_weights` | float32 `[L, H, label_dim]` tensor | Normalised importance per selected channel | dtype is float32 regardless of model weights / KV dtype — projection accumulates in fp32, kernels dequant as needed. |
 | `schema_version` | str | Loader compatibility gate | Frozen at `"1"` for the V3.2-FP8 / GLM-5.1 / 128K / FP4 cohort. Bumped only on incompatible changes. |
 | `dtype` | str | `kv_cache_dtype` calibrated for | Currently `"fp8_e4m3"` or `"bfloat16"`. FP4 enablement adds `"nvfp4"` / `"mxfp4"` here — both work with the same schema; only the kernel branch in `page_signature_write` learns the new dequant. |
-| `head_dim` | str of int | Model head_dim sanity check | GLM-5.1 typically uses head_dim=128 (same as V3.2). 128K ISL does not change head_dim. FP4 does not change head_dim. |
+| `head_dim` | str of int | Model head_dim sanity check | Model-specific: DeepSeek-V3.2 uses head_dim=128 (qk_nope); GLM-5.1 uses head_dim=192 (qk_nope; v_head_dim=256). A V3.2 head_dim=128 mask is REJECTED at GLM bind-time (`verify_bind_shapes`). 128K ISL / FP4 do not change head_dim. |
 | `page_size` | str of int | Runtime page granularity | Decoupled from sequence length: 128K ISL just means more pages of the same `page_size`. Schema admits any positive page size; validator restricts to `{32, 64, 128}` for AC-3 compliance. |
-| `label_dim` | str of int | Compressed projection width | Currently 16. The selector buffer matches; bumping `label_dim` is a configuration change, not a schema change. |
+| `label_dim` | str of int | Compressed projection width | Model-specific: DeepSeek-V3.2 calibrates label_dim=16; GLM-5.1 calibrates label_dim=32 (DEC-3). The selector buffer matches; changing `label_dim` is a configuration change, not a schema change. |
 | `created_at` | ISO-8601 | Audit | No cross-target concern. |
 | `content_sha256` | hex str | Content identity | Tensor content is the same regardless of the model class; the hash mechanism applies unchanged. |
 | `extra_metadata.*` | str | Free namespace | Where future per-model fields land (e.g. `glm5_indexer_variant`, `fp4_block_size`) without bumping `schema_version`. |
