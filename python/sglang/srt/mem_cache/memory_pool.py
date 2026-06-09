@@ -166,8 +166,12 @@ class ReqToTokenPool:
         self.max_context_len = max_context_len
         self.device = device
         with memory_saver_adapter.region(GPU_MEMORY_TYPE_KV_CACHE):
+            # +1 padding column: a boundary off-by-one indexing column ==
+            # max_context_len lands on this zero column (slot 0), not adjacent memory.
             self.req_to_token = torch.zeros(
-                (self._alloc_size, max_context_len), dtype=torch.int32, device=device
+                (self._alloc_size, max_context_len + 1),
+                dtype=torch.int32,
+                device=device,
             )
         self.free_slots = list(range(1, self._alloc_size))
 
@@ -206,10 +210,18 @@ class ReqToTokenPool:
 
     def free(self, req: Req):
         assert req.req_pool_idx is not None, "request must have req_pool_idx"
+        # Zero the row so a reused req_pool_idx can't feed stale slot ids to the
+        # FA3 paged kernel (rows are not cleared elsewhere on free/retract). This
+        # masks the inconsistency, resolving any such read to slot 0 instead of a
+        # wild pointer; find the producer via the read-side guard. See
+        # FA3_ROOT_CAUSE_ANALYSIS.md.
+        self.req_to_token[req.req_pool_idx].zero_()
         self.free_slots.append(req.req_pool_idx)
         req.req_pool_idx = None
 
     def clear(self):
+        # Drop stale slot ids along with the free-list reset (see free()).
+        self.req_to_token.zero_()
         self.free_slots = list(range(1, self._alloc_size))
 
 
