@@ -1,0 +1,7 @@
+=== RUN case2_dsa07/torch  case=case2 bs=29  10:50:02Z ===
+    server args: --model-path /cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db --tp-size 8 --kv-cache-dtype fp8_e4m3 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --disable-radix-cache --random-seed 20260607 --trust-remote-code --host 127.0.0.1 --port 30000 --mem-fraction-static 0.7
+ready ~190s
+/sgl-workspace/sglang/development/profiling/runs/20260609/_env.sh: line 40: 1786259 Killed                  env SGLANG_TORCH_PROFILER_DIR="$TR" "${STACK_ENV[@]}" python -m sglang.launch_server "${SERVER_ARGS[@]}" > "$SERVE_LOG" 2>&1
+>>> OK torch: 16 trace files under /sgl-workspace/sglang/development/profiling/runs/20260609/case2_dsa07/torch/trace
+>>> bench batch completed; result=/sgl-workspace/sglang/development/profiling/runs/20260609/case2_dsa07/torch/result.jsonl
+=== DONE case2_dsa07/torch  10:56:07Z ===
