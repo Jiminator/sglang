@@ -23,6 +23,7 @@ from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMo
 from sglang.srt.server_args import get_global_server_args
 from sglang.srt.speculative.spec_info import SpecInput
 from sglang.srt.utils import get_compiler_backend
+from sglang.srt.utils.async_probe import maybe_assert_page_table_in_range
 
 if TYPE_CHECKING:
     from sglang.srt.layers.radix_attention import RadixAttention
@@ -755,6 +756,19 @@ class FlashAttentionBackend(AttentionBackend):
                 self.forward_metadata_spec_decode_expand.page_table = expand_page_table
 
         self.forward_metadata = metadata
+
+        # Read-side guard: every page_table slot the FA3 paged kernel will
+        # dereference must be in range. Catches cache_seqlens<->req_to_token
+        # inconsistencies before they become a Warp Illegal Address. Per-forward,
+        # async (no host sync), gated on SGLANG_ENABLE_ASYNC_ASSERT. See
+        # maybe_assert_page_table_in_range / async_probe.py.
+        maybe_assert_page_table_in_range(
+            metadata.page_table,
+            metadata.cache_seqlens_int32,
+            self.token_to_kv_pool.size + self.page_size,
+            page_size=self.page_size,
+            msg="fa3 init_forward_metadata",
+        )
 
     def forward_extend(
         self,
@@ -2425,6 +2439,19 @@ class FlashAttentionBackend(AttentionBackend):
 
         self.forward_metadata = metadata
         self.forward_metadata_spec_decode_expand = metadata_expand
+
+        # Read-side guard on the CUDA-graph decode path (production steady state):
+        # the page_table here is filled in-place from req_to_token each replay, so
+        # this is where a decode-time cache_seqlens<->req_to_token inconsistency
+        # would otherwise reach the kernel as a Warp Illegal Address. Per-forward,
+        # async, gated on SGLANG_ENABLE_ASYNC_ASSERT.
+        maybe_assert_page_table_in_range(
+            metadata.page_table,
+            metadata.cache_seqlens_int32,
+            self.token_to_kv_pool.size + self.page_size,
+            page_size=self.page_size,
+            msg="fa3 cuda_graph decode",
+        )
 
     def get_cuda_graph_seq_len_fill_value(self):
         """Get the fill value for sequence length in CUDA graph."""

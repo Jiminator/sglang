@@ -52,6 +52,58 @@ def maybe_detect_oob(indices: Optional[torch.Tensor], low: int, high: int, msg: 
     )
 
 
+def maybe_assert_page_table_in_range(
+    page_table: Optional[torch.Tensor],
+    cache_seqlens: Optional[torch.Tensor],
+    num_kv_slots: int,
+    page_size: int = 1,
+    msg: str = "",
+):
+    """Async read-side guard for the FA3 paged-KV gather.
+
+    Read-side complement to ``maybe_detect_oob`` (which guards the *write* into
+    set_kv_buffer). The FA3 paged kernel (hopper/paged_kv.h) masks page-table
+    reads with ``row_idx < seqlen_k`` but uses the *value* it reads as a KV slot
+    index with NO bounds check. If ``cache_seqlens`` marks a position valid but
+    its ``page_table`` entry is out of range (a cache_seqlens<->req_to_token
+    inconsistency), the gather forms a wild pointer -> "Warp Illegal Address".
+
+    This asserts that every slot id the kernel will actually dereference --
+    ``page_table[i, :cdiv(cache_seqlens[i], page_size)]`` -- lies in
+    ``[0, num_kv_slots)``. Entries strictly past each row's covered length are
+    masked out (the kernel never reads them) so stale/zero tail values do not
+    false-positive. No GPU-CPU sync; a violation surfaces at the next sync point
+    with this message instead of an illegal-address crash.
+
+    Placement: call ONCE PER FORWARD where page_table/cache_seqlens are finalized
+    (init_forward_metadata and the cuda-graph decode metadata path), NOT per layer.
+    """
+    if not envs.SGLANG_ENABLE_ASYNC_ASSERT.get():
+        return
+    if (
+        page_table is None
+        or cache_seqlens is None
+        or page_table.numel() == 0
+        or cache_seqlens.numel() == 0
+    ):
+        return
+    cols = torch.arange(page_table.shape[1], device=page_table.device)
+    covered_len = (cache_seqlens.to(torch.int64) + (page_size - 1)) // page_size
+    covered = cols.unsqueeze(0) < covered_len.unsqueeze(1)  # (B, L) bool
+    slots = page_table.to(torch.int64)
+    # neutralize masked (uncovered) positions to a known-valid slot so only the
+    # positions the kernel actually dereferences are asserted.
+    safe = torch.where(covered, slots, torch.zeros_like(slots))
+    torch._assert_async(
+        safe.min() >= 0,
+        f"FA3 page_table slot id < 0 (cache_seqlens/req_to_token mismatch): {msg}",
+    )
+    torch._assert_async(
+        safe.max() < num_kv_slots,
+        f"FA3 page_table slot id >= {num_kv_slots} (cache_seqlens/req_to_token mismatch): {msg}",
+    )
+
+
 def maybe_detect_page_aligned(
     indices: Optional[torch.Tensor], page_size: int, msg: str
 ):
