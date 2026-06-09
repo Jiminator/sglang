@@ -1,0 +1,45 @@
+source: case1_ds/nsys/kern_sum.csv
+total GPU-kernel time units (ns)=333722056721  (whole capture; decode-dominated, see caveat)
+
+=== CATEGORY ROLLUP (% of GPU-kernel time) ===
+      %      calls  category
+   34.2   11329760  DS-index/scoring
+   29.7    1337688  all-reduce
+   15.0    1319400  MoE
+    8.7    3197496  GEMM/proj
+    6.3    9105440  norm/rope/elementwise
+    5.3    1328960  attention(MLA)
+    0.8    1387080  other
+
+=== TOP 30 KERNELS ===
+      %      calls  kernel
+   15.8     328224  ncclDevKernel_AllReduce_Sum_f32_RING_LL(ncclDevKernelArgsStorage<(unsigned long)4096>)
+   13.7     654000  fused_moe_kernel
+    9.5      23864  ncclDevKernel_AllReduce_Sum_bf16_RING_LL(ncclDevKernelArgsStorage<(unsigned long)4096>)
+    7.9     328224  _logical_score_kernel
+    5.3    1312896  void at::native::mbtopk::computeBlockDigitCounts<float, unsigned int, unsigned int, (int)2>(at::cuda
+    4.0     652240  void flashinfer::trtllm_allreduce_fusion::allreduce_fusion_kernel_oneshot_lamport<(flashinfer::trtll
+    4.0     328224  void sm90::decode::sparse_fp8::flash_fwd_splitkv_mla_fp8_sparse_kernel<sm90::decode::sparse_fp8::Ker
+    3.6     328224  void at::native::sbtopk::gatherTopK<long, unsigned int, (int)2, (bool)0>(at::cuda::detail::TensorInf
+    3.0    1419552  void per_token_group_quant_8bit_kernel<NaiveScheduler, (int)128, (int)8, __nv_bfloat16, c10::Float8_
+    2.7     328224  void at::native::radixSortKVInPlace<(int)2, (int)-1, (int)64, (int)32, long, long, unsigned int>(at:
+    2.6     981000  void at::native::sbtopk::gatherTopK<float, unsigned int, (int)2, (bool)0>(at::cuda::detail::TensorIn
+    2.5     328224  void at::native::mbtopk::gatherTopK<float, unsigned int, (int)2>(at::cuda::detail::TensorInfo<const 
+    1.7      67376  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, (unsigned int)0, (unsigned int)0, (uns
+    1.5     669088  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, (unsigned int)0, (unsigned int)0, (uns
+    1.0    1312896  void at::native::mbtopk::computeBlockwiseWithinKCounts<unsigned int, float>(T1 *, short *, unsigned 
+    1.0     315600  triton_per_fused_copy__mul_sum_0
+    0.9    1312896  at::native::mbtopk::computeDigitCumSum(short *, unsigned int *, unsigned int)
+    0.9    1036448  void at::native::elementwise_kernel<(int)128, (int)4, void at::native::gpu_kernel_impl_nocast<at::na
+    0.9     328224  void smxx::decode::flash_fwd_mla_combine_kernel<cutlass::bfloat16_t, (int)512, (int)8, (int)160, (in
+    0.9     654000  void at::native::bitonicSortKVInPlace<(int)2, (int)-1, (int)16, (int)16, float, long, at::native::GT
+    0.8      16384  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, (unsigned int)0, (unsigned int)0, (uns
+    0.8     654000  void per_token_group_quant_8bit_kernel<NaiveScheduler, (int)128, (int)8, __nv_bfloat16, c10::Float8_
+    0.8      11400  void moe_sum_reduce_warp_per_token_vec_kernel<(int)8>(const c10::BFloat16 *, c10::BFloat16 *, long, 
+    0.7     340848  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, (unsigned int)0, (unsigned int)0, (uns
+    0.7      11856  void cutlass::device_kernel<flash::enable_sm90_or_later<flash::FlashAttnFwdSm90<flash::CollectiveMai
+    0.7      27920  kernel_cutlass_kernel_flashinfernormkernelsfused_add_rmsnormFusedAddRMSNormKernel_object_at__tensorp
+    0.6     656448  void at_cuda_detail::cub::detail::scan_by_key::DeviceScanByKeyKernel<at_cuda_detail::cub::detail::sc
+    0.5     328224  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, (unsigned int)0, (unsigned int)0, (uns
+    0.5       9360  <unnamed>::topk_transform_prefill_kernel(<unnamed>::FastTopKParams, int *, const int *, long, const 
+    0.5     315600  nvjet_sm90_tst_32x64_64x16_4x1_v_bz_splitK_TNN

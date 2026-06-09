@@ -1,0 +1,54 @@
+[transformers] The following generation flags are not valid and may be ignored: ['top_p']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+Set dense attention kv len threshold to model index_topk=2048 for DeepSeek with DSA.
+Setting page size to 64 for DeepSeek DSA.
+Setting KV cache dtype to bfloat16 for DeepSeek DSA on SM9 device.
+Set DSA backends for bfloat16 KV Cache: prefill=flashmla_sparse, decode=fa3.
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+max_running_requests_per_dp=2048
+dp_size=1
+skip_max_running_requests_threshold=2048
+skip_token_capacity_threshold=142208
+======== Warmup Begin ========
+Warmup with batch_size=[29]
+#Input tokens: 29696
+#Output tokens: 464
+batch size: 29
+input_len: 1024
+output_len: 16
+latency: 3.12 s
+input throughput: 14044.06 tok/s
+output throughput: 462.28 tok/s
+last_ttft: 2.11 s
+last generation throughput: -1.00 tok/s
+======== Warmup End   ========
+
+#Input tokens: 118784
+#Output tokens: 14848
+batch size: 29
+input_len: 4096
+output_len: 512
+latency: 40.24 s
+input throughput: 15025.44 tok/s
+output throughput: 459.21 tok/s
+last_ttft: 7.91 s
+last generation throughput: 460.87 tok/s
+#Input tokens: 118784
+#Output tokens: 14848
+Dump profiling traces to /sgl-workspace/sglang/development/profiling/runs/20260609/case1_ds/torch/trace/1781001430.585391
+Waiting for 10 steps and the trace to be flushed.... (profile_by_stage=True)
+batch size: 29
+input_len: 4096
+output_len: 512
+latency: 108.81 s
+input throughput: 1629.64 tok/s
+output throughput: 413.39 tok/s
+last_ttft: 72.89 s
+last generation throughput: 456.06 tok/s
+
+Results are saved to /sgl-workspace/sglang/development/profiling/runs/20260609/case1_ds/torch/result.jsonl
+
+Input lens: [4096]. Output lens: [512].
+|   batch size |   input len |   latency (s) |   input throughput (tok/s) |   output throughput (tok/s) | acc length   |   ITL (ms) |   input cost ($/1M) |   output cost ($/1M) | cache hit rate   | profile                                                                                                     |
+|--------------|-------------|---------------|----------------------------|-----------------------------|--------------|------------|---------------------|----------------------|------------------|-------------------------------------------------------------------------------------------------------------|
+|           29 |        4096 |         40.24 |                    15025.4 |                      459.21 | n/a          |      63.15 |                0.05 |                 1.21 | n/a              | [Profile](/sgl-workspace/sglang/development/profiling/runs/20260609/case1_ds/torch/trace/1781001430.585391) |
+
