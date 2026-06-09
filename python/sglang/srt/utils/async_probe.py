@@ -59,24 +59,16 @@ def maybe_assert_page_table_in_range(
     page_size: int = 1,
     msg: str = "",
 ):
-    """Async read-side guard for the FA3 paged-KV gather.
+    """Async read-side guard for the FA3 paged-KV gather (read-side complement to
+    ``maybe_detect_oob``).
 
-    Read-side complement to ``maybe_detect_oob`` (which guards the *write* into
-    set_kv_buffer). The FA3 paged kernel (hopper/paged_kv.h) masks page-table
-    reads with ``row_idx < seqlen_k`` but uses the *value* it reads as a KV slot
-    index with NO bounds check. If ``cache_seqlens`` marks a position valid but
-    its ``page_table`` entry is out of range (a cache_seqlens<->req_to_token
-    inconsistency), the gather forms a wild pointer -> "Warp Illegal Address".
+    The FA3 paged kernel uses each page_table value it reads as a KV slot index
+    with no bounds check. This asserts that every slot the kernel will dereference
+    -- ``page_table[i, :cdiv(cache_seqlens[i], page_size)]`` -- is in
+    ``[0, num_kv_slots)``; positions past a row's covered length are masked (the
+    kernel never reads them), matching the kernel's own ``row_idx < seqlen_k`` mask.
 
-    This asserts that every slot id the kernel will actually dereference --
-    ``page_table[i, :cdiv(cache_seqlens[i], page_size)]`` -- lies in
-    ``[0, num_kv_slots)``. Entries strictly past each row's covered length are
-    masked out (the kernel never reads them) so stale/zero tail values do not
-    false-positive. No GPU-CPU sync; a violation surfaces at the next sync point
-    with this message instead of an illegal-address crash.
-
-    Placement: call ONCE PER FORWARD where page_table/cache_seqlens are finalized
-    (init_forward_metadata and the cuda-graph decode metadata path), NOT per layer.
+    Call once per forward where page_table/cache_seqlens are finalized, NOT per layer.
     """
     if not envs.SGLANG_ENABLE_ASYNC_ASSERT.get():
         return
@@ -101,6 +93,27 @@ def maybe_assert_page_table_in_range(
     torch._assert_async(
         safe.max() < num_kv_slots,
         f"FA3 page_table slot id >= {num_kv_slots} (cache_seqlens/req_to_token mismatch): {msg}",
+    )
+
+
+def maybe_assert_seqlens_within_context(
+    cache_seqlens: Optional[torch.Tensor],
+    max_context_len: int,
+    msg: str = "",
+):
+    """Async fail-fast: a ``cache_seqlen > max_context_len`` would index
+    ``req_to_token`` past its columns (OOB read -> garbage slot), so assert it here
+    and surface an attributable error naming the context limit. Complements
+    ``maybe_assert_page_table_in_range``, which guards the slot *values*.
+    """
+    if not envs.SGLANG_ENABLE_ASYNC_ASSERT.get():
+        return
+    if cache_seqlens is None or cache_seqlens.numel() == 0:
+        return
+    torch._assert_async(
+        cache_seqlens.max() <= max_context_len,
+        f"cache_seqlen exceeds context_len={max_context_len} "
+        f"(seq_len/req_to_token boundary overshoot): {msg}",
     )
 
 
