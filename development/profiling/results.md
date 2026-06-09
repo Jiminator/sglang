@@ -110,6 +110,10 @@ rather than overlapping them: the DS index/scoring is added latency on the criti
 hidden work. The f32 ring all-reduce in particular is a per-layer cross-TP sync that DSA's fused
 indexer avoids entirely.
 
+Independent confirmation that these are DS-specific: the **Case 2 and Case 3 nsys kern_sums
+contain zero** `_logical_score_kernel`, `mbtopk`, `radixSortKVInPlace`, or
+`AllReduce_Sum_f32_RING` kernels — they exist only in the DS (Case 1) capture.
+
 The shared kernels measure close (MLA-attn 41.9k vs 40.5k; trtllm-fusion all-reduce 35.9k vs
 33.8k; fp8-quant 24.1k vs 25.4k). The one notable shared-kernel difference — MoE 91.9k (DS) vs
 118.6k (DSA), same 1,500 calls — is **run-to-run clock/contention variance** (two separate

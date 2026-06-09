@@ -1,0 +1,42 @@
+[transformers] The following generation flags are not valid and may be ignored: ['top_p']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+Set dense attention kv len threshold to model index_topk=2048 for DeepSeek with DSA.
+Setting page size to 64 for DeepSeek DSA.
+Setting KV cache dtype to bfloat16 for DeepSeek DSA on SM9 device.
+Set DSA backends for bfloat16 KV Cache: prefill=flashmla_sparse, decode=fa3.
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+max_running_requests_per_dp=2048
+dp_size=1
+skip_max_running_requests_threshold=2048
+skip_token_capacity_threshold=410112
+======== Warmup Begin ========
+Warmup with batch_size=[64]
+#Input tokens: 65536
+#Output tokens: 1024
+batch size: 64
+input_len: 1024
+output_len: 16
+latency: 4.86 s
+input throughput: 15734.84 tok/s
+output throughput: 1476.75 tok/s
+last_ttft: 4.17 s
+last generation throughput: -1.00 tok/s
+======== Warmup End   ========
+
+#Input tokens: 262144
+#Output tokens: 4096
+batch size: 64
+input_len: 4096
+output_len: 64
+latency: 30.19 s
+input throughput: 9618.40 tok/s
+output throughput: 1394.54 tok/s
+last_ttft: 27.25 s
+last generation throughput: 36.71 tok/s
+
+Results are saved to /sgl-workspace/sglang/development/profiling/runs/20260609/case3_dsa08/nsys/result.jsonl
+
+Input lens: [4096]. Output lens: [64].
+|   batch size |   input len |   latency (s) |   input throughput (tok/s) |   output throughput (tok/s) | acc length   |   ITL (ms) |   input cost ($/1M) |   output cost ($/1M) | cache hit rate   |
+|--------------|-------------|---------------|----------------------------|-----------------------------|--------------|------------|---------------------|----------------------|------------------|
+|           64 |        4096 |         30.19 |                     9618.4 |                     1394.54 | n/a          |      45.89 |                0.08 |                  0.4 | n/a              |
+
