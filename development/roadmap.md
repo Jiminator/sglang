@@ -3,7 +3,7 @@
 > Written 2026-05-30, after Loop 5 (`.humanize/rlcr/2026-05-28_10-17-12`) closed.
 > Source material: Loop 5 plan/draft/goal-tracker/round-summaries, the Loop-5 handoff
 > `runs/20260528_dsv32_mvp/next_loop_issues.md`, the AC-11/AC-12 analyses, and
-> `development/CLIENT_SLOS.md`. This is the single checklist we mark off going forward.
+> `development/SLOS.md`. This is the single checklist we mark off going forward.
 >
 > **Loop numbering note:** Loop 5 is **complete**. The next loop is **Loop 6** (a stub
 > already exists at `development/loop6/`). Where the original ask said "loop 5 MVP," it
@@ -14,10 +14,10 @@
 ## 0. TL;DR — the one finding that reframes everything
 
 Loop 5 measured "MVP" as **DS-vs-DSA parity** (the internal loop-4 bar). But the **client's**
-bar is `development/CLIENT_SLOS.md`, and against *that* bar DS is much closer than the
+bar is `development/SLOS.md`, and against *that* bar DS is much closer than the
 Loop-5 "AC-11 FAIL / AC-12 re-scoped" framing implies:
 
-| Client SLO (immediate) | Target | DS measured (Loop 5, AC-11, conc 16/32/64) | Verdict |
+| SLO (immediate) | Target | DS measured (Loop 5, AC-11, conc 16/32/64) | Verdict |
 |---|---|---|---|
 | Per-request throughput | **≥ 30 TPS/req** | **34.0 / 33.9 / 33.9 tok/s** (p50) | ✅ **MET** at all conc |
 | Tail latency | **P99 TTFT < 22 s** | **57.7 / 132.9 / 292.0 s** | ❌ **MISS (hard)** |
@@ -33,7 +33,7 @@ of the nominal 16 / 32 / 64 concurrency, so requests queue and TTFT explodes. Ra
 0.6 currently **OOMs DS during generation**.
 
 ➡️ **Shrinking the `TokenLabelTable` footprint is the lever that converts DS from "fails the
-client SLO" to "shippable."** It is already the #2 carried-over item; this roadmap promotes it
+SLO" to "shippable."** It is already the #2 carried-over item; this roadmap promotes it
 to the **mainline of the next loop**. Everything else for the immediate client deliverable is
 already done.
 
@@ -64,7 +64,7 @@ Two accuracy harnesses exist. Both currently **PASS** at their (current) gate de
   - Root cause: top_k kernel-locked at 2048 + offline selector inferior to trained DSA indexer (NOT a decode bug — DS recalls 100% when its selection is dense; MMLU == DSA).
 - Artifacts: `runs/20260528_dsv32_mvp/ac12_analysis.md`, `ac12_results/` (+ `superseded_prerescope/`).
 
-**Accuracy gap to client SLO:** none for the immediate deliverable (4096 ISL). The long-context
+**Accuracy gap to SLO:** none for the immediate deliverable (4096 ISL). The long-context
 recall gap only matters for the **deferred** 128k-ISL requirement (§6, Loop 7).
 
 ---
@@ -85,12 +85,12 @@ Effective vs nominal concurrency (the cause): DS achieves **91% / 77% / 56%** of
 
 **Interpretation:**
 - DS per-request **generation rate is competitive-to-better** (beats DSA at conc 64). The 30 TPS/req
-  client SLO is **already met**.
+  SLO is **already met**.
 - The DS-vs-DSA TPS *parity* miss at conc 16/32 and the **catastrophic TTFT miss at all conc** are
   the **same root cause**: mem-0.6 admission starvation from the `TokenLabelTable` footprint.
 - This is recorded per DEC-7 as a directional follow-up, not a build break.
 
-**Not yet measured against the client SLO directly:** the AC-11 run used `NUM_PROMPTS=64`, not the
+**Not yet measured against the SLO directly:** the AC-11 run used `NUM_PROMPTS=64`, not the
 plan-locked `320`. A clean client-SLO validation should re-run at the full prompt count and report
 **absolute** P99 TTFT vs the 22 s bar (not just the DS/DSA ratio).
 
@@ -128,13 +128,13 @@ plan-locked `320`. A clean client-SLO validation should re-run at the full promp
 - [x] **Evidence bundle** assembled (`runs/20260528_dsv32_mvp/evidence_bundle.md`); 411 CPU tests green; calibration provenance recorded.
 
 **Net:** DS demonstrably serves V3.2 FP8 at the Option B operating point with comparable quality
-and competitive per-request throughput. **Outstanding for the *client SLO*: P99 TTFT only.**
+and competitive per-request throughput. **Outstanding for the *SLO*: P99 TTFT only.**
 
 ---
 
 ## 4. LOOP 6 — Client-SLO MVP ("make DS shippable") — ✅ DONE (Minimum Acceptable Scope, 2026-05-31)
 
-**Goal:** make DS *itself* (not just DSA) pass `CLIENT_SLOS.md` on the immediate workload, and
+**Goal:** make DS *itself* (not just DSA) pass `SLOS.md` on the immediate workload, and
 decide whether to invest further. The spine is the **admission/TTFT fix**; everything else here is
 a small hardening or a strategic decision. Executed as RLCR loop `.humanize/rlcr/2026-05-30_06-27-19`
 (plan `development/loop6/refined_plan_v1.md`).
@@ -225,7 +225,7 @@ These are not tied to one client requirement but must land before "shippable to 
   TP scaling is deferred to a dedicated future loop** and tracked here as a downstream requirement. All
   Loop-5 serving was single-node TP=8 (node 1 used only for the cross-node AC-12). That future loop
   validates DS multi-node (e.g. TP=8 × N replicas behind the router/SMG, or a larger TP world size)
-  against the **same unchanged** client SLO — the SLO numbers do not change across topologies.
+  against the **same unchanged** SLO — the SLO numbers do not change across topologies.
 - [ ] **Comparator per-side `mem_fraction_static` check** is in (Round 13); keep it green when 4.1 moves
   the mem fraction.
 
@@ -233,13 +233,28 @@ These are not tied to one client requirement but must land before "shippable to 
 
 ## 6. Downstream loops — deferred CLIENT requirements (ordered by client priority)
 
-From `CLIENT_SLOS.md` "Deferred Client requirements ordered from most important to least." Each is a
+From `SLOS.md` "Deferred Client requirements ordered from most important to least." Each is a
 candidate RLCR loop; sizing/dependencies noted.
 
 > **Re-prioritization (2026-06-07):** with Loop 7 landed, the client pulled **GLM-5.1 (Loop 10 below,
 > deferred client #1)** forward as the **next active loop** — ahead of the original Loops 8/9 (nvfp4, knob
 > compat), which are deferred behind it. The GLM-5.1 loop is drafted (out of roadmap order) on disk at
 > [`development/loop8/draft.md`](loop8/draft.md) — i.e. **disk `loop8` = roadmap Loop 10**.
+>
+> **Re-prioritization (2026-06-10) — ⭐ ACTIVE DIRECTION = close the DS-on decode-overhead gap.** Loop 8
+> (GLM-5.1 DS bring-up) closed with DS landed **default-OFF** and a one-batch profiling characterization
+> (`development/profiling/results.md`) that attributes the DS-on-vs-DSA decode gap to two multiplicative
+> penalties: a **DS index/scoring tax ≈1.9×** (a DS-only per-layer f32 all-reduce + a generic torch top-k/sort
+> stack + the logical-score kernel, replacing DSA's ~17k-µs fused fp8 indexer) and a **batch-efficiency ≈1.78×**
+> (DS KV-pool-capped at bs 29). The next active loop is a **pure-perf loop to drive that measured gap down** —
+> attacking the DS-specific kernels directly while **keeping the core DS concept and adding no theoretical
+> lossiness**, validated by re-profiling **only Case 1** against the frozen DSA Case-2/3 baselines (NOT the
+> SLO). Drafted on disk at [`development/loop9/draft.md`](loop9/draft.md) — i.e. **disk `loop9` = this
+> perf loop** (it is NOT the old roadmap "Loop 9 — knob compat" below; that, and **all other directions
+> (Loops 8/9/11/12/13 and the remaining GLM Loop-10 items), are delayed behind it**). Scope, candidate ideas
+> (kill the f32 all-reduce / fuse the top-k / fuse logical-score / lossless batch-efficiency), and the
+> iterate→measure protocol are in the draft. **Not frontier work — reproducing a 2-year-old paper
+> (arXiv:2408.07092) on open-source SGLang for behind-frontier MLA models; no novelty claimed.**
 
 ### Loop 7 — ✅ LANDED — DS long-context RECALL R&D (Tier-2 / AC-10) (closed 2026-06-02)
 *Outcome:* gap **rigorously characterized + partially closed** — M0 oracle attributed the regimes (4K
@@ -261,7 +276,7 @@ the `index_topk=2048` kernel lock**, not a decode bug.
 - [ ] **Secondary engineering scope — 128k servability** (deferred client #2): KV-budget / admission to
   **serve** 128k (extends the §4.2 64K servability work); 128k/1024 SLO definition + benchmark shape (current
   `benchmark.sh` is 4096/512 only). Servability is separate from recall; the 128k deliverable needs both.
-- **Note:** the **strict all-concurrency client SLO** (≥30 TPS/req at every conc) is a *separate downstream*
+- **Note:** the **strict all-concurrency SLO** (≥30 TPS/req at every conc) is a *separate downstream*
   concern (structurally DS ≤ DSA; conc-64 ≥30 unattainable even for DSA) — not this loop's recall goal unless
   the owner merges them.
 
@@ -303,7 +318,7 @@ Weights already staged at `/cluster-storage/models/models--zai-org--GLM-5.1-FP8/
 
 ## 7. Downstream loops — post-client-deliverable requirements
 
-From `CLIENT_SLOS.md` "Downstream requirements after client deliverables."
+From `SLOS.md` "Downstream requirements after client deliverables."
 
 ### Loop 11 — Twilight (top-p selection instead of top-k)
 - [ ] Replace/augment the fixed top-k=2048 selection with **top-p** (nucleus) selection over the
@@ -330,7 +345,7 @@ From `CLIENT_SLOS.md` "Downstream requirements after client deliverables."
 - [x] **DEC (SLO scope) — RESOLVED (Loop 6, AC-6):** DS ships as an **opt-in knob with DSA as the default**;
   the compact DS path is flag-gated (fp16/DSA default unchanged, non-regression proven). Whether DS *itself*
   meets the strict all-conc SLO is a separate downstream question (DS ≤ DSA on decode TPS).
-- [ ] **DEC (TTFT target source):** confirm the client SLO is **absolute P99 TTFT < 22 s** at the
+- [ ] **DEC (TTFT target source):** confirm the SLO is **absolute P99 TTFT < 22 s** at the
   client workload (not a DS-vs-DSA ratio) — and re-validate at full `NUM_PROMPTS=320` (§4.1).
 - [x] **DEC (deployment topology) — RESOLVED (Loop 6, DEC-5):** the client deliverable is validated
   **single-node TP=8** for this loop; **multi-node TP scaling is deferred to a dedicated future loop**,
@@ -343,7 +358,7 @@ From `CLIENT_SLOS.md` "Downstream requirements after client deliverables."
 
 ## 9. Key artifacts & files (re-derivation index)
 
-- **Client bar:** `development/CLIENT_SLOS.md`
+- **Client bar:** `development/SLOS.md`
 - **Loop-5 evidence:** `runs/20260528_dsv32_mvp/` — `evidence_bundle.md`, `ac11_analysis.md`,
   `ac12_analysis.md`, `mvp_compare_ac11.md`, `next_loop_issues.md`, `ac12_results/`
 - **Loop-5 process record:** `.humanize/rlcr/2026-05-28_10-17-12/` — `goal-tracker.md`, `stop-state.md`,

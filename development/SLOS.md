@@ -1,6 +1,6 @@
 Here are the immediate client requirements:
 - Model: zai-org/GLM-5.1 (FP8)
-- Inference SLOs: 30 TPS (Total Latency - TTFT / total tokens) with a P99 TTFT of < 22s
+- Inference SLOs: 30 TPS (total tokens/ (Total Latency - TTFT)) with a P99 TTFT of < 22s
 - Workload: 4096 ISL, 512 OSL, max-concurrency: 64, minimum concurrency: 16, Cache hit: ~55% (benchmark found in development/benchmark.sh) 
 - Support for key performant knobs, like TP, cuda graphs, radix cache
 
