@@ -99,6 +99,10 @@ class DoubleSparsitySelector:
         self.token_label_table: Optional["TokenLabelTable"] = None
         self.channel_mask: Optional["ChannelMask"] = None
         self.process_group = None
+        # Custom all-reduce communicator for the score reduce (the attention-TP
+        # coordinator's ca_comm under plain TP); None falls back to NCCL on the
+        # raw process group.
+        self.reduce_ca = None
         self.IS_PLACEHOLDER = True
 
     def bind_runtime_data(
@@ -107,6 +111,7 @@ class DoubleSparsitySelector:
         channel_mask: "ChannelMask",
         *,
         process_group=None,
+        reduce_ca=None,
     ) -> None:
         """Switch the selector from placeholder to real mode.
 
@@ -127,6 +132,7 @@ class DoubleSparsitySelector:
                 self.token_label_table is token_label_table
                 and self.channel_mask is channel_mask
                 and self.process_group is process_group
+                and self.reduce_ca is reduce_ca
             )
             if same_objects:
                 return
@@ -192,6 +198,7 @@ class DoubleSparsitySelector:
         self.token_label_table = token_label_table
         self.channel_mask = channel_mask
         self.process_group = process_group
+        self.reduce_ca = reduce_ca
         self.IS_PLACEHOLDER = False
 
         # Structured bind-time INFO log: operators rely on this to confirm
@@ -278,6 +285,10 @@ class DoubleSparsitySelector:
                 anchor_mode=getattr(self.config, "anchor_mode", "off"),
                 anchor_budget=getattr(self.config, "anchor_budget", 0),
                 recall_oracle=getattr(self.config, "recall_oracle", False),
+                reduce_ca=self.reduce_ca,
+                score_reduce_bf16=(
+                    getattr(self.config, "score_reduce_dtype", "bf16") == "bf16"
+                ),
             )
 
         batch_size = req_pool_indices.shape[0]

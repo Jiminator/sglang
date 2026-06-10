@@ -2053,19 +2053,30 @@ class DeepseekV2AttentionMLA(
                 validate_table_covers_kv_pool(table, kv_pool.size, kv_pool.page_size)
 
         # Pick the attn TP process group when world > 1; otherwise leave None.
+        # Also bind the coordinator's custom-all-reduce communicator so the
+        # score reduce can take the custom-AR path when the byte size is
+        # eligible (under plain TP the attention-TP group IS the TP
+        # coordinator); the raw process group stays the fallback transport.
         process_group = None
+        reduce_ca = None
         if attn_tp_size > 1:
             try:
                 from sglang.srt.layers.dp_attention import get_attention_tp_group
 
-                process_group = get_attention_tp_group().device_group
+                _attn_tp_group = get_attention_tp_group()
+                process_group = _attn_tp_group.device_group
+                reduce_ca = getattr(_attn_tp_group, "ca_comm", None)
+                if reduce_ca is not None and getattr(reduce_ca, "disabled", True):
+                    reduce_ca = None
             except Exception:
                 process_group = None
+                reduce_ca = None
 
         self.double_sparsity_selector.bind_runtime_data(
             token_label_table=table,
             channel_mask=local_mask,
             process_group=process_group,
+            reduce_ca=reduce_ca,
         )
         assert_tp_configured(
             self.double_sparsity_selector, tp_world_size=max(attn_tp_size, 1)
@@ -2358,8 +2369,16 @@ class DeepseekV2AttentionMLA(
                         per_request_valid=_sparse_mask,
                         scratch_pv_mask=_ds_graph_state.scratch_pv_mask,
                         scratch_throwaway_idx=_ds_graph_state.scratch_throwaway_idx,
+                        scratch_scores_bf16=getattr(
+                            _ds_graph_state, "scratch_scores_bf16", None
+                        ),
                         token_scales=_selector.token_label_table.scales,
                         process_group=getattr(_selector, "process_group", None),
+                        reduce_ca=getattr(_selector, "reduce_ca", None),
+                        score_reduce_bf16=(
+                            getattr(_selector.config, "score_reduce_dtype", "bf16")
+                            == "bf16"
+                        ),
                         recall_oracle=bool(
                             getattr(_selector.config, "recall_oracle", False)
                         ),

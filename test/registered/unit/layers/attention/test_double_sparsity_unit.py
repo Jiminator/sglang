@@ -10486,6 +10486,184 @@ class TestSelectionCaptureToolVerify(unittest.TestCase):
         self.assertGreater(rep["fraction_differing"], 0)
 
 
+class TestScoreReduceDtypeConfig(unittest.TestCase):
+    """Config-borne `score_reduce_dtype`: bf16 transport is the served default."""
+
+    def test_default_bf16(self):
+        cfg = parse_double_sparsity_config('{"channel_mask_path": "/tmp/x"}')
+        self.assertEqual(cfg.score_reduce_dtype, "bf16")
+
+    def test_fp32_escape_hatch(self):
+        cfg = parse_double_sparsity_config(
+            '{"channel_mask_path": "/tmp/x", "score_reduce_dtype": "fp32"}'
+        )
+        self.assertEqual(cfg.score_reduce_dtype, "fp32")
+
+    def test_invalid_value_rejected(self):
+        with self.assertRaises(ValueError):
+            parse_double_sparsity_config(
+                '{"channel_mask_path": "/tmp/x", "score_reduce_dtype": "fp8"}'
+            )
+
+
+class _FakeCustomAR:
+    """Duck-typed custom-AR communicator: SUM x world_size, out-of-place."""
+
+    def __init__(self, world_size=8, eligible=True):
+        self.world_size = world_size
+        self.eligible = eligible
+        self.calls = 0
+
+    def should_custom_ar(self, t):
+        return self.eligible
+
+    def custom_all_reduce(self, t):
+        self.calls += 1
+        return t * self.world_size  # out-of-place, like the real kernel
+
+
+class TestReduceTokenScores(unittest.TestCase):
+    """The shared score-reduce abstraction: bf16 transport mechanics + fallbacks."""
+
+    def test_no_process_group_is_noop(self):
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            reduce_token_scores,
+        )
+
+        scores = torch.randn(2, 8)
+        ref = scores.clone()
+        out = reduce_token_scores(scores, process_group=None, use_bf16=True)
+        self.assertIs(out, scores)
+        self.assertTrue(torch.equal(out, ref))
+
+    def test_bf16_custom_ar_path_cast_reduce_copyback(self):
+        """fp32 -> bf16 cast, out-of-place custom-AR, fp32 copy-back in place."""
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            reduce_token_scores,
+        )
+
+        fake_ca = _FakeCustomAR(world_size=8)
+        scores = torch.randn(3, 16, dtype=torch.float32)
+        scores[1, 4] = float("-inf")  # unwritten-slot mask must survive transport
+        scratch = torch.zeros(4, 32, dtype=torch.bfloat16)
+        orig_bf16 = scores.to(torch.bfloat16).clone()
+        expect = (scores.to(torch.bfloat16) * 8).to(torch.float32)
+        # Pretend distributed is initialized (the helper guards on it).
+        with mock.patch.object(torch.distributed, "is_available", return_value=True), \
+             mock.patch.object(torch.distributed, "is_initialized", return_value=True):
+            out = reduce_token_scores(
+                scores,
+                process_group=object(),
+                reduce_ca=fake_ca,
+                bf16_scratch=scratch,
+                use_bf16=True,
+            )
+        self.assertIs(out, scores)
+        self.assertEqual(fake_ca.calls, 1)
+        self.assertTrue(torch.equal(out, expect))
+        self.assertTrue(bool(torch.isneginf(out[1, 4])))
+        # The transport view lives in the preallocated scratch slice; the fake
+        # custom-AR is out-of-place, so the scratch holds the pre-reduce cast.
+        self.assertTrue(torch.equal(scratch[:3, :16], orig_bf16))
+
+    def test_bf16_without_scratch_uses_dynamic_cast(self):
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            reduce_token_scores,
+        )
+
+        fake_ca = _FakeCustomAR(world_size=2)
+        scores = torch.randn(2, 8, dtype=torch.float32)
+        expect = (scores.to(torch.bfloat16) * 2).to(torch.float32)
+        with mock.patch.object(torch.distributed, "is_available", return_value=True), \
+             mock.patch.object(torch.distributed, "is_initialized", return_value=True):
+            out = reduce_token_scores(
+                scores, process_group=object(), reduce_ca=fake_ca, use_bf16=True
+            )
+        self.assertTrue(torch.equal(out, expect))
+
+    def test_ineligible_shape_falls_back_to_process_group_loudly(self):
+        from sglang.srt.layers.attention.double_sparsity import selection_kernel as sk
+
+        fake_ca = _FakeCustomAR(eligible=False)
+        scores = torch.randn(2, 8, dtype=torch.float32)
+        called = {}
+
+        def _fake_all_reduce(t, op=None, group=None):
+            called["dtype"] = t.dtype
+            t.mul_(3)  # in-place, like NCCL
+
+        sk._score_reduce_fallback_logged = False
+        with mock.patch.object(torch.distributed, "is_available", return_value=True), \
+             mock.patch.object(torch.distributed, "is_initialized", return_value=True), \
+             mock.patch.object(torch.distributed, "all_reduce", side_effect=_fake_all_reduce), \
+             self.assertLogs(sk.logger, level="WARNING") as logs:
+            out = sk.reduce_token_scores(
+                scores, process_group=object(), reduce_ca=fake_ca, use_bf16=True
+            )
+        self.assertEqual(fake_ca.calls, 0)
+        self.assertEqual(called["dtype"], torch.bfloat16)
+        self.assertTrue(any("not" in m and "custom-AR" in m for m in logs.output))
+        # Warned ONCE: a second call stays quiet.
+        with mock.patch.object(torch.distributed, "is_available", return_value=True), \
+             mock.patch.object(torch.distributed, "is_initialized", return_value=True), \
+             mock.patch.object(torch.distributed, "all_reduce", side_effect=_fake_all_reduce):
+            sk.reduce_token_scores(
+                scores, process_group=object(), reduce_ca=fake_ca, use_bf16=True
+            )
+        self.assertTrue(sk._score_reduce_fallback_logged)
+
+    def test_fp32_path_unchanged_in_place(self):
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            reduce_token_scores,
+        )
+
+        scores = torch.randn(2, 8, dtype=torch.float32)
+
+        def _fake_all_reduce(t, op=None, group=None):
+            self.assertEqual(t.dtype, torch.float32)
+            t.mul_(8)
+
+        ref = scores * 8
+        with mock.patch.object(torch.distributed, "is_available", return_value=True), \
+             mock.patch.object(torch.distributed, "is_initialized", return_value=True), \
+             mock.patch.object(torch.distributed, "all_reduce", side_effect=_fake_all_reduce):
+            out = reduce_token_scores(scores, process_group=object(), use_bf16=False)
+        self.assertTrue(torch.equal(out, ref))
+
+    def test_compat_wrapper_keeps_fp32_semantics(self):
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            all_reduce_token_scores,
+        )
+
+        scores = torch.randn(2, 8)
+        out = all_reduce_token_scores(scores, process_group=None)
+        self.assertIs(out, scores)
+
+
+class TestScoreReduceGraphStateScratch(unittest.TestCase):
+    def test_bf16_scratch_allocated_when_flag_set(self):
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state,
+        )
+
+        s = allocate_graph_state(
+            max_bs=2, max_top_k=4, max_seq_len=16, score_reduce_bf16=True,
+            device=torch.device("cpu"),
+        )
+        self.assertEqual(list(s.scratch_scores_bf16.shape), [2, 16])
+        self.assertEqual(s.scratch_scores_bf16.dtype, torch.bfloat16)
+
+    def test_no_bf16_scratch_by_default(self):
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state,
+        )
+
+        s = allocate_graph_state(
+            max_bs=2, max_top_k=4, max_seq_len=16, device=torch.device("cpu"),
+        )
+        self.assertIsNone(s.scratch_scores_bf16)
+
+
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
 class TestGraphSafePipelineAdversarial(unittest.TestCase):
     """Adversarial fixtures through the PRODUCTION graph-safe selection

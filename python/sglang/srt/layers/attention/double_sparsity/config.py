@@ -40,6 +40,7 @@ _ALLOWED_FIELDS = {
     "anchor_budget",
     "recall_oracle",
     "selection_capture",
+    "score_reduce_dtype",
     "enable_lifted_budget_decode",
     "lifted_budget_top_k",
     "extra",
@@ -67,6 +68,13 @@ _ALLOWED_FIELDS = {
 #   current), and the model runner appends one per-rank dump file per decode
 #   step under cwd/.sglang_ds_selcap. Diagnostic only; off by default
 #   (byte-identical selection, zero hot-path cost when off).
+# score_reduce_dtype: transport dtype for the cross-TP score SUM-reduce.
+#   "bf16" (default): scores are cast fp32->bf16 into preallocated scratch,
+#   reduced (custom-all-reduce v2 when the byte size passes its eligibility
+#   check, else NCCL on the raw group), and cast back — halving the reduce
+#   bytes over the static score width. Scoring and top-k stay fp32; the only
+#   numerics change is the reduce transport/output quantization, gated by the
+#   selection-recall bound. "fp32": the original in-place NCCL ring reduce.
 # enable_lifted_budget_decode: opt-in Tier-2.A adjustable-budget decode (AC-4).
 #   When True, the selector may pick more than the DSA index_topk (a wider budget
 #   recovers needles that rank in (index_topk, lifted_budget_top_k]); the opt-in
@@ -108,6 +116,7 @@ class DoubleSparsityConfig:
     anchor_budget: int = _DEFAULT_ANCHOR_BUDGET
     recall_oracle: bool = False
     selection_capture: bool = False
+    score_reduce_dtype: str = "bf16"
     enable_lifted_budget_decode: bool = False
     lifted_budget_top_k: int = _DEFAULT_LIFTED_BUDGET_TOP_K
     extra: Dict[str, Any] = field(default_factory=dict)
@@ -147,6 +156,11 @@ class DoubleSparsityConfig:
             raise ValueError(
                 f"Double Sparsity 'selection_capture' must be a boolean, "
                 f"got {self.selection_capture!r}."
+            )
+        if self.score_reduce_dtype not in ("fp32", "bf16"):
+            raise ValueError(
+                f"Double Sparsity 'score_reduce_dtype' must be one of "
+                f"['fp32', 'bf16'], got {self.score_reduce_dtype!r}."
             )
         if not isinstance(self.enable_lifted_budget_decode, bool):
             raise ValueError(
@@ -288,6 +302,7 @@ def parse_double_sparsity_config(payload: str) -> DoubleSparsityConfig:
         selection_capture=_coerce_bool(
             data.get("selection_capture", False), "selection_capture"
         ),
+        score_reduce_dtype=str(data.get("score_reduce_dtype", "bf16")),
         enable_lifted_budget_decode=_coerce_bool(
             data.get("enable_lifted_budget_decode", False), "enable_lifted_budget_decode"
         ),

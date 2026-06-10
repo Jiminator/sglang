@@ -67,6 +67,10 @@ class DSGraphState:
     scratch_valid_i64: Optional[torch.Tensor] = None      # int64 [max_bs, 1]
     scratch_pv_mask: Optional[torch.Tensor] = None        # bool [max_bs, max_seq_len]
     scratch_throwaway_idx: Optional[torch.Tensor] = None  # int64 [max_bs, max_top_k]
+    # bf16 transport scratch for the cross-TP score reduce (score_reduce_dtype
+    # == "bf16"): the fp32 scores are cast into this view, reduced, and cast
+    # back — halving the reduce bytes over the static score width.
+    scratch_scores_bf16: Optional[torch.Tensor] = None    # bf16 [max_bs, max_seq_len]
     # Production input scratch — `forward_batch.req_pool_indices` is int64 in
     # production (scheduler + cuda_graph_runner.py:178) but the captured
     # selector region requires int32. `_select_topk_indices` does an in-place
@@ -108,6 +112,7 @@ def allocate_graph_state(
     num_local_heads: int = 0,
     label_dim: int = 0,
     selection_capture_layers: int = 0,
+    score_reduce_bf16: bool = False,
     enable_lifted_budget_decode: bool = False,
     lifted_q_pad_heads: int = 0,
     lifted_head_dim: int = 576,
@@ -173,6 +178,7 @@ def allocate_graph_state(
     scratch_valid_i64 = None
     scratch_pv_mask = None
     scratch_throwaway_idx = None
+    scratch_scores_bf16 = None
     scratch_req_pool_indices = None
     scratch_seq_lens = None
     lp_error_scratch = None
@@ -211,6 +217,10 @@ def allocate_graph_state(
             (max_bs,), dtype=torch.int32, device=device,
         )
         lp_error_scratch = torch.zeros((1,), dtype=torch.int32, device=device)
+        if score_reduce_bf16:
+            scratch_scores_bf16 = torch.zeros(
+                (max_bs, max_seq_len), dtype=torch.bfloat16, device=device,
+            )
 
     # Selection-capture mirrors — only when the config-borne diagnostic is on
     # (selection_capture_layers = the token-label table's layer count).
@@ -264,6 +274,7 @@ def allocate_graph_state(
         scratch_valid_i64=scratch_valid_i64,
         scratch_pv_mask=scratch_pv_mask,
         scratch_throwaway_idx=scratch_throwaway_idx,
+        scratch_scores_bf16=scratch_scores_bf16,
         scratch_req_pool_indices=scratch_req_pool_indices,
         scratch_seq_lens=scratch_seq_lens,
         lp_error_scratch=lp_error_scratch,
@@ -400,8 +411,13 @@ def capture_decode_step(
                 per_request_valid=sparse_mask,
                 scratch_pv_mask=state.scratch_pv_mask,
                 scratch_throwaway_idx=state.scratch_throwaway_idx,
+                scratch_scores_bf16=state.scratch_scores_bf16,
                 token_scales=selector.token_label_table.scales,
                 process_group=getattr(selector, "process_group", None),
+                reduce_ca=getattr(selector, "reduce_ca", None),
+                score_reduce_bf16=(
+                    getattr(selector.config, "score_reduce_dtype", "bf16") == "bf16"
+                ),
                 scorer_norm=getattr(selector.config, "scorer_norm", "off"),
                 head_agg=getattr(selector.config, "head_agg", "max"),
                 hybrid_threshold=getattr(

@@ -490,6 +490,9 @@ class DeepseekSparseAttnBackend(
         # by the token-label table's layer count (resolved below, after the
         # bind-published table is read).
         self.ds_selection_capture: bool = False
+        # bf16 transport for the cross-TP score reduce (score_reduce_dtype);
+        # sizes the bf16 scratch in ds_graph_state.
+        self.ds_score_reduce_bf16: bool = False
         if self.enable_double_sparsity:
             try:
                 from sglang.srt.layers.attention.double_sparsity.config import (
@@ -504,6 +507,9 @@ class DeepseekSparseAttnBackend(
                 )
                 self.ds_selection_capture = bool(
                     getattr(ds_cfg, "selection_capture", False)
+                )
+                self.ds_score_reduce_bf16 = (
+                    getattr(ds_cfg, "score_reduce_dtype", "bf16") == "bf16"
                 )
                 # ds_max_top_k sizes ds_topk_indices_out + ds_graph_state, so the
                 # selection/output buffers are lifted-width on the opt-in path.
@@ -884,6 +890,7 @@ class DeepseekSparseAttnBackend(
                 max_top_k=self.ds_max_top_k,
                 max_seq_len=int(self.req_to_token.shape[1]),
                 selection_capture_layers=self.ds_selection_capture_layers,
+                score_reduce_bf16=self.ds_score_reduce_bf16,
                 enable_lifted_budget_decode=self.ds_lifted_budget_decode,
                 lifted_q_pad_heads=(128 if self.device_sm_major >= 10 else 64),
                 device=cache_seqlens_int32.device,
@@ -1202,6 +1209,7 @@ class DeepseekSparseAttnBackend(
                 max_top_k=self.ds_max_top_k,
                 max_seq_len=int(self.req_to_token.shape[1]),
                 selection_capture_layers=self.ds_selection_capture_layers,
+                score_reduce_bf16=self.ds_score_reduce_bf16,
                 enable_lifted_budget_decode=self.ds_lifted_budget_decode,
                 lifted_q_pad_heads=(128 if self.device_sm_major >= 10 else 64),
                 device=cache_seqlens_int32.device,

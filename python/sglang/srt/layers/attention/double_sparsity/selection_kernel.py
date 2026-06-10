@@ -558,28 +558,89 @@ def compute_token_scores(
     return scores.masked_fill(~written_layer.unsqueeze(0), float("-inf"))
 
 
-def all_reduce_token_scores(
+_score_reduce_fallback_logged = False
+
+
+def reduce_token_scores(
     token_scores: torch.Tensor,
     *,
     process_group=None,
+    reduce_ca=None,
+    bf16_scratch: Optional[torch.Tensor] = None,
+    use_bf16: bool = False,
 ) -> torch.Tensor:
-    """All-reduce per-rank scalar token scores across the attention TP group.
+    """SUM-reduce per-rank partial token scores across the attention TP group.
 
-    The token label signatures stay TP/head-sharded; only the scalar
-    per-token scores are reduced (SUM). The reduction operates in-place on
-    ``token_scores`` and returns the same tensor for convenience.
+    The ONE reduce shared by the eager and graph-safe selection paths. Token
+    label signatures stay TP/head-sharded, so per-rank scores are partial and
+    the SUM makes every rank's selection identical by construction. Operates
+    in place on ``token_scores`` and returns it.
+
+    ``use_bf16`` (score_reduce_dtype="bf16", the served default): the fp32
+    scores are cast into a bf16 view (the preallocated ``bf16_scratch`` on the
+    graph-safe path; a dynamic cast on the eager path), reduced over half the
+    bytes — through ``reduce_ca`` (custom all-reduce) when the byte size
+    passes its eligibility check, so the reduce is a named custom-AR kernel
+    instead of an NCCL ring — and cast back in place. Scoring and top-k stay
+    fp32; the transport quantization is gated by the selection-recall bound.
+    Every rank receives the same reduced bytes, so cross-rank selection
+    agreement is preserved. An eligibility miss (e.g. bs × width × 2 bytes
+    over the custom-AR cap) falls back to an NCCL bf16 reduce and is logged
+    loudly once — never a silent backend change.
+
+    ``use_bf16=False`` keeps the original in-place fp32 reduce. No process
+    group / distributed not initialized → no-op.
     """
+    global _score_reduce_fallback_logged
 
     if process_group is None:
         return token_scores
     if not torch.distributed.is_available() or not torch.distributed.is_initialized():
         return token_scores
+    if not use_bf16:
+        torch.distributed.all_reduce(
+            token_scores,
+            op=torch.distributed.ReduceOp.SUM,
+            group=process_group,
+        )
+        return token_scores
+
+    if bf16_scratch is not None:
+        bf16_view = bf16_scratch[: token_scores.shape[0], : token_scores.shape[1]]
+        bf16_view.copy_(token_scores)
+    else:
+        bf16_view = token_scores.to(torch.bfloat16)
+    if reduce_ca is not None and reduce_ca.should_custom_ar(bf16_view):
+        reduced = reduce_ca.custom_all_reduce(bf16_view)
+        token_scores.copy_(reduced)
+        return token_scores
+    if reduce_ca is not None and not _score_reduce_fallback_logged:
+        logger.warning(
+            "double_sparsity score reduce: bf16 tensor %s (%d bytes) is not "
+            "custom-AR eligible; falling back to NCCL bf16 all-reduce. "
+            "This is a documented per-shape fallback, not the named-kernel path.",
+            tuple(bf16_view.shape),
+            bf16_view.numel() * bf16_view.element_size(),
+        )
+        _score_reduce_fallback_logged = True
     torch.distributed.all_reduce(
-        token_scores,
+        bf16_view,
         op=torch.distributed.ReduceOp.SUM,
         group=process_group,
     )
+    token_scores.copy_(bf16_view)
     return token_scores
+
+
+def all_reduce_token_scores(
+    token_scores: torch.Tensor,
+    *,
+    process_group=None,
+) -> torch.Tensor:
+    """Original in-place fp32 SUM reduce (compat wrapper over
+    :func:`reduce_token_scores`)."""
+
+    return reduce_token_scores(token_scores, process_group=process_group)
 
 
 def _topk_by_score_then_pos(
@@ -1010,6 +1071,8 @@ def retrieve_topk_via_labels(
     anchor_mode: str = "off",
     anchor_budget: int = 0,
     recall_oracle: bool = False,
+    reduce_ca=None,
+    score_reduce_bf16: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """End-to-end selector flow: score → all-reduce → per-request mask → top-K → ascend.
 
@@ -1055,7 +1118,12 @@ def retrieve_topk_via_labels(
             head_agg=head_agg,
             hybrid_threshold=hybrid_threshold,
         )
-        scores = all_reduce_token_scores(scores, process_group=process_group)
+        scores = reduce_token_scores(
+            scores,
+            process_group=process_group,
+            reduce_ca=reduce_ca,
+            use_bf16=score_reduce_bf16,
+        )
     else:
         scores = compute_token_scores(
             queries=queries,
@@ -1068,7 +1136,12 @@ def retrieve_topk_via_labels(
             scorer_norm=_norm,
             head_agg=head_agg,
         )
-        scores = all_reduce_token_scores(scores, process_group=process_group)
+        scores = reduce_token_scores(
+            scores,
+            process_group=process_group,
+            reduce_ca=reduce_ca,
+            use_bf16=score_reduce_bf16,
+        )
 
     if per_request_valid is not None:
         if per_request_valid.shape != scores.shape:
@@ -1329,8 +1402,11 @@ def retrieve_topk_graph_safe(
     per_request_valid: Optional[torch.Tensor] = None,      # bool [bs, max_seq_len]
     scratch_pv_mask: Optional[torch.Tensor] = None,        # bool [max_bs, max_seq_len]
     scratch_throwaway_idx: Optional[torch.Tensor] = None,  # int64 [max_bs, max_top_k]
+    scratch_scores_bf16: Optional[torch.Tensor] = None,    # bf16 [max_bs, max_seq_len]
     token_scales: Optional[torch.Tensor] = None,           # fp16 [L, T, H] int8 dequant scale, else None
     process_group=None,
+    reduce_ca=None,
+    score_reduce_bf16: bool = False,
     recall_oracle: bool = False,
     scorer_norm: str = "off",
     head_agg: str = "max",
@@ -1393,6 +1469,8 @@ def retrieve_topk_graph_safe(
             hybrid_threshold=hybrid_threshold,
             anchor_mode=anchor_mode,
             anchor_budget=anchor_budget,
+            reduce_ca=reduce_ca,
+            score_reduce_bf16=score_reduce_bf16,
         )
         mtk = indices.shape[1]
         out_indices[:bs, :mtk].copy_(indices)
@@ -1451,8 +1529,12 @@ def retrieve_topk_graph_safe(
 
     if process_group is not None and torch.distributed.is_available() and torch.distributed.is_initialized():
         torch.cuda.nvtx.range_push("ds_score_allreduce")
-        torch.distributed.all_reduce(
-            scores_view, op=torch.distributed.ReduceOp.SUM, group=process_group
+        reduce_token_scores(
+            scores_view,
+            process_group=process_group,
+            reduce_ca=reduce_ca,
+            bf16_scratch=scratch_scores_bf16,
+            use_bf16=score_reduce_bf16 and scratch_scores_bf16 is not None,
         )
         torch.cuda.nvtx.range_pop()
 
