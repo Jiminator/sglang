@@ -1,0 +1,60 @@
+A = m1  (bs-29-il-4096-1781135018.0539434-TP-0-DECODE.trace.json.gz)  total_us=585158
+B = m0dryrun  (bs-29-il-4096-1781132876.893986-TP-0-DECODE.trace.json.gz)  total_us=631381
+A/B total ratio = 0.93x
+
+=== CATEGORY ROLLUP (us, and % of own total) ===
+category                       A_us     A%       B_us     B%     A-B us
+topk/sort stack              155184   26.5     159162   25.2      -3978
+all-reduce                   102653   17.5     163177   25.8     -60524
+MoE                           91804   15.7      91858   14.5        -53
+DS:logical-score              63161   10.8      63211   10.0        -50
+norm/rope/elementwise         59903   10.2      41747    6.6      18156
+attention(MLA)                42549    7.3      41923    6.6        625
+GEMM/proj                     34561    5.9      34582    5.5        -20
+fp8-quant(index)              27506    4.7      27632    4.4       -126
+other                          5255    0.9       5224    0.8         31
+memcpy/set                     2553    0.4       2836    0.4       -284
+DSA:mqa-logits                   29    0.0         29    0.0         -0
+
+=== PER-KERNEL (us): A vs B, sorted by |A-B| ===
+      A_us       B_us        A-B  kernel
+         0     124949    -124949  ncclDevKernel_AllReduce_Sum_f32_RING_LL(ncclDevKernelArgsStorage<4096ul>)
+     67343       1269      66074  void (anonymous namespace)::all_reduce_two_shot_kernel<__nv_bfloat16, 8u, true>(host::di
+     14851       2210      12641  void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::Ten
+      5679          0       5679  void at::native::vectorized_elementwise_kernel<8, at::native::bfloat16_copy_kernel_cuda(
+     36915      41404      -4489  void at::native::mbtopk::computeBlockDigitCounts<float, unsigned int, unsigned int, 2>(a
+     33448      35098      -1650  void flashinfer::trtllm_allreduce_fusion::allreduce_fusion_kernel_oneshot_lamport<(flash
+     32311      31805        506  void sm90::decode::sparse_fp8::flash_fwd_splitkv_mla_fp8_sparse_kernel<sm90::decode::spa
+      1183       1493       -309  Memset (Device)
+     20173      19928        245  void at::native::mbtopk::gatherTopK<float, unsigned int, 2>(at::cuda::detail::TensorInfo
+      1843       1719        124  void at::native::mbtopk::computeBlockwiseKthCounts<unsigned int>(unsigned int*, short*, 
+     23748      23869       -121  void per_token_group_quant_8bit_kernel<NaiveScheduler, 128, 8, __nv_bfloat16, c10::Float
+      2124       2240       -116  void at::native::index_elementwise_kernel<128, 4, at::native::index_fill_kernel_impl<at:
+      5233       5124        109  void at_cuda_detail::cub::detail::scan_by_key::DeviceScanByKeyKernel<at_cuda_detail::cub
+      7360       7254        106  void smxx::decode::flash_fwd_mla_combine_kernel<cutlass::bfloat16_t, 512, 8, 160, 256>(C
+      2033       2105        -72  void at::native::index_elementwise_kernel<128, 4, at::native::index_copy_kernel_impl<at:
+       741        671         71  triton_poi_fused_sum_1
+       983       1051        -68  void count_and_sort_expert_tokens_kernel<int>(int const*, int*, int*, unsigned long)
+      1274       1341        -67  void at_cuda_detail::cub::detail::scan_by_key::DeviceScanByKeyInitKernel<at_cuda_detail:
+     21587      21530         57  void at::native::radixSortKVInPlace<2, -1, 64, 32, long, long, unsigned int>(at::cuda::d
+     63161      63211        -50  _logical_score_kernel
+     11384      11431        -46  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, 0u, 0u, 0u, 1u, 32u, 32u, 
+      2749       2795        -46  nvjet_sm90_tst_64x16_64x16_1x2_h_bz_TNT
+      1777       1741         36  kernel_cutlass_kernel_flashinfernormkernelsrmsnormRMSNormKernel_object_at__tensorptrbf16
+      7910       7943        -33  void at::native::mbtopk::computeBlockwiseWithinKCounts<unsigned int, float>(unsigned int
+      1968       1997        -30  _logical_to_physical_kernel
+      1518       1548        -30  void at::native::(anonymous namespace)::distribution_elementwise_grid_stride_kernel<unsi
+      1662       1633         29  void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::Ten
+      6562       6534         28  void at::native::bitonicSortKVInPlace<2, -1, 16, 16, float, long, at::native::GTOp<float
+     28357      28330         27  void at::native::sbtopk::gatherTopK<long, unsigned int, 2, false>(at::cuda::detail::Tens
+      1287       1260         27  memset32
+      7467       7441         26  at::native::mbtopk::computeDigitCumSum(short*, unsigned int*, unsigned int)
+      4126       4100         26  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, 0u, 0u, 0u, 1u, 32u, 16u, 
+      3391       3367         23  void at::native::_scatter_gather_elementwise_kernel<128, 8, at::native::_cuda_scatter_ga
+      3314       3337        -23  void at::native::(anonymous namespace)::searchsorted_cuda_kernel<long, long>(long*, long
+       916        896         20  void at::native::vectorized_elementwise_kernel<4, at::native::(anonymous namespace)::mas
+     88827      88807         20  fused_moe_kernel
+      3324       3306         18  void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::Ten
+       797        812        -16  void at::native::vectorized_elementwise_kernel<8, at::native::float16_copy_kernel_cuda(a
+       778        763         15  triton_poi_fused__to_copy_arange_bitwise_not_eq_expand_masked_fill_scalar_tensor_unsquee
+      1567       1582        -15  void (anonymous namespace)::fused_rope_kernel<false, 64l, true, __nv_bfloat16, long, 8u>

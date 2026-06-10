@@ -12,17 +12,33 @@ strong.
 
 ## Per-idea kernel-bucket ledger (Case-1 re-profiles, torch TP-0, µs / 10-step decode window)
 
-| Bucket | frozen baseline (20260609) | M0 dry-run (20260610) | M1 score-reduce | M2 top-k | M3 logical-score |
+| Bucket | frozen baseline (20260609) | M0 dry-run (20260610) | M1 score-reduce (20260610) | M2 top-k | M3 logical-score |
 |---|---|---|---|---|---|
-| NCCL ring score all-reduce (`AllReduce_Sum_f32_RING`) | 124,873* | 124,949 | | | |
-| top-k/sort stack (mbtopk/radixSort/sbtopk/scan/searchsorted) | 159,166 | 159,162 | | | |
-| `_logical_score_kernel` | 63,107 | 63,211 | | | |
-| all-reduce category total (incl. shared trtllm-fusion) | 163,790 | 163,177 | | | |
-| **Total decode GPU-kernel µs** | **632,239** | **631,381** | | | |
-| aggregate decode tok/s | 459 | 459.4 | | | |
-| recall gate (Δ recall@2048 vs frozen baseline, ≤0.5pp) | — (baseline) | — (no code change) | | | |
-| cross-rank bit-identity (hard) | PASS (M0 selcap, 8 ranks) | — | | | |
-| reduce backend at the DS reduce site | torch_dist (NCCL ring) | torch_dist | | | |
+| NCCL ring score all-reduce (`AllReduce_Sum_f32_RING`) | 124,873* | 124,949 | **0 (eliminated)** | | |
+| named custom-AR kernel (`all_reduce_two_shot_kernel<bf16,8u>`) | 0 | 1,269† | 67,343 | | |
+| score-reduce cast overhead (fp32↔bf16, in elementwise) | — | — | ≈ +18,156 | | |
+| top-k/sort stack (mbtopk/radixSort/sbtopk/scan/searchsorted) | 159,166 | 159,162 | 155,184 | | |
+| `_logical_score_kernel` | 63,107 | 63,211 | 63,161 | | |
+| all-reduce category total (incl. shared trtllm-fusion) | 163,790 | 163,177 | 102,653 | | |
+| **Total decode GPU-kernel µs** | **632,239** | **631,381** | **585,158** | | |
+| ratio vs frozen Case-2 (342,857) | 1.84× | 1.84× | 1.71× | | |
+| aggregate decode tok/s | 459 | 459.4 | **500.75** | | |
+| recall gate (Δ recall@2048 vs frozen baseline, ≤0.5pp) | — (baseline) | — (no code change) | **PASS** (+0.010pp overall; max per-length +0.24pp) | | |
+| cross-rank bit-identity (hard) | PASS (M0 selcap, 8 ranks) | — | **PASS** (selcap 8 ranks + 8-rank torchrun) | | |
+| reduce backend at the DS reduce site | torch_dist (NCCL ring) | torch_dist | **custom_ar_v2** (bf16 two-shot pull) at decode buckets; NCCL-bf16 logged fallback for >16 MB capture buckets (e.g. bs 512 prefill bucket) | | |
+
+† small pre-existing non-DS usage of the kernel in the baseline trace.
+
+M1 verdict (AC-1.1 + AC-2): the f32 ring line is eliminated at the DS reduce site and replaced by
+the NAMED custom-AR v2 bf16 kernel; CUDA graph capture succeeded in the production runner (74.6 s,
+all buckets) and the 8-rank determinism test proved zero replay allocations + cross-rank
+bit-identity at the real shape. Honest attribution per the spike: the win is the bf16 byte
+halving (custom-AR ≈ NCCL at equal bytes); net score-reduce path 124,949 → ≈85.5k
+(67,343 kernel + ≈18.2k casts) = −39.4k µs, total −46.2k µs. Selected-index diff vs the frozen
+oracle: 74.84% of (layer,row) selections moved (the expected bf16 boundary reshuffle —
+recorded for attribution; recall gate proves the swaps quality-neutral). The residual ~67k µs
+reduce cost is the dead-width tax (static 202752 width vs ≤4608 live tokens) — structural
+remainder for M5/follow-on, per the spike findings. Artifacts: development/loop9/runs/20260610_m1/.
 
 M0 dry-run verdict (protocol check, AC-5): run_case.sh + summarize_torch.py + compare_decode.py all
 work end-to-end; dry-run vs frozen Case-1 same-config reboot agrees per-bucket within ~600 µs
