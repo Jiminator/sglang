@@ -485,6 +485,11 @@ class DeepseekSparseAttnBackend(
         # default flashmla_kv. When off, every lifted code path below is skipped
         # and the default decode is byte-identical.
         self.ds_lifted_budget_decode: bool = False
+        # Config-borne selection-capture diagnostic: when on, ds_graph_state
+        # carries per-layer mirrors of (selected_indices, valid_lengths) sized
+        # by the token-label table's layer count (resolved below, after the
+        # bind-published table is read).
+        self.ds_selection_capture: bool = False
         if self.enable_double_sparsity:
             try:
                 from sglang.srt.layers.attention.double_sparsity.config import (
@@ -496,6 +501,9 @@ class DeepseekSparseAttnBackend(
                 )
                 self.ds_lifted_budget_decode = bool(
                     ds_cfg.enable_lifted_budget_decode
+                )
+                self.ds_selection_capture = bool(
+                    getattr(ds_cfg, "selection_capture", False)
                 )
                 # ds_max_top_k sizes ds_topk_indices_out + ds_graph_state, so the
                 # selection/output buffers are lifted-width on the opt-in path.
@@ -513,6 +521,14 @@ class DeepseekSparseAttnBackend(
         self._ds_token_label_table = getattr(
             model_runner.server_args, "_double_sparsity_token_label_table", None
         )
+        # Layer count for the selection-capture mirrors == the token-label
+        # table's layer dimension (the same index space layer_id selects with).
+        # 0 (capture off / table unbound) allocates no mirrors.
+        self.ds_selection_capture_layers: int = 0
+        if self.ds_selection_capture and self._ds_token_label_table is not None:
+            _sig = getattr(self._ds_token_label_table, "signatures", None)
+            if _sig is not None:
+                self.ds_selection_capture_layers = int(_sig.shape[0])
         self._ds_channel_selection = getattr(
             model_runner.server_args, "_ds_channel_selection", None
         )
@@ -867,6 +883,7 @@ class DeepseekSparseAttnBackend(
                 max_bs=int(forward_batch.batch_size),
                 max_top_k=self.ds_max_top_k,
                 max_seq_len=int(self.req_to_token.shape[1]),
+                selection_capture_layers=self.ds_selection_capture_layers,
                 enable_lifted_budget_decode=self.ds_lifted_budget_decode,
                 lifted_q_pad_heads=(128 if self.device_sm_major >= 10 else 64),
                 device=cache_seqlens_int32.device,
@@ -1184,6 +1201,7 @@ class DeepseekSparseAttnBackend(
                 max_bs=bs,
                 max_top_k=self.ds_max_top_k,
                 max_seq_len=int(self.req_to_token.shape[1]),
+                selection_capture_layers=self.ds_selection_capture_layers,
                 enable_lifted_budget_decode=self.ds_lifted_budget_decode,
                 lifted_q_pad_heads=(128 if self.device_sm_major >= 10 else 64),
                 device=cache_seqlens_int32.device,

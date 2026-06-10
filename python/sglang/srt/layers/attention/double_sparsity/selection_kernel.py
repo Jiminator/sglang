@@ -1425,7 +1425,12 @@ def retrieve_topk_graph_safe(
         f"seq_lens must be int32, got {seq_lens.dtype}"
     )
 
+    # NVTX ranges name the three DS-specific cost buckets (logical score /
+    # score all-reduce / top-k select) so profiles can attribute them without
+    # kernel-name matching. Host-side annotations: they mark eager decode and
+    # the capture-time launches; CUDA-graph replay does not re-emit them.
     scores_view = scratch_scores[:bs, :max_seq_len]
+    torch.cuda.nvtx.range_push("ds_logical_score")
     _logical_score_triton(
         q_proj_input=queries,
         channel_selection_layer=sel_layer,
@@ -1442,11 +1447,14 @@ def retrieve_topk_graph_safe(
         head_agg=head_agg,
         hybrid_threshold=hybrid_threshold,
     )
+    torch.cuda.nvtx.range_pop()
 
     if process_group is not None and torch.distributed.is_available() and torch.distributed.is_initialized():
+        torch.cuda.nvtx.range_push("ds_score_allreduce")
         torch.distributed.all_reduce(
             scores_view, op=torch.distributed.ReduceOp.SUM, group=process_group
         )
+        torch.cuda.nvtx.range_pop()
 
     if per_request_valid is not None:
         assert scratch_pv_mask is not None, (
@@ -1468,6 +1476,7 @@ def retrieve_topk_graph_safe(
     valid_i64_view = scratch_valid_i64[:bs]
 
     # Step 1: top-K by score (unsorted, largest).
+    torch.cuda.nvtx.range_push("ds_topk_select")
     torch.topk(
         scores_view,
         effective_k,
@@ -1511,6 +1520,7 @@ def retrieve_topk_graph_safe(
         sorted_vals_view, boundary_view, right=False, out=valid_i64_view
     )
     out_lengths[:bs].copy_(valid_i64_view.squeeze(-1))
+    torch.cuda.nvtx.range_pop()
 
     # Graph-safe anchor-budget force-include (R9): tensorized, fixed-shape, no
     # host sync — bit-identical to the eager path (same _force_include_anchor).

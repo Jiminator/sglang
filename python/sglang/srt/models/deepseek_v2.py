@@ -2384,6 +2384,25 @@ class DeepseekV2AttentionMLA(
                             req_to_token=req_to_token,
                         )
                     )
+                # Selection-capture mirrors (config-borne diagnostic): copy this
+                # layer's selection into the per-layer capture buffers. A device
+                # copy, so CUDA-graph capture records it and replay keeps the
+                # mirrors current; eager decode runs it directly. The model
+                # runner reads the mirrors after the forward returns.
+                _cap_idx = (
+                    getattr(_ds_graph_state, "capture_indices", None)
+                    if _ds_graph_state is not None
+                    else None
+                )
+                if _cap_idx is not None and layer_id < _cap_idx.shape[0]:
+                    _cap_bs = selected_indices.shape[0]
+                    _cap_k = min(selected_indices.shape[1], _cap_idx.shape[2])
+                    _cap_idx[layer_id, :_cap_bs, :_cap_k].copy_(
+                        selected_indices[:, :_cap_k]
+                    )
+                    _ds_graph_state.capture_lengths[layer_id, :_cap_bs].copy_(
+                        valid_lengths
+                    )
                 # AC-8: prefer the NSA-metadata-owned buffer, allocated
                 # once per batch in init_forward_metadata (also for
                 # capture/replay). Resolve from the same real production

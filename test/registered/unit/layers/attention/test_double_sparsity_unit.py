@@ -10101,5 +10101,596 @@ class TestVerifyBindShapes(unittest.TestCase):
         )
 
 
+class TestSelectionCaptureConfig(unittest.TestCase):
+    """Config-borne `selection_capture` flag: parse surface + validation."""
+
+    def test_default_off(self):
+        cfg = parse_double_sparsity_config('{"channel_mask_path": "/tmp/x"}')
+        self.assertIs(cfg.selection_capture, False)
+
+    def test_parse_true(self):
+        cfg = parse_double_sparsity_config(
+            '{"channel_mask_path": "/tmp/x", "selection_capture": true}'
+        )
+        self.assertIs(cfg.selection_capture, True)
+
+    def test_string_spelling_coerced_like_other_flags(self):
+        # parse_double_sparsity_config coerces the common string spellings
+        # (so a quoting mismatch never silently no-ops), like recall_oracle.
+        cfg = parse_double_sparsity_config(
+            '{"channel_mask_path": "/tmp/x", "selection_capture": "yes"}'
+        )
+        self.assertIs(cfg.selection_capture, True)
+
+    def test_non_bool_rejected_on_direct_construction(self):
+        with self.assertRaises(ValueError):
+            DoubleSparsityConfig(
+                channel_mask_path="/tmp/x", selection_capture="yes"  # type: ignore[arg-type]
+            )
+
+
+class TestSelectionCaptureGraphState(unittest.TestCase):
+    """Per-layer capture mirrors in DSGraphState."""
+
+    def test_buffers_allocated_when_layers_set(self):
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state,
+        )
+
+        s = allocate_graph_state(
+            max_bs=2, max_top_k=4, selection_capture_layers=3,
+            device=torch.device("cpu"),
+        )
+        self.assertEqual(list(s.capture_indices.shape), [3, 2, 4])
+        self.assertEqual(s.capture_indices.dtype, torch.int32)
+        self.assertTrue(bool((s.capture_indices == -1).all()))
+        self.assertEqual(list(s.capture_lengths.shape), [3, 2])
+        self.assertTrue(bool((s.capture_lengths == 0).all()))
+
+    def test_no_buffers_by_default(self):
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state,
+        )
+
+        s = allocate_graph_state(max_bs=2, max_top_k=4, device=torch.device("cpu"))
+        self.assertIsNone(s.capture_indices)
+        self.assertIsNone(s.capture_lengths)
+
+
+class TestSelectionCaptureDump(unittest.TestCase):
+    """Post-forward per-rank dump of the capture mirrors."""
+
+    def setUp(self):
+        import tempfile
+
+        from sglang.srt.layers.attention.double_sparsity import selection_capture
+
+        self._tmp = tempfile.mkdtemp(prefix="selcap_test_")
+        self._env = mock.patch.dict(
+            os.environ, {"SGLANG_DS_SELECTION_CAPTURE_DIR": self._tmp}
+        )
+        self._env.start()
+        selection_capture.reset_step_counter()
+
+    def tearDown(self):
+        import shutil
+
+        self._env.stop()
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _graph_state(self, layers=2, bs=2, k=4):
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state,
+        )
+
+        s = allocate_graph_state(
+            max_bs=bs, max_top_k=k, selection_capture_layers=layers,
+            device=torch.device("cpu"),
+        )
+        for layer in range(layers):
+            s.capture_indices[layer, :, : k - 1] = torch.arange(
+                k - 1, dtype=torch.int32
+            ) + layer
+            s.capture_lengths[layer, :] = k - 1
+        return s
+
+    def _decode_batch(self, gs, bs=2):
+        return SimpleNamespace(
+            forward_mode=SimpleNamespace(is_decode=lambda: True),
+            batch_size=bs,
+            seq_lens=torch.tensor([5, 9][:bs], dtype=torch.int32),
+            ds_graph_state=gs,
+        )
+
+    def test_decode_dump_written_from_forward_batch_state(self):
+        from sglang.srt.layers.attention.double_sparsity.selection_capture import (
+            maybe_dump_selection_capture,
+        )
+
+        gs = self._graph_state()
+        maybe_dump_selection_capture(self._decode_batch(gs), SimpleNamespace(), 0)
+        path = os.path.join(self._tmp, "rank0_step00000.pt")
+        self.assertTrue(os.path.exists(path))
+        rec = torch.load(path, weights_only=True)
+        self.assertEqual(rec["step"], 0)
+        self.assertEqual(rec["bs"], 2)
+        self.assertEqual(rec["seq_lens"], [5, 9])
+        self.assertTrue(torch.equal(rec["indices"], gs.capture_indices[:, :2].cpu()))
+        self.assertTrue(torch.equal(rec["lengths"], gs.capture_lengths[:, :2].cpu()))
+
+    def test_graph_replay_resolution_via_backend_metadata(self):
+        """Under CUDA-graph replay the forward_batch has no ds_graph_state; the
+        dump must resolve the mirrors through the backend's forward_metadata."""
+        from sglang.srt.layers.attention.double_sparsity.selection_capture import (
+            maybe_dump_selection_capture,
+        )
+
+        gs = self._graph_state()
+        fb = self._decode_batch(gs=None)
+        backend = SimpleNamespace(
+            forward_metadata=SimpleNamespace(ds_graph_state=gs)
+        )
+        maybe_dump_selection_capture(fb, backend, 3)
+        self.assertTrue(
+            os.path.exists(os.path.join(self._tmp, "rank3_step00000.pt"))
+        )
+
+    def test_non_decode_skipped(self):
+        from sglang.srt.layers.attention.double_sparsity.selection_capture import (
+            maybe_dump_selection_capture,
+        )
+
+        gs = self._graph_state()
+        fb = self._decode_batch(gs)
+        fb.forward_mode = SimpleNamespace(is_decode=lambda: False)
+        maybe_dump_selection_capture(fb, SimpleNamespace(), 0)
+        self.assertEqual(os.listdir(self._tmp), [])
+
+    def test_no_mirrors_skipped(self):
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state,
+        )
+        from sglang.srt.layers.attention.double_sparsity.selection_capture import (
+            maybe_dump_selection_capture,
+        )
+
+        gs = allocate_graph_state(max_bs=2, max_top_k=4, device=torch.device("cpu"))
+        maybe_dump_selection_capture(self._decode_batch(gs), SimpleNamespace(), 0)
+        self.assertEqual(os.listdir(self._tmp), [])
+
+    def test_step_counter_increments(self):
+        from sglang.srt.layers.attention.double_sparsity.selection_capture import (
+            maybe_dump_selection_capture,
+        )
+
+        gs = self._graph_state()
+        fb = self._decode_batch(gs)
+        maybe_dump_selection_capture(fb, SimpleNamespace(), 0)
+        maybe_dump_selection_capture(fb, SimpleNamespace(), 0)
+        self.assertTrue(
+            os.path.exists(os.path.join(self._tmp, "rank0_step00001.pt"))
+        )
+
+
+class TestSelectTopkIndicesCaptureMirror(unittest.TestCase):
+    """`_select_topk_indices` mirrors each layer's selection into the capture
+    buffers (the device copy that CUDA-graph capture records)."""
+
+    def _make_attn_real(self):
+        from sglang.srt.models.deepseek_v2 import DeepseekV2AttentionMLA
+
+        attn = object.__new__(DeepseekV2AttentionMLA)
+        attn.use_double_sparsity = True
+        attn.indexer = MagicMock()
+        cfg = parse_double_sparsity_config(_valid_payload())
+        attn.double_sparsity_selector = DoubleSparsitySelector(
+            config=cfg, num_local_heads=16, head_dim=128,
+            device=torch.device("cpu"),
+        )
+        attn.double_sparsity_selector.IS_PLACEHOLDER = False
+        return attn
+
+    def test_mirror_rows_written_for_layer(self):
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state,
+        )
+
+        attn = self._make_attn_real()
+        k = attn.double_sparsity_selector.max_top_k
+        gs = allocate_graph_state(
+            max_bs=2, max_top_k=k, selection_capture_layers=2,
+            device=torch.device("cpu"),
+        )
+        req_to_token = (
+            torch.arange(256, dtype=torch.int32).unsqueeze(0).expand(2, -1).contiguous()
+        )
+        forward_batch = SimpleNamespace(
+            req_pool_indices=torch.tensor([0, 1], dtype=torch.int32),
+            seq_lens=torch.tensor([128, 256], dtype=torch.int32),
+            sparse_mask=None,
+            req_to_token_pool=SimpleNamespace(req_to_token=req_to_token),
+            ds_graph_state=gs,
+        )
+        result = attn._select_topk_indices(
+            x=torch.zeros(2, 16, 128),
+            q_lora=torch.zeros(2, 16, 128),
+            positions=torch.zeros(2, dtype=torch.int32),
+            forward_batch=forward_batch,
+            layer_id=1,
+        )
+        # Identity req_to_token: the post-adapter result equals the logical
+        # selection (with -1 padding preserved), which is what the mirror holds.
+        self.assertTrue(torch.equal(gs.capture_indices[1, :2], result))
+        self.assertTrue(
+            torch.equal(
+                gs.capture_lengths[1, :2],
+                (result != -1).sum(dim=-1).to(torch.int32),
+            )
+        )
+        # Other layers stay untouched (-1 fill).
+        self.assertTrue(bool((gs.capture_indices[0] == -1).all()))
+
+    def test_no_mirror_no_effect(self):
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state,
+        )
+
+        attn = self._make_attn_real()
+        k = attn.double_sparsity_selector.max_top_k
+        gs = allocate_graph_state(max_bs=2, max_top_k=k, device=torch.device("cpu"))
+        req_to_token = (
+            torch.arange(256, dtype=torch.int32).unsqueeze(0).expand(2, -1).contiguous()
+        )
+        forward_batch = SimpleNamespace(
+            req_pool_indices=torch.tensor([0, 1], dtype=torch.int32),
+            seq_lens=torch.tensor([128, 256], dtype=torch.int32),
+            sparse_mask=None,
+            req_to_token_pool=SimpleNamespace(req_to_token=req_to_token),
+            ds_graph_state=gs,
+        )
+        result = attn._select_topk_indices(
+            x=torch.zeros(2, 16, 128),
+            q_lora=torch.zeros(2, 16, 128),
+            positions=torch.zeros(2, dtype=torch.int32),
+            forward_batch=forward_batch,
+            layer_id=0,
+        )
+        self.assertIsNotNone(result)
+        self.assertIsNone(gs.capture_indices)
+
+
+class TestSelectionCaptureToolVerify(unittest.TestCase):
+    """Loop-9 selection_capture_tool verify/diff: fail-closed teeth checks."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+
+        tool_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "..", "..", "..",
+            "development", "loop9", "selection_capture_tool.py",
+        )
+        tool_path = os.path.abspath(tool_path)
+        spec = importlib.util.spec_from_file_location("_selcap_tool", tool_path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["_selcap_tool"] = mod  # before exec: dataclass/module introspection
+        spec.loader.exec_module(mod)
+        cls.tool = mod
+
+    def setUp(self):
+        import tempfile
+
+        self._tmp = tempfile.mkdtemp(prefix="selcap_tool_test_")
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _write_run(self, subdir="pass0", ranks=2, steps=2, mutate=None):
+        d = os.path.join(self._tmp, subdir)
+        os.makedirs(d, exist_ok=True)
+        for step in range(steps):
+            base_idx = torch.full((2, 1, 4), -1, dtype=torch.int32)
+            base_idx[:, 0, :3] = torch.tensor([2, 5, 7], dtype=torch.int32) + step
+            base_len = torch.full((2, 1), 3, dtype=torch.int32)
+            for rank in range(ranks):
+                idx = base_idx.clone()
+                lens = base_len.clone()
+                if mutate and mutate == (step, rank):
+                    idx[0, 0, 0] += 1  # single-element tamper
+                torch.save(
+                    {
+                        "step": step,
+                        "bs": 1,
+                        "seq_lens": [9],
+                        "indices": idx,
+                        "lengths": lens,
+                    },
+                    os.path.join(d, f"rank{rank}_step{step:05d}.pt"),
+                )
+        return d
+
+    def _verify(self, **kw):
+        import argparse
+
+        ns = argparse.Namespace(
+            run_dir=self._tmp, ranks=2, expected_steps=None, max_top_k=4,
+            digest=os.path.join(self._tmp, "digest.json"), **kw,
+        )
+        return self.tool.cmd_verify(ns)
+
+    def test_clean_run_passes_and_digest_written(self):
+        import json
+
+        self._write_run()
+        rc = self._verify()
+        self.assertEqual(rc, 0)
+        with open(os.path.join(self._tmp, "digest.json")) as fh:
+            digest = json.loads(fh.read())
+        self.assertEqual(digest["verdict"], "PASS")
+        self.assertEqual(len(digest["passes"][0]["steps"]), 2)
+
+    def test_cross_rank_single_element_tamper_fails(self):
+        self._write_run(mutate=(1, 1))
+        self.assertEqual(self._verify(), 1)
+
+    def test_missing_rank_file_fails(self):
+        d = self._write_run()
+        os.remove(os.path.join(d, "rank1_step00001.pt"))
+        self.assertEqual(self._verify(), 1)
+
+    def test_contract_padding_violation_fails(self):
+        d = self._write_run()
+        path = os.path.join(d, "rank0_step00000.pt")
+        rec = torch.load(path, weights_only=True)
+        rec["indices"][0, 0, 3] = 8  # padding tail must be -1
+        torch.save(rec, path)
+        # rank1 must match rank0 or the cross-rank check fires first.
+        rec2 = torch.load(os.path.join(d, "rank1_step00000.pt"), weights_only=True)
+        rec2["indices"][0, 0, 3] = 8
+        torch.save(rec2, os.path.join(d, "rank1_step00000.pt"))
+        self.assertEqual(self._verify(), 1)
+
+    def test_run_to_run_divergence_fails(self):
+        self._write_run("pass0")
+        d1 = self._write_run("pass1")
+        for rank in range(2):
+            p = os.path.join(d1, f"rank{rank}_step00000.pt")
+            rec = torch.load(p, weights_only=True)
+            rec["indices"][0, 0, 1] += 1
+            torch.save(rec, p)
+        self.assertEqual(self._verify(), 1)
+
+    def test_run_to_run_identical_passes(self):
+        self._write_run("pass0")
+        self._write_run("pass1")
+        self.assertEqual(self._verify(), 0)
+
+    def test_diff_reports_differing_rows(self):
+        import argparse
+        import json
+
+        a = self._write_run("a")
+        b = self._write_run("b")
+        p = os.path.join(b, "rank0_step00000.pt")
+        rec = torch.load(p, weights_only=True)
+        rec["indices"][1, 0, 2] += 1
+        torch.save(rec, p)
+        out = os.path.join(self._tmp, "diff.json")
+        rc = self.tool.cmd_diff(argparse.Namespace(a=a, b=b, out=out))
+        self.assertEqual(rc, 0)
+        with open(out) as fh:
+            rep = json.loads(fh.read())
+        self.assertEqual(rep["layer_rows_differing"], 1)
+        self.assertGreater(rep["fraction_differing"], 0)
+
+
+@unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
+class TestGraphSafePipelineAdversarial(unittest.TestCase):
+    """Adversarial fixtures through the PRODUCTION graph-safe selection
+    pipeline (Triton score kernel + in-place torch.topk pipeline), checked
+    against the eager reference path on the same bound data.
+
+    The k-boundary tie cases pin the production pipeline's tie behavior to the
+    documented (score descending, position ascending) contract — empirically
+    true for this torch build's `topk` at the tested widths (probed at 4/4096/
+    163840). If a torch upgrade changes `topk` tie order these fixtures catch
+    it; that is a selection-semantics change that must be surfaced, not
+    absorbed silently.
+    """
+
+    def _bound_selector(self, device, sig_vals, top_k):
+        from sglang.srt.layers.attention.double_sparsity.channel_mask import (
+            ChannelMask,
+        )
+        from sglang.srt.layers.attention.double_sparsity.token_label_table import (
+            allocate_token_label_table,
+        )
+
+        T = len(sig_vals)
+        L, H, Ld, hd = 1, 1, 1, 1
+        cfg = parse_double_sparsity_config(
+            '{"top_k": %d, "page_size": 64, '
+            '"channel_mask_path": "/tmp/x.safetensors", "device_buffer_size": 4096}'
+            % top_k
+        )
+        sel = DoubleSparsitySelector(
+            config=cfg, num_local_heads=H, head_dim=hd, device=device,
+        )
+        table = allocate_token_label_table(
+            num_layers_local=L, max_tokens=T, num_heads_local=H, label_dim=Ld,
+            page_size=64, dtype=torch.float32, device=device,
+        )
+        table.signatures[0, :, 0, 0] = torch.tensor(
+            sig_vals, dtype=torch.float32, device=device
+        )
+        table.written[0, :] = True
+        mask = ChannelMask(
+            channel_selection=torch.zeros(L, H, Ld, dtype=torch.int32, device=device),
+            channel_weights=torch.ones(L, H, Ld, dtype=torch.float32, device=device),
+            schema_version="1", dtype="fp8_e4m3", head_dim=hd, page_size=64,
+            label_dim=Ld, content_sha256="test",
+        )
+        sel.bind_runtime_data(table, mask)
+        # Identity mapping: logical position i -> physical slot i.
+        req_to_token = (
+            torch.arange(T, dtype=torch.int32, device=device).unsqueeze(0).contiguous()
+        )
+        return sel, req_to_token
+
+    def _run_graph_safe(self, sel, req_to_token, seq_len, sparse_mask=None):
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state,
+        )
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            retrieve_topk_graph_safe,
+        )
+
+        device = req_to_token.device
+        T = req_to_token.shape[1]
+        state = allocate_graph_state(
+            max_bs=1, max_top_k=sel.max_top_k, max_seq_len=T, device=device,
+        )
+        retrieve_topk_graph_safe(
+            queries=torch.ones(1, 1, 1, dtype=torch.float32, device=device),
+            token_signatures=sel.token_label_table.signatures,
+            written=sel.token_label_table.written,
+            channel_selection=sel.channel_mask.channel_selection,
+            channel_weights=sel.channel_mask.channel_weights,
+            layer_id=0,
+            req_pool_indices=torch.zeros(1, dtype=torch.int32, device=device),
+            req_to_token=req_to_token,
+            seq_lens=torch.tensor([seq_len], dtype=torch.int32, device=device),
+            max_seq_len=T,
+            max_top_k=sel.max_top_k,
+            out_indices=state.selected_indices,
+            out_lengths=state.valid_lengths,
+            scratch_scores=state.scratch_scores,
+            scratch_topk_values=state.scratch_topk_values,
+            scratch_topk_indices=state.scratch_topk_indices,
+            scratch_invalid_mask=state.scratch_invalid_mask,
+            scratch_sorted_vals=state.scratch_sorted_vals,
+            scratch_boundary=state.scratch_boundary,
+            scratch_valid_i64=state.scratch_valid_i64,
+            per_request_valid=sparse_mask,
+            scratch_pv_mask=state.scratch_pv_mask,
+            scratch_throwaway_idx=state.scratch_throwaway_idx,
+            token_scales=sel.token_label_table.scales,
+            process_group=None,
+        )
+        return state.selected_indices[:1].clone(), state.valid_lengths[:1].clone()
+
+    def _run_eager(self, sel, req_to_token, seq_len, sparse_mask=None, queries=None):
+        if queries is None:
+            queries = torch.ones(
+                1, 1, 1, dtype=torch.float32, device=req_to_token.device
+            )
+        return sel.retrieve_topk(
+            queries=queries,
+            layer_id=0,
+            req_pool_indices=torch.zeros(1, dtype=torch.int32, device=req_to_token.device),
+            sparse_mask=sparse_mask,
+            seq_lens=torch.tensor(
+                [seq_len], dtype=torch.int32, device=req_to_token.device
+            ),
+            req_to_token=req_to_token,
+        )
+
+    def _assert_pipeline_matches_eager(self, sig_vals, top_k, seq_len=None):
+        device = torch.device("cuda")
+        sel, req_to_token = self._bound_selector(device, sig_vals, top_k)
+        seq_len = seq_len if seq_len is not None else len(sig_vals)
+        g_idx, g_len = self._run_graph_safe(sel, req_to_token, seq_len)
+        e_idx, e_len = self._run_eager(sel, req_to_token, seq_len)
+        k = min(g_idx.shape[1], e_idx.shape[1])
+        self.assertTrue(
+            torch.equal(g_idx[:, :k], e_idx[:, :k]),
+            f"graph-safe {g_idx.tolist()} != eager {e_idx.tolist()}",
+        )
+        self.assertTrue(torch.equal(g_len, e_len))
+        return g_idx, g_len
+
+    def test_all_equal_scores_tie_resolves_to_lowest_positions(self):
+        g_idx, g_len = self._assert_pipeline_matches_eager([5.0] * 8, top_k=3)
+        self.assertEqual(g_idx[0, :3].tolist(), [0, 1, 2])
+        self.assertEqual(int(g_len[0]), 3)
+
+    def test_tie_plateau_straddling_k_boundary(self):
+        # Distinct head, then a 4-wide tie plateau of which only 2 fit in k=3:
+        # the documented tie-break keeps the lowest plateau positions.
+        g_idx, g_len = self._assert_pipeline_matches_eager(
+            [9.0, 3.0, 3.0, 3.0, 3.0, 1.0], top_k=3
+        )
+        self.assertEqual(g_idx[0, :3].tolist(), [0, 1, 2])
+
+    def test_seq_len_shorter_than_top_k_pads(self):
+        g_idx, g_len = self._assert_pipeline_matches_eager(
+            [4.0, 9.0, 2.0, 7.0], top_k=8, seq_len=3
+        )
+        self.assertEqual(int(g_len[0]), 3)
+        self.assertEqual(g_idx[0, :3].tolist(), [0, 1, 2])
+        self.assertTrue(bool((g_idx[0, 3:] == -1).all()))
+
+    def test_fully_masked_row_emits_all_pad(self):
+        device = torch.device("cuda")
+        sel, req_to_token = self._bound_selector(device, [4.0, 9.0, 2.0, 7.0], 2)
+        mask = torch.zeros(1, 4, dtype=torch.int32, device=device)
+        g_idx, g_len = self._run_graph_safe(sel, req_to_token, 4, sparse_mask=mask)
+        self.assertEqual(int(g_len[0]), 0)
+        self.assertTrue(bool((g_idx == -1).all()))
+
+    def test_replay_tracks_copy_mutated_static_inputs(self):
+        """CUDA graphs capture tensor ADDRESSES, not call arguments: mutating
+        the pre-captured static input buffers via copy_ and replaying must
+        reproduce what an eager call with the new values computes."""
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state, assert_no_alloc_in_region, capture_decode_step,
+        )
+
+        device = torch.device("cuda")
+        sel, req_to_token = self._bound_selector(device, [9.0, 8.0, 1.0, 2.0], 2)
+        state = allocate_graph_state(
+            max_bs=1, max_top_k=2, max_seq_len=4, device=device,
+        )
+        queries = torch.ones(1, 1, 1, dtype=torch.float32, device=device)
+        req_pool = torch.zeros(1, dtype=torch.int32, device=device)
+        seq_lens = torch.tensor([4], dtype=torch.int32, device=device)
+        replay = capture_decode_step(
+            sel, state=state, queries=queries, layer_id=0,
+            req_pool_indices=req_pool, sparse_mask=None,
+            seq_lens=seq_lens, req_to_token=req_to_token,
+        )
+        torch.cuda.synchronize()
+
+        # Mutate seq_lens in place: only the first 2 positions stay valid.
+        seq_lens.copy_(torch.tensor([2], dtype=torch.int32, device=device))
+        with assert_no_alloc_in_region("selcap-mutated-replay"):
+            idx_r, len_r = replay()
+        torch.cuda.synchronize()
+        e_idx, e_len = self._run_eager(sel, req_to_token, 2)
+        self.assertTrue(
+            torch.equal(idx_r[:1, :2], e_idx),
+            f"replay {idx_r[:1,:2].tolist()} != eager-at-seq2 {e_idx.tolist()}",
+        )
+        self.assertTrue(torch.equal(len_r[:1], e_len))
+
+        # Mutate the query sign: scores flip, the selection moves to the
+        # lowest-signature tokens. Replay must track it; the eager reference
+        # gets the SAME mutated query values.
+        seq_lens.copy_(torch.tensor([4], dtype=torch.int32, device=device))
+        queries.copy_(-torch.ones_like(queries))
+        idx_r, len_r = replay()
+        torch.cuda.synchronize()
+        e_idx, e_len = self._run_eager(
+            sel, req_to_token, 4, queries=queries.clone()
+        )
+        self.assertTrue(
+            torch.equal(idx_r[:1, :2], e_idx),
+            f"replay {idx_r[:1,:2].tolist()} != eager-negated-q {e_idx.tolist()}",
+        )
+        self.assertTrue(torch.equal(len_r[:1], e_len))
+
+
 if __name__ == "__main__":
     unittest.main()

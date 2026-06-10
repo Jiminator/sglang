@@ -39,6 +39,7 @@ _ALLOWED_FIELDS = {
     "anchor_mode",
     "anchor_budget",
     "recall_oracle",
+    "selection_capture",
     "enable_lifted_budget_decode",
     "lifted_budget_top_k",
     "extra",
@@ -59,6 +60,13 @@ _ALLOWED_FIELDS = {
 #   diagnostic (off by default; byte-identical selection). Config-borne so it
 #   reaches TP workers; forces the eager selector path and requires
 #   --disable-cuda-graph (the hook does host syncs illegal under graph capture).
+# selection_capture: config-borne enable for the per-(layer, decode-step)
+#   selection dump (selected_indices + valid_lengths). When on, the graph state
+#   allocates per-layer capture buffers, the selector mirrors every layer's
+#   selection into them (a captured device copy, so CUDA-graph replay keeps them
+#   current), and the model runner appends one per-rank dump file per decode
+#   step under cwd/.sglang_ds_selcap. Diagnostic only; off by default
+#   (byte-identical selection, zero hot-path cost when off).
 # enable_lifted_budget_decode: opt-in Tier-2.A adjustable-budget decode (AC-4).
 #   When True, the selector may pick more than the DSA index_topk (a wider budget
 #   recovers needles that rank in (index_topk, lifted_budget_top_k]); the opt-in
@@ -99,6 +107,7 @@ class DoubleSparsityConfig:
     anchor_mode: str = _DEFAULT_ANCHOR_MODE
     anchor_budget: int = _DEFAULT_ANCHOR_BUDGET
     recall_oracle: bool = False
+    selection_capture: bool = False
     enable_lifted_budget_decode: bool = False
     lifted_budget_top_k: int = _DEFAULT_LIFTED_BUDGET_TOP_K
     extra: Dict[str, Any] = field(default_factory=dict)
@@ -133,6 +142,11 @@ class DoubleSparsityConfig:
             raise ValueError(
                 f"Double Sparsity 'recall_oracle' must be a boolean, "
                 f"got {self.recall_oracle!r}."
+            )
+        if not isinstance(self.selection_capture, bool):
+            raise ValueError(
+                f"Double Sparsity 'selection_capture' must be a boolean, "
+                f"got {self.selection_capture!r}."
             )
         if not isinstance(self.enable_lifted_budget_decode, bool):
             raise ValueError(
@@ -271,6 +285,9 @@ def parse_double_sparsity_config(payload: str) -> DoubleSparsityConfig:
         anchor_mode=str(data.get("anchor_mode", _DEFAULT_ANCHOR_MODE)),
         anchor_budget=int(data.get("anchor_budget", _DEFAULT_ANCHOR_BUDGET)),
         recall_oracle=_coerce_bool(data.get("recall_oracle", False), "recall_oracle"),
+        selection_capture=_coerce_bool(
+            data.get("selection_capture", False), "selection_capture"
+        ),
         enable_lifted_budget_decode=_coerce_bool(
             data.get("enable_lifted_budget_decode", False), "enable_lifted_budget_decode"
         ),
