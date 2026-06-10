@@ -12,17 +12,23 @@ strong.
 
 ## Per-idea kernel-bucket ledger (Case-1 re-profiles, torch TP-0, µs / 10-step decode window)
 
-| Bucket | frozen baseline (20260609) | M0 dry-run | M1 score-reduce | M2 top-k | M3 logical-score |
+| Bucket | frozen baseline (20260609) | M0 dry-run (20260610) | M1 score-reduce | M2 top-k | M3 logical-score |
 |---|---|---|---|---|---|
-| NCCL ring score all-reduce (`AllReduce_Sum_f32_RING`) | 124,873* | TBD | | | |
-| top-k/sort stack (mbtopk/radixSort/sbtopk/scan/searchsorted) | 159,166 | TBD | | | |
-| `_logical_score_kernel` | 63,107 | TBD | | | |
-| all-reduce category total (incl. shared trtllm-fusion) | 163,790 | TBD | | | |
-| **Total decode GPU-kernel µs** | **632,239** | TBD | | | |
-| aggregate decode tok/s | 459 | TBD | | | |
-| recall gate (Δ recall@2048 vs frozen baseline, ≤0.5pp) | — (baseline) | — | | | |
-| cross-rank bit-identity (hard) | TBD (M0) | — | | | |
+| NCCL ring score all-reduce (`AllReduce_Sum_f32_RING`) | 124,873* | 124,949 | | | |
+| top-k/sort stack (mbtopk/radixSort/sbtopk/scan/searchsorted) | 159,166 | 159,162 | | | |
+| `_logical_score_kernel` | 63,107 | 63,211 | | | |
+| all-reduce category total (incl. shared trtllm-fusion) | 163,790 | 163,177 | | | |
+| **Total decode GPU-kernel µs** | **632,239** | **631,381** | | | |
+| aggregate decode tok/s | 459 | 459.4 | | | |
+| recall gate (Δ recall@2048 vs frozen baseline, ≤0.5pp) | — (baseline) | — (no code change) | | | |
+| cross-rank bit-identity (hard) | PASS (M0 selcap, 8 ranks) | — | | | |
 | reduce backend at the DS reduce site | torch_dist (NCCL ring) | torch_dist | | | |
+
+M0 dry-run verdict (protocol check, AC-5): run_case.sh + summarize_torch.py + compare_decode.py all
+work end-to-end; dry-run vs frozen Case-1 same-config reboot agrees per-bucket within ~600 µs
+(total Δ = −858 µs), far inside the planned ~27k µs noise allowance — per-bucket gates have full
+sensitivity. Dry-run vs frozen Case 2: 1.84×, deltas reproduce (+123,362 all-reduce / +138,598
+topk-stack / +63,211 logical-score). Artifacts: development/loop9/runs/m0_dryrun/.
 
 \* the ring line is the DS-attributed share measured as Case1−Case2 NCCL f32 delta; the category
 row above it is the full all-reduce category including the shared trtllm fusion all-reduce.

@@ -76,7 +76,7 @@ def main() -> int:
         init_distributed_environment,
         initialize_model_parallel,
     )
-    from sglang.srt.distributed.parallel_state import get_attention_tp_group, graph_capture
+    from sglang.srt.distributed.parallel_state import get_attn_tp_group, graph_capture
 
     init_distributed_environment(
         world_size=world,
@@ -88,7 +88,7 @@ def main() -> int:
     initialize_model_parallel(tensor_model_parallel_size=world)
 
     tp = get_tp_group()
-    attn_tp = get_attention_tp_group()
+    attn_tp = get_attn_tp_group()
     ca = tp.ca_comm
     report = {
         "world_size": world,

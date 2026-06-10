@@ -1,0 +1,102 @@
+{
+  "world_size": 8,
+  "attn_tp_is_tp": true,
+  "ca_comm_type": "CustomAllReduceV2",
+  "ca_disabled": false,
+  "ca_max_size": 16777216,
+  "ca_max_pull_size": 16777216,
+  "ca_max_push_size": 163840,
+  "ca_config": "ModeConfig(one_shot_push_threshold=163840, one_shot_pull_threshold=163840)",
+  "cases": [
+    {
+      "bs": 29,
+      "width": 202752,
+      "dtype": "float32",
+      "mbytes": 23.52,
+      "should_custom_ar": false,
+      "nccl_ring_us": 167.1,
+      "coordinator_us": 170.5,
+      "ca_wide_eligible": false
+    },
+    {
+      "bs": 29,
+      "width": 202752,
+      "dtype": "bfloat16",
+      "mbytes": 11.76,
+      "should_custom_ar": true,
+      "nccl_ring_us": 105.9,
+      "coordinator_us": 104.1,
+      "ca_wide_eligible": false
+    },
+    {
+      "bs": 64,
+      "width": 202752,
+      "dtype": "float32",
+      "mbytes": 51.9,
+      "should_custom_ar": false,
+      "nccl_ring_us": 292.0,
+      "coordinator_us": 298.4,
+      "ca_wide_eligible": false
+    },
+    {
+      "bs": 1,
+      "width": 202752,
+      "dtype": "float32",
+      "mbytes": 0.81,
+      "should_custom_ar": true,
+      "nccl_ring_us": 40.9,
+      "coordinator_us": 47.4,
+      "ca_wide_eligible": false
+    },
+    {
+      "bs": 29,
+      "width": 65536,
+      "dtype": "float32",
+      "mbytes": 7.6,
+      "should_custom_ar": true,
+      "nccl_ring_us": 87.3,
+      "coordinator_us": 76.9,
+      "ca_wide_eligible": false
+    },
+    {
+      "bs": 29,
+      "width": 16384,
+      "dtype": "float32",
+      "mbytes": 1.9,
+      "should_custom_ar": true,
+      "nccl_ring_us": 50.8,
+      "coordinator_us": 45.7,
+      "ca_wide_eligible": false
+    },
+    {
+      "bs": 29,
+      "width": 4608,
+      "dtype": "float32",
+      "mbytes": 0.53,
+      "should_custom_ar": true,
+      "nccl_ring_us": 37.4,
+      "coordinator_us": 45.9,
+      "ca_wide_eligible": false
+    },
+    {
+      "bs": 29,
+      "width": 4608,
+      "dtype": "bfloat16",
+      "mbytes": 0.27,
+      "should_custom_ar": true,
+      "nccl_ring_us": 38.5,
+      "coordinator_us": 51.9,
+      "ca_wide_eligible": false
+    }
+  ],
+  "ca_wide_error": "AssertionError: CustomAllReduceV2 should be attached to a non-NCCL group.",
+  "coordinator_vs_ring_max_rel_err": 0.010101010091602802,
+  "graph_capture": {
+    "captured": true,
+    "replay_correct": true,
+    "replay_new_allocations": 0,
+    "replay_kernels": [
+      "void (anonymous namespace)::all_reduce_two_shot_kernel<float, 8u, true>(host::distributed::AllReduceData const*, (anonymous namespace)::AllReduceParams, device::distributed::PullController)"
+    ]
+  }
+}
