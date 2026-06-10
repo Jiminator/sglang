@@ -1,0 +1,33 @@
+{
+  "sink": "/sgl-workspace/sglang/.sglang_ds_oracle/sink.jsonl",
+  "failure_markers": {},
+  "lengths": {
+    "1024": {
+      "samples": 6240,
+      "trials": 20,
+      "recall_at_2048_hits": 6240,
+      "recall_at_2048_pct": 100.0,
+      "selected_contains_needle_pct": 100.0
+    },
+    "4096": {
+      "samples": 6240,
+      "trials": 20,
+      "recall_at_2048_hits": 3622,
+      "recall_at_2048_pct": 58.045,
+      "selected_contains_needle_pct": 58.045
+    },
+    "16384": {
+      "samples": 6240,
+      "trials": 20,
+      "recall_at_2048_hits": 2249,
+      "recall_at_2048_pct": 36.042,
+      "selected_contains_needle_pct": 36.042
+    }
+  },
+  "overall": {
+    "samples": 18720,
+    "recall_at_2048_hits": 12111,
+    "recall_at_2048_pct": 64.696,
+    "selected_contains_needle_pct": 64.696
+  }
+}
