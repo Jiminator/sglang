@@ -79,14 +79,26 @@ def maybe_dump_selection_capture(forward_batch, attn_backend, tp_rank: int) -> N
 
     bs = int(forward_batch.batch_size)
     seq_lens = getattr(forward_batch, "seq_lens", None)
+    seq_lens_list = (
+        seq_lens[:bs].detach().to("cpu").tolist() if seq_lens is not None else None
+    )
+    # Bucket identity: which captured variant served this step, at what
+    # allocated row count and selector width. `graph_key` comes from the
+    # backend's pre-replay stamp (None == eager path, whose graph state is
+    # freshly allocated per forward and never stamped).
+    graph_key = getattr(gs, "last_replay_graph_key", None)
     record = {
         "bs": bs,
-        "seq_lens": (
-            seq_lens[:bs].detach().to("cpu").tolist() if seq_lens is not None else None
-        ),
+        "seq_lens": seq_lens_list,
         # [num_layers, bs, max_top_k] int32 / [num_layers, bs] int32
         "indices": gs.capture_indices[:, :bs].detach().to("cpu").clone(),
         "lengths": gs.capture_lengths[:, :bs].detach().to("cpu").clone(),
+        "raw_bs": bs,
+        "padded_bs": int(gs.capture_indices.shape[1]),
+        "selector_width": int(getattr(gs, "max_seq_len", 0) or 0),
+        "graph_key": graph_key,
+        "replay_path": graph_key is not None,
+        "max_real_seq_len": (max(seq_lens_list) if seq_lens_list else None),
     }
     with _step_lock:
         step = _step_counter

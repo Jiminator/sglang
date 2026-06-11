@@ -101,6 +101,16 @@ class DSGraphState:
     capture_indices: Optional[torch.Tensor] = None  # int32 [num_layers, max_bs, max_top_k]
     capture_lengths: Optional[torch.Tensor] = None  # int32 [num_layers, max_bs]
 
+    # Host-side replay identity for the selection-capture dump. The DSA
+    # backend's pre-replay metadata init stamps these (plain Python values,
+    # never touched inside a captured region): `last_replay_graph_key` is the
+    # runner's graph-variant key this state belongs to (today the padded
+    # decode batch size). Eager forwards allocate a fresh DSGraphState per
+    # forward and never stamp it, so `last_replay_graph_key is None`
+    # distinguishes the eager path from graph replay in the dumps.
+    last_replay_graph_key: Optional[object] = None
+    replay_prep_count: int = 0
+
     # Opt-in lifted-budget decode scratch (only when enable_lifted_budget_decode).
     # The fixed-shape graph-safe compact decode (build_lifted_compact_kv_fixed +
     # dequantize_k_cache_paged_out + flash_mla_sparse_fwd) writes into these so the

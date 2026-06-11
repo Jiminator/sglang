@@ -10271,6 +10271,48 @@ class TestSelectionCaptureDump(unittest.TestCase):
             os.path.exists(os.path.join(self._tmp, "rank0_step00001.pt"))
         )
 
+    def test_eager_dump_records_bucket_identity(self):
+        """An unstamped (eager-path) graph state dumps identity fields with
+        graph_key None / replay_path False, plus the allocated row count,
+        selector width, and the max real sequence length."""
+        from sglang.srt.layers.attention.double_sparsity.selection_capture import (
+            maybe_dump_selection_capture,
+        )
+
+        gs = self._graph_state()
+        maybe_dump_selection_capture(self._decode_batch(gs), SimpleNamespace(), 0)
+        rec = torch.load(
+            os.path.join(self._tmp, "rank0_step00000.pt"), weights_only=True
+        )
+        self.assertEqual(rec["raw_bs"], 2)
+        self.assertEqual(rec["padded_bs"], 2)
+        self.assertEqual(rec["selector_width"], gs.max_seq_len)
+        self.assertIsNone(rec["graph_key"])
+        self.assertFalse(rec["replay_path"])
+        self.assertEqual(rec["max_real_seq_len"], 9)
+
+    def test_replay_stamped_dump_records_graph_key_and_padded_bs(self):
+        """A graph state stamped by the pre-replay metadata init dumps the
+        graph key and reports padded rows from the mirror allocation, while
+        raw_bs stays the forward batch's real row count."""
+        from sglang.srt.layers.attention.double_sparsity.selection_capture import (
+            maybe_dump_selection_capture,
+        )
+
+        gs = self._graph_state(bs=4)
+        gs.last_replay_graph_key = 4
+        gs.replay_prep_count = 7
+        fb = self._decode_batch(gs, bs=2)
+        maybe_dump_selection_capture(fb, SimpleNamespace(), 0)
+        rec = torch.load(
+            os.path.join(self._tmp, "rank0_step00000.pt"), weights_only=True
+        )
+        self.assertEqual(rec["raw_bs"], 2)
+        self.assertEqual(rec["padded_bs"], 4)
+        self.assertEqual(rec["graph_key"], 4)
+        self.assertTrue(rec["replay_path"])
+        self.assertEqual(list(rec["indices"].shape)[1], 2)
+
 
 class TestSelectTopkIndicesCaptureMirror(unittest.TestCase):
     """`_select_topk_indices` mirrors each layer's selection into the capture
