@@ -1,18 +1,27 @@
 # Loop 9 Ledger — DS-on Decode Kernel Optimization (running results)
 
-## Final gap statement (close-out)
+## Final gap statement (close-out, revised after Round 1)
 
-Frozen baseline → after this loop (Case-1, frozen recipe, one trial each):
-**632,239 → 512,687 µs** per 10-step decode window (−18.9%; the strong AC-1.4 marker ≤516k is
-met); **1.84× → 1.495×** vs the frozen DSA floor (342,857); decode throughput
-**459 → 646.79 tok/s (+41%)**. Per-bucket: score-reduce f32 ring eliminated (124.9k → 0; bf16
-custom-AR v2 + casts ≈ 113k incl. cross-rank wait absorption), DS top-k 138.6k → ≈36.3k,
-logical-score 63.1k → 43.2k (its 40k gate near-missed by 8% — DEC-1 trend documentation). Every
-landed change passed the recall gate (overall Δ ≤ +0.01pp, bound 0.5pp) and the hard cross-rank
-bit-identity check; M2+M3 are selection-bit-identical to M1 served (0/2496 selcap rows). The
-DS index/scoring tax vs DSA's fused indexer remains structurally dominated by the static-width
-(202752) dead tax — see the wildcard proposal below. Separately, the Penalty-B admission cap is
-lifted at a re-tuned op point (bs 29 → 64, see the memory audit section).
+Frozen baseline → final landed state (Case-1, frozen recipe, one trial each):
+**632,239 → 480,989 µs** per 10-step decode window (−23.9%; AC-1.4's strong marker ≤516k met
+with margin); **1.84× → 1.403×** vs the frozen DSA floor (342,857); decode throughput
+**459 → 654.28 tok/s (+43%)**. Per-bucket — **all four AC-1 gates MET**:
+score-reduce f32 ring eliminated (124.9k → 0; named custom-AR v2 bf16 kernel + casts; AC-1.1),
+DS top-k 138.6k → ≈36.3k (gate ≤80k; AC-1.2), logical-score 63.1k → **36.9k** (gate ≤40k;
+AC-1.3, closed in Round 1 by the persistent-worker grid), total under the strong marker
+(AC-1.4). Every landed change passed the recall gate (overall Δ ≤ +0.01pp, bound 0.5pp) and the
+hard cross-rank bit-identity check; the top-k and logical-score changes are selection-
+bit-identical to the M1 served state (selcap diffs 0/2496).
+
+Shipped state vs follow-ons, stated plainly: the SHIPPED selection path is the Triton radix
+suite + persistent-worker scorer + bf16 custom-AR reduce, all on the unmodified prebuilt
+sgl-kernel wheel. The AOT DS top-k operator is source-complete in the sgl-kernel tree
+(tested, benchmarked: better at the op point, worse at long contexts — not integrated on the
+all-shapes rule); adopting any rebuilt wheel is a future gated change. The remaining
+structural headroom vs DSA's fused indexer (~138k µs of DS-attributed index/scoring vs
+~17.2k) is the static-width dead tax in the reduce — the width-bucketed redesign proposal
+(below) is the recorded next direction (needs-user-decision). Separately, the Penalty-B
+admission cap is lifted at a re-tuned op point (bs 29 → 64, see the memory audit section).
 
 ## Follow-on notes (close-out)
 
