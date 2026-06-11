@@ -189,7 +189,6 @@ def main() -> int:
     # inside the coordinator's graph-capture context (custom-AR registration).
     if not args.skip_capture:
         try:
-            n = torch.cuda.memory_stats().get("allocation.all.allocated", 0)
             static_in = torch.randn(29, 4608, dtype=torch.float32, device="cuda")
             static_out = None
             with graph_capture() as gc_ctx:
