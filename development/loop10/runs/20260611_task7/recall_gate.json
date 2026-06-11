@@ -1,0 +1,39 @@
+{
+  "sink": "/sgl-workspace/sglang/.sglang_ds_oracle/sink.jsonl",
+  "failure_markers": {},
+  "lengths": {
+    "1024": {
+      "samples": 6240,
+      "trials": 20,
+      "recall_at_2048_hits": 6240,
+      "recall_at_2048_pct": 100.0,
+      "selected_contains_needle_pct": 100.0
+    },
+    "4096": {
+      "samples": 6240,
+      "trials": 20,
+      "recall_at_2048_hits": 3637,
+      "recall_at_2048_pct": 58.285,
+      "selected_contains_needle_pct": 58.285
+    },
+    "16384": {
+      "samples": 6240,
+      "trials": 20,
+      "recall_at_2048_hits": 2236,
+      "recall_at_2048_pct": 35.833,
+      "selected_contains_needle_pct": 35.833
+    }
+  },
+  "overall": {
+    "samples": 18720,
+    "recall_at_2048_hits": 12113,
+    "recall_at_2048_pct": 64.706,
+    "selected_contains_needle_pct": 64.706
+  },
+  "gate": {
+    "baseline": "/sgl-workspace/sglang/development/loop9/runs/20260610_m0/recall_baseline.json",
+    "max_delta_pp": 0.5,
+    "verdict": "PASS",
+    "problems": []
+  }
+}

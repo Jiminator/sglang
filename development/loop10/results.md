@@ -84,17 +84,41 @@ time; every replay fully rewrites the rows it reads; dump padded_bs derives from
 Result: all 104 dual-width captures fit with **26.7 GB still free** (`capture_budget.txt`) —
 this REALIZES the loop-9 M4 audit's recoverable headroom. Boot capture window ≈ 2 min.
 
+### task11 BANKED (round 3, KEEP) — and the AC-1.2 roofline finding
+
+- Landed (commit `302aed47b`): width-conditional logical-score `TOKEN_BLOCK` (512 compact / 256
+  full), bitwise-invariant by construction (per-position label-dim reductions are
+  self-contained), pinned by a CUDA-gated regression + the bench's cross-variant equality.
+- Gates (`runs/20260611_task11/`): bs-1 AND op-point selcap bit-exact vs task6r2 under the full
+  hard gate (zero identity changes); recall 64.706%; Case-1 total 385,276 µs (hard + stretch
+  still met; the two-shot reduce shows boot-to-boot skew variance 24.4k↔35.4k, both within
+  bars — per-bucket attribution primary).
+- **AC-1.2 measured-infeasibility finding**: the bucket landed at **22,869 µs** (−211; R1 was
+  36,908). The kernel is DRAM-roofline-bound: 29 rows × 4,608 positions × 512 B of signature
+  gathers ≈ 68.5 MB/call → ~21 µs/call isolated floor; captured-replay sweep
+  (`task11_logical_score_bench.py` + `runs/20260611_task11/task11_bench.json`) measures 23.3
+  µs/call isolated at the tb=512 optimum (24.6 at tb=256; fewer-worker and larger-block variants
+  worse) vs the bar's 25.6 µs/call with ~6 µs/call of real-context interference on top. The
+  remaining levers are barred: int8 signatures (halves bytes) violates the frozen recipe's
+  `signature_dtype: fp16`; approximate/hierarchical scoring violates the no-added-lossiness
+  contract. **AC-1.2 hard (≤20k) is NOT MET and is assessed infeasible in the exact regime at
+  the frozen op point**; stretch (≤15k) likewise. Disposition: documented for close-out
+  adjudication — an immutable-AC re-scope requires explicit owner authorization (it is NOT
+  silently relaxed here).
+
+### task8 DROPPED (round 3, measured cause — Codex analyze `reviews/task8_transport_verdict.md`)
+
+Incumbent pinned two-shot at binding 31.3 µs/call (320 KiB) beats the best alternative evidence
+(eager NCCL 38.5 µs/call at a smaller 267 KiB; coordinator CA 51.9; full-width NCCL 105.9 ≈ CA
+104.1); ONE_SHOT_PUSH hard-errors >160 KiB (a declared push would crash at the op point);
+declared ONE_SHOT_PULL has no measured win. No candidate justifies value-affecting churn
+(declaration + third re-freeze + recall-blind risk) on a bucket 2× under its stretch bar.
+
 ### Open items / next
 
-- **task11 (NEW, M4 contingency — next round's mainline)**: `_logical_score_kernel` at 23,080
-  vs ≤20k hard. On W=5120 the persistent grid is (bs, ~20 blocks); the residual is live scoring
-  math + launch floor. Candidates: worker/block tuning for compact width, dead-store fold,
-  signature-load vectorization. Exact regime (zero selcap diff vs task6r2 baselines).
-- task7 (cast elimination): remaining cast tax is 5,999 µs (was ~22.4k) — re-rated expected
-  effect ~3–5k; AC-1.1 already met with 2× margin → insurance, queued behind task11.
-- task8 (transport choice): AC-1.1 met; NCCL could save ~10k/window at compact sizes (spike
-  bench) but is value-affecting → analyze-only unless task11 leaves AC-1.2 short and totals need
-  it. Queued.
-- task9 (top-k redesign): condition (top-k > 28k after M1+M2) currently FALSE at ≈23.3k —
-  conditional, expected to drop at close-out.
-- task10 close-out after AC-1.2 resolution.
+- task7 (bf16-authoritative radix input, copy-back eliminated — commit `fac0b0cfa`): gate run in
+  flight vs the task11 baselines; expected exact (zero diffs) with the `direct_copy` copy-back
+  kernel (~4.6k/window) removed from the transport bucket.
+- task9 (top-k redesign): condition read after task7's profile; currently ≈23.3k ≤ 28k —
+  expected drop.
+- task10 close-out after this round's reconciliation; AC-1.2 disposition escalated as above.

@@ -1,0 +1,10 @@
+{
+  "a": "/sgl-workspace/sglang/development/loop10/runs/20260611_task11/bs1_digest.json",
+  "b": "/sgl-workspace/sglang/development/loop10/runs/20260611_task7/bs1_digest.json",
+  "steps_compared": 64,
+  "sha_mismatches": 0,
+  "identity_changes": {},
+  "allowed_identity_changes": [],
+  "verdict": "PASS",
+  "problems": []
+}
