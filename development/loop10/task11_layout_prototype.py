@@ -257,19 +257,21 @@ def main() -> int:
         for tb, dt in variants:
             pairs.append((f"tr{tb}_{dt}_warm",
                           _graph_for(lambda tb=tb, dt=dt: tr_call(rtt, seq_op, tb, dt))))
-        # COLD graphs: flush + kernel, plus flush alone for subtraction.
+        # COLD graphs: flush + kernel for production AND every transposed
+        # variant, plus flush alone for net subtraction.
         pairs.append(("flush_only", _graph_for(flush_call)))
         pairs.append(("production_cold", _graph_for(
             lambda: (flush_call(), prod_call(rtt, seq_op)))))
-        best_tb, best_dt = variants[0]
-        pairs.append((f"tr{best_tb}_{best_dt}_cold", _graph_for(
-            lambda: (flush_call(), tr_call(rtt, seq_op, best_tb, best_dt)))))
+        for tb, dt in variants:
+            pairs.append((f"tr{tb}_{dt}_cold", _graph_for(
+                lambda tb=tb, dt=dt: (flush_call(), tr_call(rtt, seq_op, tb, dt)))))
         med = _interleaved(pairs)
         flush_us = med["flush_only"]
         out_l = {k: round(v, 2) for k, v in med.items()}
         out_l["production_cold_net"] = round(med["production_cold"] - flush_us, 2)
-        out_l[f"tr{best_tb}_{best_dt}_cold_net"] = round(
-            med[f"tr{best_tb}_{best_dt}_cold"] - flush_us, 2)
+        for tb, dt in variants:
+            out_l[f"tr{tb}_{dt}_cold_net"] = round(
+                med[f"tr{tb}_{dt}_cold"] - flush_us, 2)
         report["replay_us_per_call"][layout] = out_l
         print(f"[layout] {layout}: " + ", ".join(
             f"{k}={v}" for k, v in out_l.items()), flush=True)
