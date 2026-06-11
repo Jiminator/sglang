@@ -96,11 +96,30 @@ def _replay_us(fn) -> float:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=None)
+    ap.add_argument(
+        "--layout",
+        choices=("random", "page64"),
+        default="random",
+        help="slot layout: worst-case random scatter, or page-64-contiguous "
+        "runs at random page starts (the real allocator pattern; produced "
+        "the artifact's page_contiguous_floors block)",
+    )
     args = ap.parse_args()
     device = torch.device("cuda:0")
     torch.manual_seed(20260611)
 
-    rtt = torch.randint(0, TABLE_T, (BS, WIDTH), dtype=torch.int32, device=device)
+    if args.layout == "page64":
+        pages_per_row = WIDTH // 64
+        rtt = torch.empty(BS, WIDTH, dtype=torch.int32, device=device)
+        for b in range(BS):
+            starts = (
+                torch.randint(0, TABLE_T // 64, (pages_per_row,), device=device) * 64
+            )
+            rtt[b] = (
+                starts[:, None] + torch.arange(64, device=device)[None, :]
+            ).reshape(-1)[:WIDTH]
+    else:
+        rtt = torch.randint(0, TABLE_T, (BS, WIDTH), dtype=torch.int32, device=device)
     seq = torch.full((BS,), 4608, dtype=torch.int32, device=device)
     out = torch.empty(BS, WIDTH, dtype=torch.float32, device=device)
     budget_us = 20000.0 / 780.0

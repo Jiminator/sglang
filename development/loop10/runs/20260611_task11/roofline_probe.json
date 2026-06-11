@@ -32,7 +32,8 @@
     "int8": {
       "replay_us_per_call": 23.68
     },
-    "note": "best-case page-64-contiguous slot layout (the real allocator pattern); int8 gains ~1.5 us/call even here \u2014 the gather is transaction-limited, not byte-limited"
+    "note": "best-case page-64-contiguous slot layout (the real allocator pattern); int8 gains ~1.5 us/call even here \u2014 the gather is transaction-limited, not byte-limited",
+    "provenance": "task11_roofline_probe.py --layout page64 (the flag was added post-hoc to make the originally inline-rerun block reproducible from committed code; numbers within run-to-run noise of the recorded values)"
   },
   "int8_fallback_projection": {
     "best_case_real_bucket_us_per_window": "21500-22000",
