@@ -1313,7 +1313,13 @@ def _logical_score_triton(
     max_seq_len: int,
     *,
     scale_layer: Optional[torch.Tensor] = None,  # [T, H] per-(slot, head) int8 dequant scale, else None
-    token_block: int = 64,
+    # 256 quarters the launch grid vs 64: at the served op point ~97% of token
+    # blocks are early-exit (past seq_len), so the dead-grid floor dominates
+    # the kernel's cost; measured 89.7 -> 43.5 us/call at the Case-1 shapes.
+    # Per-position score math is independent of the block partition (each
+    # position's label-dim reduction is self-contained), so output is
+    # bit-identical across block sizes — pinned by a bitwise regression.
+    token_block: int = 256,
     scorer_norm: str = "off",
     head_agg: str = "max",
     hybrid_threshold: int = 8192,

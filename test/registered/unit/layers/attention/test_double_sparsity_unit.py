@@ -10665,6 +10665,60 @@ class TestScoreReduceGraphStateScratch(unittest.TestCase):
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
+class TestLogicalScoreTokenBlockBitIdentity(unittest.TestCase):
+    """The logical-score kernel's TOKEN_BLOCK only partitions the launch grid;
+    every position's fp32 score must be BIT-identical across block sizes
+    (the per-position label-dim reduction is self-contained). Pins the
+    64 -> 256 default change; a Triton codegen drift would fail here."""
+
+    def test_block_sizes_bitwise_equal(self):
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            _logical_score_triton,
+        )
+
+        device = torch.device("cuda")
+        torch.manual_seed(3)
+        T, H, Ld, hd = 8192, 8, 32, 192
+        sig = torch.randn(T, H, Ld, dtype=torch.float16, device=device)
+        written = torch.ones(T, dtype=torch.bool, device=device)
+        written[::7] = False  # unwritten slots interleaved
+        ch_sel = torch.randint(0, hd, (H, Ld), dtype=torch.int32, device=device)
+        ch_w = torch.rand(H, Ld, dtype=torch.float32, device=device)
+        for bs, width, seqs in (
+            (3, 8192, [600, 4608, 8192]),   # short / op-point / all-live
+            (2, 8192, [2048, 7000]),        # mid-context
+        ):
+            q = torch.randn(bs, H, hd, dtype=torch.bfloat16, device=device)
+            rpi = torch.arange(bs, dtype=torch.int32, device=device)
+            rtt = (
+                torch.arange(width, dtype=torch.int32, device=device) % T
+            ).unsqueeze(0).expand(bs, -1).contiguous()
+            seq_lens = torch.tensor(seqs[:bs], dtype=torch.int32, device=device)
+            outs = []
+            for tb in (64, 256):
+                out = torch.zeros(bs, width, dtype=torch.float32, device=device)
+                _logical_score_triton(
+                    q_proj_input=q,
+                    channel_selection_layer=ch_sel,
+                    channel_weights_layer=ch_w,
+                    sig_layer=sig,
+                    written_layer=written,
+                    req_pool_indices=rpi,
+                    req_to_token=rtt,
+                    seq_lens=seq_lens,
+                    out=out,
+                    max_seq_len=width,
+                    scale_layer=None,
+                    token_block=tb,
+                )
+                outs.append(out)
+            self.assertTrue(
+                torch.equal(outs[0], outs[1]),
+                f"token_block 64 vs 256 scores differ at bs={bs}",
+            )
+
+
+@unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
 class TestRadixTopkKernel(unittest.TestCase):
     """Sequence-aware deterministic radix top-k vs the reference selector —
     exact on adversarial fixtures, deterministic on ties, graph-safe."""
