@@ -1,4 +1,4 @@
-From aff068248ea8f2ec79ec62d97f80efcae1d1a8df Mon Sep 17 00:00:00 2001
+From e80fc7af050cc4579618860aaa6f80edfaf85911 Mon Sep 17 00:00:00 2001
 From: Jimmy Shong <jimmysh341@gmail.com>
 Date: Tue, 9 Jun 2026 22:25:42 +0000
 Subject: [PATCH 2/3] fa3: async fail-fast when seq_len overshoots context_len
@@ -85,7 +85,7 @@ index f4c0f8fc32..30614d9b02 100644
      def get_cuda_graph_seq_len_fill_value(self):
          """Get the fill value for sequence length in CUDA graph."""
 diff --git a/python/sglang/srt/utils/async_probe.py b/python/sglang/srt/utils/async_probe.py
-index e36bcd688e..aadf717888 100644
+index c3f1fbfdd6..0e38829e5a 100644
 --- a/python/sglang/srt/utils/async_probe.py
 +++ b/python/sglang/srt/utils/async_probe.py
 @@ -59,24 +59,16 @@ def maybe_assert_page_table_in_range(
@@ -123,7 +123,7 @@ index e36bcd688e..aadf717888 100644
      """
      if not envs.SGLANG_ENABLE_ASYNC_ASSERT.get():
          return
-@@ -104,6 +96,27 @@ def maybe_assert_page_table_in_range(
+@@ -107,6 +99,27 @@ def maybe_assert_page_table_in_range(
      )
  
  

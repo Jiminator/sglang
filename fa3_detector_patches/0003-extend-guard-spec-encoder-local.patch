@@ -1,4 +1,4 @@
-From 60bd2ce7ac8da452ed51c0055ad374b6a1cf6245 Mon Sep 17 00:00:00 2001
+From 1fc67259f2481524079e76d577949b69ebaeb573 Mon Sep 17 00:00:00 2001
 From: Jimmy Shong <jimmysh341@gmail.com>
 Date: Thu, 11 Jun 2026 00:05:26 +0000
 Subject: [PATCH 3/3] fa3: extend read-side guard to spec-decode-expand,
