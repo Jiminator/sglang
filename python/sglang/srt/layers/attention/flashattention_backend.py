@@ -680,6 +680,15 @@ class FlashAttentionBackend(AttentionBackend):
             metadata.encoder_page_table = self.req_to_token_pool.req_to_token[
                 forward_batch.req_pool_indices, : metadata.encoder_max_seq_len_k
             ]
+            # Read-side guard on the cross-attention encoder page table (bounded by
+            # encoder_lens, not cache_seqlens).
+            maybe_assert_page_table_in_range(
+                metadata.encoder_page_table,
+                metadata.encoder_lens_int32,
+                self.token_to_kv_pool.size + self.page_size,
+                page_size=self.page_size,
+                msg="fa3 encoder",
+            )
 
             # Self-attn (text) page_table: text starts at per-request offset
             # encoder_lens[i], NOT at a single max. Use a fancy-index gather.
@@ -773,6 +782,16 @@ class FlashAttentionBackend(AttentionBackend):
             self.max_context_len,
             msg="fa3 init_forward_metadata",
         )
+        # Spec-decode expand page table feeds a separate FA3 gather; guard it too.
+        spec_expand = getattr(self, "forward_metadata_spec_decode_expand", None)
+        if spec_expand is not None and spec_expand.page_table is not None:
+            maybe_assert_page_table_in_range(
+                spec_expand.page_table,
+                spec_expand.cache_seqlens_int32,
+                self.token_to_kv_pool.size + self.page_size,
+                page_size=self.page_size,
+                msg="fa3 spec_decode_expand",
+            )
 
     def forward_extend(
         self,
@@ -2028,6 +2047,13 @@ class FlashAttentionBackend(AttentionBackend):
             metadata.encoder_page_table = self.encoder_metadata["encoder_page_table"][
                 :bs, :
             ]
+            maybe_assert_page_table_in_range(
+                metadata.encoder_page_table,
+                metadata.encoder_lens_int32,
+                self.token_to_kv_pool.size + self.page_size,
+                page_size=self.page_size,
+                msg="fa3 cuda_graph encoder",
+            )
 
         return metadata, metadata_expand
 
@@ -2458,6 +2484,15 @@ class FlashAttentionBackend(AttentionBackend):
             self.max_context_len,
             msg="fa3 cuda_graph decode",
         )
+        spec_expand = getattr(self, "forward_metadata_spec_decode_expand", None)
+        if spec_expand is not None and spec_expand.page_table is not None:
+            maybe_assert_page_table_in_range(
+                spec_expand.page_table,
+                spec_expand.cache_seqlens_int32,
+                self.token_to_kv_pool.size + self.page_size,
+                page_size=self.page_size,
+                msg="fa3 cuda_graph spec_decode_expand",
+            )
 
     def get_cuda_graph_seq_len_fill_value(self):
         """Get the fill value for sequence length in CUDA graph."""
@@ -2509,6 +2544,14 @@ class FlashAttentionBackend(AttentionBackend):
             local_max_seq_len=int(seqlens_k_local_np.max()),
         )
         metadata.local_attn_metadata = local_metadata
+        # Read-side guard on the local-attention block table (bounded by local_seqused_k).
+        maybe_assert_page_table_in_range(
+            local_metadata.local_block_table,
+            local_metadata.local_seqused_k,
+            self.token_to_kv_pool.size + self.page_size,
+            page_size=self.page_size,
+            msg="fa3 local_attn",
+        )
 
     def _maybe_update_local_attn_metadata_for_capture(
         self, metadata: FlashAttentionMetadata, bs: int
@@ -2567,6 +2610,13 @@ class FlashAttentionBackend(AttentionBackend):
             local_block_table=local_block_table,
             local_max_query_len=1,
             local_max_seq_len=max_seq_len,
+        )
+        maybe_assert_page_table_in_range(
+            local_block_table,
+            local_seqused_k,
+            self.token_to_kv_pool.size + self.page_size,
+            page_size=self.page_size,
+            msg="fa3 cuda_graph local_attn",
         )
 
     def _maybe_update_local_attn_metadata_for_replay(
