@@ -10695,7 +10695,7 @@ class TestLogicalScoreTokenBlockBitIdentity(unittest.TestCase):
             ).unsqueeze(0).expand(bs, -1).contiguous()
             seq_lens = torch.tensor(seqs[:bs], dtype=torch.int32, device=device)
             outs = []
-            for tb in (64, 256):
+            for tb, workers in ((64, 1), (64, 128), (256, 1), (256, 7), (256, 128)):
                 out = torch.zeros(bs, width, dtype=torch.float32, device=device)
                 _logical_score_triton(
                     q_proj_input=q,
@@ -10710,12 +10710,14 @@ class TestLogicalScoreTokenBlockBitIdentity(unittest.TestCase):
                     max_seq_len=width,
                     scale_layer=None,
                     token_block=tb,
+                    workers=workers,
                 )
                 outs.append(out)
-            self.assertTrue(
-                torch.equal(outs[0], outs[1]),
-                f"token_block 64 vs 256 scores differ at bs={bs}",
-            )
+            for i, o in enumerate(outs[1:], start=1):
+                self.assertTrue(
+                    torch.equal(outs[0], o),
+                    f"(token_block, workers) variant {i} scores differ at bs={bs}",
+                )
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
@@ -10909,7 +10911,10 @@ class TestGraphSafePipelineAdversarial(unittest.TestCase):
         )
         return sel, req_to_token
 
-    def _run_graph_safe(self, sel, req_to_token, seq_len, sparse_mask=None):
+    def _run_graph_safe(
+        self, sel, req_to_token, seq_len, sparse_mask=None,
+        poison_dead=None, use_radix=True,
+    ):
         from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
             allocate_graph_state, radix_topk_scratch,
         )
@@ -10922,7 +10927,12 @@ class TestGraphSafePipelineAdversarial(unittest.TestCase):
         state = allocate_graph_state(
             max_bs=1, max_top_k=sel.max_top_k, max_seq_len=T, device=device,
         )
-        self._radix_bundle = radix_topk_scratch(state)
+        if poison_dead is not None:
+            # Plant garbage past seq_len in the score scratch: the radix path
+            # must never read it; the legacy path must overwrite it with -inf.
+            state.scratch_scores[:, seq_len:] = poison_dead
+        self._last_state = state
+        self._radix_bundle = radix_topk_scratch(state) if use_radix else None
         retrieve_topk_graph_safe(
             queries=torch.ones(1, 1, 1, dtype=torch.float32, device=device),
             token_signatures=sel.token_label_table.signatures,
@@ -11012,6 +11022,50 @@ class TestGraphSafePipelineAdversarial(unittest.TestCase):
         g_idx, g_len = self._run_graph_safe(sel, req_to_token, 4, sparse_mask=mask)
         self.assertEqual(int(g_len[0]), 0)
         self.assertTrue(bool((g_idx == -1).all()))
+
+    def test_radix_path_never_reads_poisoned_dead_region(self):
+        """With the radix selector, FULLY-dead token blocks (entirely past
+        seq_len) are neither stored (-inf skipped) nor read: planting large
+        finite garbage there must not change the selection. The boundary block
+        still masks its own invalid tail to -inf in-block."""
+        device = torch.device("cuda")
+        # Wide table so fully-dead blocks exist (TOKEN_BLOCK=256 -> blocks
+        # [256:) are entirely past seq_len=4; block 0 is the boundary block).
+        sigs = [4.0, 9.0, 2.0, 7.0] + [float(i % 5) for i in range(2044)]
+        sel, req_to_token = self._bound_selector(device, sigs, 3)
+        g_idx, g_len = self._run_graph_safe(
+            sel, req_to_token, 4, poison_dead=1e9, use_radix=True,
+        )
+        e_idx, e_len = self._run_eager(sel, req_to_token, 4)
+        self.assertTrue(torch.equal(g_idx[:, :3], e_idx[:, :3]))
+        self.assertTrue(torch.equal(g_len, e_len))
+        # Fully-dead blocks keep the poison: the no-dead-store path ran...
+        self.assertTrue(
+            bool((self._last_state.scratch_scores[:, 256:] == 1e9).all()),
+            "fully-dead blocks must keep the planted garbage (no dead store)",
+        )
+        # ...while the boundary block still -inf-masks its invalid tail.
+        self.assertTrue(
+            bool(torch.isneginf(self._last_state.scratch_scores[:, 4:256]).all())
+        )
+
+    def test_legacy_path_still_writes_dead_neg_inf(self):
+        """Without the radix bundle, the full-width torch.topk pipeline scans
+        the whole scratch — the kernel must keep overwriting dead positions
+        with -inf (regression for the legacy fallback)."""
+        device = torch.device("cuda")
+        sigs = [4.0, 9.0, 2.0, 7.0] + [float(i % 5) for i in range(2044)]
+        sel, req_to_token = self._bound_selector(device, sigs, 3)
+        g_idx, g_len = self._run_graph_safe(
+            sel, req_to_token, 4, poison_dead=1e9, use_radix=False,
+        )
+        e_idx, e_len = self._run_eager(sel, req_to_token, 4)
+        self.assertTrue(torch.equal(g_idx[:, :3], e_idx[:, :3]))
+        self.assertTrue(torch.equal(g_len, e_len))
+        self.assertTrue(
+            bool(torch.isneginf(self._last_state.scratch_scores[:, 4:]).all()),
+            "legacy path must overwrite ALL dead positions with -inf",
+        )
 
     def test_replay_tracks_copy_mutated_static_inputs(self):
         """CUDA graphs capture tensor ADDRESSES, not call arguments: mutating

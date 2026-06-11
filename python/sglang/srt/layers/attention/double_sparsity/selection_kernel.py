@@ -87,45 +87,38 @@ if _TRITON_AVAILABLE:
         SCORER_NORM: tl.constexpr,       # 0=off(raw), 1=cosine, 2=hybrid
         HEAD_AGG_MEAN: tl.constexpr,     # bool: True=mean over heads, False=max
         HYBRID_THRESHOLD: tl.constexpr,  # int: hybrid uses cosine when seq_len > this
+        STORE_DEAD_NEG_INF: tl.constexpr,  # bool: write -inf over blocks past seq_len
+        WORKERS: tl.constexpr,           # programs per row; each loops over blocks
     ):
+        # Persistent-worker layout: the grid is (bs, WORKERS) — a fixed small
+        # program count — and each worker strides over the token blocks it
+        # owns. The loop bound is the LIVE block count (device-computed from
+        # this row's seq_len), so work is proportional to the live window
+        # instead of the static score width: the previous one-program-per-
+        # block grid paid a ~40 µs launch floor for ~23k mostly-dead programs
+        # at the served op point. The grid stays static (CUDA-graph safe);
+        # only the per-program loop trip count is data-dependent, which is
+        # legal device-side control flow. Each position is computed by exactly
+        # one worker with unchanged per-position math, so the output is
+        # bit-identical to the per-block grid.
+        #
+        # The full-width torch.topk consumer scans the whole scratch, so its
+        # path keeps storing -inf over dead blocks (STORE_DEAD_NEG_INF=True
+        # extends the loop to all blocks). The sequence-bounded radix selector
+        # never reads past seq_len and skips them.
         batch_id = tl.program_id(0)
-        tok_blk = tl.program_id(1)
-        tok_offs = tok_blk * TOKEN_BLOCK + tl.arange(0, TOKEN_BLOCK)
-        in_range = tok_offs < max_seq_len
+        worker = tl.program_id(1)
 
         seq_len_i = tl.load(sl_ptr + batch_id).to(tl.int32)
-        # Skip token-blocks entirely past this request's sequence length: every
-        # position would be masked to -inf anyway, so store -inf and return
-        # instead of running the per-head signature loads + dot products for the
-        # unused tail. The score scratch / topk operate over the full KV-index
-        # width (req_to_token width == model context length), so without this a
-        # short request scores the entire context every layer every decode step.
-        # Output is bit-identical to the masked full scan; the launch grid is
-        # unchanged so it stays CUDA-graph capture/replay safe (no host sync,
-        # no dynamic shape).
-        if tok_blk * TOKEN_BLOCK >= seq_len_i:
-            tl.store(
-                out_ptr + batch_id * out_stride_b + tok_offs,
-                tl.full((TOKEN_BLOCK,), float("-inf"), dtype=tl.float32),
-                mask=in_range,
-            )
-            return
-        pos_valid = in_range & (tok_offs < seq_len_i)
+        n_live = tl.minimum(seq_len_i, max_seq_len)
+        live_blocks = (n_live + TOKEN_BLOCK - 1) // TOKEN_BLOCK
+        if STORE_DEAD_NEG_INF:
+            nblk = (max_seq_len + TOKEN_BLOCK - 1) // TOKEN_BLOCK
+        else:
+            nblk = live_blocks
 
+        # Row-invariant loads, hoisted out of the block loop.
         pool_idx = tl.load(rpi_ptr + batch_id).to(tl.int64)
-        safe_tok = tl.minimum(tok_offs, max_pool_len - 1)
-        phys = tl.load(
-            rtt_ptr + pool_idx * rtt_stride_p + safe_tok,
-            mask=in_range,
-            other=0,
-        ).to(tl.int64)
-        safe_phys = tl.minimum(tl.maximum(phys, 0), max_tokens - 1)
-
-        written = tl.load(
-            written_ptr + safe_phys, mask=in_range, other=0
-        ).to(tl.int1)
-        valid = pos_valid & written
-
         d_offs = tl.arange(0, LABEL_DIM_POW2)
         d_mask = d_offs < label_dim
         eps = 1e-6
@@ -134,91 +127,122 @@ if _TRITON_AVAILABLE:
         # _compute_logical_token_scores length-conditional switch). Scalar.
         hybrid_cos = seq_len_i > HYBRID_THRESHOLD
 
-        # Cross-head accumulator: 0 for mean (sum then divide), -inf for max.
-        if HEAD_AGG_MEAN:
-            acc = tl.zeros((TOKEN_BLOCK,), dtype=tl.float32)
-        else:
-            acc = tl.full((TOKEN_BLOCK,), float("-inf"), dtype=tl.float32)
+        for tok_blk in range(worker, nblk, WORKERS):
+            tok_offs = tok_blk * TOKEN_BLOCK + tl.arange(0, TOKEN_BLOCK)
+            in_range = tok_offs < max_seq_len
+            if tok_blk * TOKEN_BLOCK >= seq_len_i:
+                # Dead block — only visited when STORE_DEAD_NEG_INF extends
+                # the loop past the live count.
+                tl.store(
+                    out_ptr + batch_id * out_stride_b + tok_offs,
+                    tl.full((TOKEN_BLOCK,), float("-inf"), dtype=tl.float32),
+                    mask=in_range,
+                )
+            else:
+                pos_valid = in_range & (tok_offs < seq_len_i)
 
-        for h in range(num_heads):
-            sel_h = tl.load(
-                ch_sel_ptr + h * ch_sel_stride_h + d_offs,
-                mask=d_mask,
-                other=0,
-            ).to(tl.int64)
-            w_h = tl.load(
-                ch_w_ptr + h * ch_w_stride_h + d_offs,
-                mask=d_mask,
-                other=0.0,
-            ).to(tl.float32)
-            q_base = q_ptr + batch_id * q_stride_b + h * q_stride_h
-            q_h = tl.load(q_base + sel_h, mask=d_mask, other=0.0).to(tl.float32)
-            q_proj_h = q_h * w_h
+                safe_tok = tl.minimum(tok_offs, max_pool_len - 1)
+                phys = tl.load(
+                    rtt_ptr + pool_idx * rtt_stride_p + safe_tok,
+                    mask=in_range,
+                    other=0,
+                ).to(tl.int64)
+                safe_phys = tl.minimum(tl.maximum(phys, 0), max_tokens - 1)
 
-            sig_offs = (
-                safe_phys[:, None] * sig_stride_t
-                + h * sig_stride_h
-                + d_offs[None, :]
-            )
-            sig_block = tl.load(
-                sig_ptr + sig_offs,
-                mask=in_range[:, None] & d_mask[None, :],
-                other=0.0,
-            ).to(tl.float32)
-            dot = tl.sum(q_proj_h[None, :] * sig_block, axis=1)
+                written = tl.load(
+                    written_ptr + safe_phys, mask=in_range, other=0
+                ).to(tl.int1)
+                valid = pos_valid & written
 
-            if SCORER_NORM == 0:
-                # Raw channel-dot (production), dequant-scaled for the int8 path
-                # (scale >= 0 preserves ordering).
-                if HAS_SCALE:
-                    scale_h = tl.load(
-                        scale_ptr + safe_phys * scale_stride_t + h * scale_stride_h,
-                        mask=in_range,
+                # Cross-head accumulator: 0 for mean (sum then divide), -inf for max.
+                if HEAD_AGG_MEAN:
+                    acc = tl.zeros((TOKEN_BLOCK,), dtype=tl.float32)
+                else:
+                    acc = tl.full((TOKEN_BLOCK,), float("-inf"), dtype=tl.float32)
+
+                for h in range(num_heads):
+                    sel_h = tl.load(
+                        ch_sel_ptr + h * ch_sel_stride_h + d_offs,
+                        mask=d_mask,
+                        other=0,
+                    ).to(tl.int64)
+                    w_h = tl.load(
+                        ch_w_ptr + h * ch_w_stride_h + d_offs,
+                        mask=d_mask,
                         other=0.0,
                     ).to(tl.float32)
-                    score_h = dot * scale_h
-                else:
-                    score_h = dot
-            else:
-                # Cosine (direction-only): unit-normalize the weighted query and
-                # the token signature per head. Equal to the eager
-                # ((qf/||qf||)*(sf/||sf||)).sum form (normalize-then-sum); scale
-                # is intentionally ignored (it cancels under normalization).
-                q_norm = tl.sqrt(tl.sum(q_proj_h * q_proj_h)) + eps
-                sig_norm = tl.sqrt(tl.sum(sig_block * sig_block, axis=1)) + eps
-                cos = tl.sum(
-                    (q_proj_h[None, :] / q_norm) * (sig_block / sig_norm[:, None]),
-                    axis=1,
-                )
-                if SCORER_NORM == 1:
-                    score_h = cos
-                else:
-                    # Hybrid: cosine above the threshold, raw (scaled) below.
-                    if HAS_SCALE:
-                        scale_h = tl.load(
-                            scale_ptr + safe_phys * scale_stride_t + h * scale_stride_h,
-                            mask=in_range,
-                            other=0.0,
-                        ).to(tl.float32)
-                        raw_h = dot * scale_h
+                    q_base = q_ptr + batch_id * q_stride_b + h * q_stride_h
+                    q_h = tl.load(q_base + sel_h, mask=d_mask, other=0.0).to(tl.float32)
+                    q_proj_h = q_h * w_h
+
+                    sig_offs = (
+                        safe_phys[:, None] * sig_stride_t
+                        + h * sig_stride_h
+                        + d_offs[None, :]
+                    )
+                    sig_block = tl.load(
+                        sig_ptr + sig_offs,
+                        mask=in_range[:, None] & d_mask[None, :],
+                        other=0.0,
+                    ).to(tl.float32)
+                    dot = tl.sum(q_proj_h[None, :] * sig_block, axis=1)
+
+                    if SCORER_NORM == 0:
+                        # Raw channel-dot (production), dequant-scaled for the int8 path
+                        # (scale >= 0 preserves ordering).
+                        if HAS_SCALE:
+                            scale_h = tl.load(
+                                scale_ptr + safe_phys * scale_stride_t + h * scale_stride_h,
+                                mask=in_range,
+                                other=0.0,
+                            ).to(tl.float32)
+                            score_h = dot * scale_h
+                        else:
+                            score_h = dot
                     else:
-                        raw_h = dot
-                    score_h = tl.where(hybrid_cos, cos, raw_h)
+                        # Cosine (direction-only): unit-normalize the weighted query and
+                        # the token signature per head. Equal to the eager
+                        # ((qf/||qf||)*(sf/||sf||)).sum form (normalize-then-sum); scale
+                        # is intentionally ignored (it cancels under normalization).
+                        q_norm = tl.sqrt(tl.sum(q_proj_h * q_proj_h)) + eps
+                        sig_norm = tl.sqrt(tl.sum(sig_block * sig_block, axis=1)) + eps
+                        cos = tl.sum(
+                            (q_proj_h[None, :] / q_norm) * (sig_block / sig_norm[:, None]),
+                            axis=1,
+                        )
+                        if SCORER_NORM == 1:
+                            score_h = cos
+                        else:
+                            # Hybrid: cosine above the threshold, raw (scaled) below.
+                            if HAS_SCALE:
+                                scale_h = tl.load(
+                                    scale_ptr + safe_phys * scale_stride_t + h * scale_stride_h,
+                                    mask=in_range,
+                                    other=0.0,
+                                ).to(tl.float32)
+                                raw_h = dot * scale_h
+                            else:
+                                raw_h = dot
+                            score_h = tl.where(hybrid_cos, cos, raw_h)
 
-            if HEAD_AGG_MEAN:
-                acc += score_h
-            else:
-                acc = tl.where(score_h > acc, score_h, acc)
+                    if HEAD_AGG_MEAN:
+                        acc += score_h
+                    else:
+                        acc = tl.where(score_h > acc, score_h, acc)
 
-        if HEAD_AGG_MEAN:
-            acc = acc / num_heads
+                if HEAD_AGG_MEAN:
+                    acc = acc / num_heads
 
-        out_score = tl.where(
-            valid,
-            acc,
-            tl.full(acc.shape, float("-inf"), dtype=tl.float32),
-        )
-        tl.store(out_ptr + batch_id * out_stride_b + tok_offs, out_score, mask=in_range)
+                out_score = tl.where(
+                    valid,
+                    acc,
+                    tl.full(acc.shape, float("-inf"), dtype=tl.float32),
+                )
+                tl.store(
+                    out_ptr + batch_id * out_stride_b + tok_offs,
+                    out_score,
+                    mask=in_range,
+                )
 
 
     @triton.jit
@@ -1320,6 +1344,12 @@ def _logical_score_triton(
     # position's label-dim reduction is self-contained), so output is
     # bit-identical across block sizes — pinned by a bitwise regression.
     token_block: int = 256,
+    store_dead_neg_inf: bool = True,
+    # Persistent-worker count per row: caps the launch grid at (bs, workers)
+    # while each worker loops over its share of LIVE blocks. 128 covers the
+    # served live window (≤18 live blocks at tb=256) with full parallelism and
+    # keeps long-context loop depth shallow (792 blocks / 128 ≈ 7).
+    workers: int = 128,
     scorer_norm: str = "off",
     head_agg: str = "max",
     hybrid_threshold: int = 8192,
@@ -1342,7 +1372,8 @@ def _logical_score_triton(
     token_block_pow2 = _next_pow2(desired_block)
     label_dim_pow2 = _next_pow2(max(label_dim, 1))
     num_token_blocks = (max_seq_len + token_block_pow2 - 1) // token_block_pow2
-    grid = (bs, num_token_blocks)
+    num_workers = max(1, min(int(workers), num_token_blocks))
+    grid = (bs, num_workers)
 
     scorer_norm_code = {"off": 0, "cosine": 1, "hybrid": 2}.get(scorer_norm or "off", 0)
     head_agg_mean = head_agg == "mean"
@@ -1379,6 +1410,8 @@ def _logical_score_triton(
         SCORER_NORM=scorer_norm_code,
         HEAD_AGG_MEAN=head_agg_mean,
         HYBRID_THRESHOLD=int(hybrid_threshold),
+        STORE_DEAD_NEG_INF=store_dead_neg_inf,
+        WORKERS=num_workers,
     )
 
 
@@ -1516,6 +1549,13 @@ def retrieve_topk_graph_safe(
     # kernel-name matching. Host-side annotations: they mark eager decode and
     # the capture-time launches; CUDA-graph replay does not re-emit them.
     scores_view = scratch_scores[:bs, :max_seq_len]
+    # Dead positions (past seq_len) only need -inf when a full-width consumer
+    # reads them: the legacy torch.topk pipeline scans the whole scratch, the
+    # recall oracle ranks the full score row, and the anchor force-include is
+    # defensive-listed. The sequence-bounded radix selector reads none of them.
+    _store_dead = (
+        radix_topk_scratch is None or recall_oracle or anchor_mode != "off"
+    )
     torch.cuda.nvtx.range_push("ds_logical_score")
     _logical_score_triton(
         q_proj_input=queries,
@@ -1532,6 +1572,7 @@ def retrieve_topk_graph_safe(
         scorer_norm=scorer_norm,
         head_agg=head_agg,
         hybrid_threshold=hybrid_threshold,
+        store_dead_neg_inf=_store_dead,
     )
     torch.cuda.nvtx.range_pop()
 
