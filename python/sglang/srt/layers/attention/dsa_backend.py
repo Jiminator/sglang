@@ -493,6 +493,15 @@ class DeepseekSparseAttnBackend(
         # bf16 transport for the cross-TP score reduce (score_reduce_dtype);
         # sizes the bf16 scratch in ds_graph_state.
         self.ds_score_reduce_bf16: bool = False
+        # Compact DS selector widths to capture as extra graph variants
+        # (config-borne; empty = full width only). The CUDA-graph runner reads
+        # this to build its selector-width ladder.
+        self.ds_selector_width_buckets: list = []
+        # Per-variant decode-metadata key channel: the CUDA-graph runner stamps
+        # this around capture/replay metadata init when DS selector-width
+        # keying is active (mirrors the _replay_forward_batch channel). None
+        # means plain int-bs keying (DS off, or width keying inactive).
+        self._ds_graph_variant_key = None
         if self.enable_double_sparsity:
             try:
                 from sglang.srt.layers.attention.double_sparsity.config import (
@@ -510,6 +519,9 @@ class DeepseekSparseAttnBackend(
                 )
                 self.ds_score_reduce_bf16 = (
                     getattr(ds_cfg, "score_reduce_dtype", "bf16") == "bf16"
+                )
+                self.ds_selector_width_buckets = list(
+                    getattr(ds_cfg, "selector_width_buckets", []) or []
                 )
                 # ds_max_top_k sizes ds_topk_indices_out + ds_graph_state, so the
                 # selection/output buffers are lifted-width on the opt-in path.
@@ -1060,6 +1072,13 @@ class DeepseekSparseAttnBackend(
             ),
         }
 
+    def _ds_decode_metadata_key(self, bs: int):
+        """Per-variant decode metadata key: the runner's graph-variant key when
+        stamped (DS-on decode selector-width keying), else the plain batch
+        size. Keeps DS-off and speculative paths on today's int keys."""
+        variant_key = getattr(self, "_ds_graph_variant_key", None)
+        return bs if variant_key is None else variant_key
+
     def init_forward_metadata_capture_cuda_graph(
         self,
         bs: int,
@@ -1234,7 +1253,7 @@ class DeepseekSparseAttnBackend(
             ds_topk_indices_out=ds_topk_indices_out,
             ds_graph_state=ds_graph_state,
         )
-        self.decode_cuda_graph_metadata[bs] = metadata
+        self.decode_cuda_graph_metadata[self._ds_decode_metadata_key(bs)] = metadata
         self.forward_metadata = metadata
 
     def init_forward_metadata_replay_cuda_graph(
@@ -1260,11 +1279,12 @@ class DeepseekSparseAttnBackend(
         req_pool_indices = req_pool_indices[:bs]
 
         # Normal Decode
-        metadata: DSAMetadata = self.decode_cuda_graph_metadata[bs]
+        metadata_key = self._ds_decode_metadata_key(bs)
+        metadata: DSAMetadata = self.decode_cuda_graph_metadata[metadata_key]
         if metadata.ds_graph_state is not None:
             # Stamp the replay identity the selection-capture dump reads
             # post-forward (host-only; see DSGraphState.last_replay_graph_key).
-            metadata.ds_graph_state.last_replay_graph_key = bs
+            metadata.ds_graph_state.last_replay_graph_key = metadata_key
             metadata.ds_graph_state.replay_prep_count += 1
         if forward_mode.is_decode_or_idle():
             # Normal Decode
@@ -1429,11 +1449,12 @@ class DeepseekSparseAttnBackend(
         """
         self.set_dsa_prefill_impl(forward_batch=None)
 
-        metadata = self.decode_cuda_graph_metadata[bs]
+        metadata_key = self._ds_decode_metadata_key(bs)
+        metadata = self.decode_cuda_graph_metadata[metadata_key]
         if metadata.ds_graph_state is not None:
             # Stamp the replay identity the selection-capture dump reads
             # post-forward (host-only; see DSGraphState.last_replay_graph_key).
-            metadata.ds_graph_state.last_replay_graph_key = bs
+            metadata.ds_graph_state.last_replay_graph_key = metadata_key
             metadata.ds_graph_state.replay_prep_count += 1
 
         # Track whether fused kernel succeeded

@@ -512,6 +512,24 @@ def get_batch_sizes_to_capture(model_runner: ModelRunner, num_tokens_per_bs=1):
     return capture_bs, compile_bs
 
 
+def use_ds_selector_width_keys(
+    capture_forward_mode, enable_pdmux, is_encoder_decoder, attn_backend
+) -> bool:
+    """Whether this runner keys its graphs by (batch size, DS selector width).
+
+    Applies ONLY to Double Sparsity normal decode: speculative
+    (TARGET_VERIFY), dllm (DLLM_EXTEND), encoder-decoder, and PDMux runners
+    keep today's plain int / "{stream}_{bs}" keys, and the width-key logic is
+    structurally unreachable for them.
+    """
+    return (
+        capture_forward_mode == ForwardMode.DECODE
+        and not enable_pdmux
+        and not is_encoder_decoder
+        and bool(getattr(attn_backend, "enable_double_sparsity", False))
+    )
+
+
 # Reuse this memory pool across all cuda graph runners.
 global_graph_memory_pool = None
 
@@ -631,6 +649,30 @@ class CudaGraphRunner:
         self.max_num_token = self.max_bs * self.num_tokens_per_bs
         self.attn_backend.init_cuda_graph_state(self.max_bs, self.max_num_token)
 
+        # DS selector-width graph-key variants (DS-on normal decode only).
+        # The width ladder is config-borne (DS config selector_width_buckets)
+        # plus the always-present full req_to_token width; with no compact
+        # buckets configured the ladder is [full] and the only variant per
+        # batch size is the full-width one.
+        self.use_ds_selector_width_keys = use_ds_selector_width_keys(
+            self.capture_forward_mode,
+            self.enable_pdmux,
+            self.is_encoder_decoder,
+            self.attn_backend,
+        )
+        self.ds_selector_widths = None
+        if self.use_ds_selector_width_keys:
+            full_width = int(self.attn_backend.req_to_token.shape[1])
+            buckets = getattr(self.attn_backend, "ds_selector_width_buckets", None)
+            self.ds_selector_widths = sorted(
+                {int(w) for w in (buckets or []) if 0 < int(w) < full_width}
+                | {full_width}
+            )
+            log_info_on_rank0(
+                logger,
+                f"DS selector-width graph variants: {self.ds_selector_widths}",
+            )
+
         # Init PDMux if needed
         self.maybe_init_pdmux()
         self.seq_len_fill_value = (
@@ -728,6 +770,11 @@ class CudaGraphRunner:
         graph_key = cuda_graph_bs
         if self.enable_pdmux:
             graph_key = f"{get_current_stream_idx()}_{cuda_graph_bs}"
+        elif self.use_ds_selector_width_keys:
+            # The full selector width is captured for every batch bucket, so
+            # existence of the full-width variant == existence of the bucket;
+            # overflow beyond compact widths can never force eager fallback.
+            graph_key = (cuda_graph_bs, self.ds_selector_widths[-1])
 
         is_bs_supported = (
             graph_key in self.graphs
@@ -839,14 +886,27 @@ class CudaGraphRunner:
                     num_tokens=bs * self.num_tokens_per_bs,
                     tp_group=self.model_runner.tp_group,
                 ) as forward:
-                    (
-                        graph,
-                        output_buffers,
-                    ) = self.capture_one_batch_size(bs, forward, stream_idx)
-                    # For pd_multiplexing, we need to save the graph and output buffers
-                    key = bs if stream_idx is None else f"{stream_idx}_{bs}"
-                    self.graphs[key] = graph
-                    self.output_buffers[key] = output_buffers
+                    if self.use_ds_selector_width_keys:
+                        # One whole-model capture per selector width, widest
+                        # first (matching the largest-first pool-reuse rule).
+                        for width in reversed(self.ds_selector_widths):
+                            (
+                                graph,
+                                output_buffers,
+                            ) = self.capture_one_batch_size(
+                                bs, forward, stream_idx, ds_selector_width=width
+                            )
+                            self.graphs[(bs, width)] = graph
+                            self.output_buffers[(bs, width)] = output_buffers
+                    else:
+                        (
+                            graph,
+                            output_buffers,
+                        ) = self.capture_one_batch_size(bs, forward, stream_idx)
+                        # For pd_multiplexing, we need to save the graph and output buffers
+                        key = bs if stream_idx is None else f"{stream_idx}_{bs}"
+                        self.graphs[key] = graph
+                        self.output_buffers[key] = output_buffers
 
         # Trigger CUDA graph capture for specific shapes.
         # Capture the large shapes first so that the smaller shapes
@@ -910,7 +970,11 @@ class CudaGraphRunner:
         return torch.cuda.CUDAGraph()
 
     def capture_one_batch_size(
-        self, bs: int, forward: Callable, stream_idx: Optional[int] = None
+        self,
+        bs: int,
+        forward: Callable,
+        stream_idx: Optional[int] = None,
+        ds_selector_width: Optional[int] = None,
     ):
         buffers: DecodeInputBuffers = self.buffers
         graph = self._create_device_graph()
@@ -1065,6 +1129,11 @@ class CudaGraphRunner:
             if lora_ids is not None:
                 self.model_runner.lora_manager.prepare_lora_batch(forward_batch)
 
+            if ds_selector_width is not None:
+                # Implicit channel (mirrors _replay_forward_batch in
+                # replay_prepare): the DSA backend keys this variant's decode
+                # metadata by it.
+                attn_backend._ds_graph_variant_key = (bs, ds_selector_width)
             attn_backend.init_forward_metadata_capture_cuda_graph(
                 bs,
                 num_tokens,
@@ -1074,6 +1143,8 @@ class CudaGraphRunner:
                 forward_batch.forward_mode,
                 forward_batch.spec_info,
             )
+            if ds_selector_width is not None:
+                attn_backend._ds_graph_variant_key = None
 
             def run_once():
                 # Without this, warmup-1 caches the translation; the capture
@@ -1166,6 +1237,26 @@ class CudaGraphRunner:
             self.capture_hidden_mode = required_capture_hidden_mode
             self.capture()
 
+    def _ds_selector_width_for_replay(
+        self, forward_batch: ForwardBatch, raw_bs: int
+    ) -> int:
+        """Smallest captured DS selector width covering every LIVE row.
+
+        Uses only the real rows of the host-visible seq_lens
+        (`forward_batch.seq_lens_cpu[:raw_bs]`) — never padded buffer rows,
+        whose fill values are not requests and would force a false
+        full-width route. The full req_to_token width is always the ladder's
+        last entry, so overflow beyond every compact width routes there.
+        """
+        widths = self.ds_selector_widths
+        if len(widths) == 1:
+            return widths[0]
+        max_real_seq_len = int(forward_batch.seq_lens_cpu[:raw_bs].max().item())
+        for width in widths:
+            if width >= max_real_seq_len:
+                return width
+        return widths[-1]
+
     def replay_prepare(
         self,
         forward_batch: ForwardBatch,
@@ -1191,6 +1282,16 @@ class CudaGraphRunner:
         else:
             index = bisect.bisect_left(self.capture_bs, raw_bs)
         bs = self.capture_bs[index]
+
+        if self.use_ds_selector_width_keys:
+            graph_key = (
+                bs,
+                self._ds_selector_width_for_replay(forward_batch, raw_bs),
+            )
+        else:
+            # PDMux reconstructs its "{stream}_{bs}" key at replay time (the
+            # stream index can change between prepare and replay).
+            graph_key = bs
 
         buffers.populate_from_forward_batch(
             forward_batch=forward_batch,
@@ -1232,6 +1333,8 @@ class CudaGraphRunner:
         # FIXME: implicit channel for backends (dsv4) that need forward_batch
         # in replay metadata prep. Should become a real param on the interface.
         attn_backend._replay_forward_batch = forward_batch
+        if self.use_ds_selector_width_keys:
+            attn_backend._ds_graph_variant_key = graph_key
         attn_backend.init_forward_metadata_replay_cuda_graph(
             bs,
             buffers.req_pool_indices[:bs],
@@ -1242,12 +1345,15 @@ class CudaGraphRunner:
             forward_batch.spec_info,
             seq_lens_cpu=buffers.seq_lens_cpu[:bs],
         )
+        if self.use_ds_selector_width_keys:
+            attn_backend._ds_graph_variant_key = None
         attn_backend._replay_forward_batch = None
 
         # Store fields
         self.raw_bs = raw_bs
         self.raw_num_token = raw_num_token
         self.bs = bs
+        self.graph_key = graph_key
 
         if self.model_runner.hisparse_coordinator is not None:
             self.model_runner.hisparse_coordinator.num_real_reqs.fill_(raw_bs)
@@ -1279,7 +1385,9 @@ class CudaGraphRunner:
         if self.enable_pdmux:
             graph_key = f"{get_current_stream_idx()}_{self.bs}"
         else:
-            graph_key = self.bs
+            # Set by replay_prepare: (bs, selector_width) for DS-on decode
+            # width keying, plain int bs otherwise.
+            graph_key = self.graph_key
         ctx = (
             self.model_runner.device_timer.wrap(
                 metadata={

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 
 _ALLOWED_FIELDS = {
@@ -40,6 +40,7 @@ _ALLOWED_FIELDS = {
     "anchor_budget",
     "recall_oracle",
     "selection_capture",
+    "selector_width_buckets",
     "score_reduce_dtype",
     "enable_lifted_budget_decode",
     "lifted_budget_top_k",
@@ -68,6 +69,11 @@ _ALLOWED_FIELDS = {
 #   current), and the model runner appends one per-rank dump file per decode
 #   step under cwd/.sglang_ds_selcap. Diagnostic only; off by default
 #   (byte-identical selection, zero hot-path cost when off).
+# selector_width_buckets: compact DS selector score widths (prefix windows) to
+#   capture as additional CUDA-graph variants alongside the always-present
+#   full req_to_token width. Empty (default) captures full width only —
+#   byte-identical selection. Each width must be a positive int; widths at or
+#   above the full req_to_token width are dropped at the runner.
 # score_reduce_dtype: transport dtype for the cross-TP score SUM-reduce.
 #   "bf16" (default): scores are cast fp32->bf16 into preallocated scratch,
 #   reduced (custom-all-reduce v2 when the byte size passes its eligibility
@@ -116,6 +122,7 @@ class DoubleSparsityConfig:
     anchor_budget: int = _DEFAULT_ANCHOR_BUDGET
     recall_oracle: bool = False
     selection_capture: bool = False
+    selector_width_buckets: List[int] = field(default_factory=list)
     score_reduce_dtype: str = "bf16"
     enable_lifted_budget_decode: bool = False
     lifted_budget_top_k: int = _DEFAULT_LIFTED_BUDGET_TOP_K
@@ -156,6 +163,14 @@ class DoubleSparsityConfig:
             raise ValueError(
                 f"Double Sparsity 'selection_capture' must be a boolean, "
                 f"got {self.selection_capture!r}."
+            )
+        if not isinstance(self.selector_width_buckets, list) or any(
+            not isinstance(w, int) or isinstance(w, bool) or w <= 0
+            for w in self.selector_width_buckets
+        ):
+            raise ValueError(
+                f"Double Sparsity 'selector_width_buckets' must be a list of "
+                f"positive integers, got {self.selector_width_buckets!r}."
             )
         if self.score_reduce_dtype not in ("fp32", "bf16"):
             raise ValueError(
@@ -244,6 +259,15 @@ def _coerce_bool(value: Any, field: str = "flag") -> bool:
     )
 
 
+def _coerce_width_buckets(value: Any) -> List[int]:
+    if not isinstance(value, list):
+        raise ValueError(
+            f"Double Sparsity 'selector_width_buckets' must be a JSON array of "
+            f"positive integers, got {value!r}."
+        )
+    return [int(w) for w in value]
+
+
 def parse_double_sparsity_config(payload: str) -> DoubleSparsityConfig:
     """Parse a JSON string into a :class:`DoubleSparsityConfig`.
 
@@ -301,6 +325,9 @@ def parse_double_sparsity_config(payload: str) -> DoubleSparsityConfig:
         recall_oracle=_coerce_bool(data.get("recall_oracle", False), "recall_oracle"),
         selection_capture=_coerce_bool(
             data.get("selection_capture", False), "selection_capture"
+        ),
+        selector_width_buckets=_coerce_width_buckets(
+            data.get("selector_width_buckets", [])
         ),
         score_reduce_dtype=str(data.get("score_reduce_dtype", "bf16")),
         enable_lifted_budget_decode=_coerce_bool(

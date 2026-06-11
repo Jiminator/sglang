@@ -11338,5 +11338,156 @@ class TestGraphSafePipelineAdversarial(unittest.TestCase):
         self.assertTrue(torch.equal(len_r[:1], e_len))
 
 
+class TestDsSelectorWidthGraphKeys(unittest.TestCase):
+    """DS-on-decode-only graph-variant keying: the runner gate, the width
+    ladder dispatch, and the DSA backend's per-variant metadata key
+    resolution. DS-off / PDMux / speculative / encoder paths must keep
+    today's plain keys, and the width logic must be structurally
+    unreachable for them."""
+
+    def _gate(self, **overrides):
+        from sglang.srt.model_executor.cuda_graph_runner import (
+            use_ds_selector_width_keys,
+        )
+        from sglang.srt.model_executor.forward_batch_info import ForwardMode
+
+        kwargs = dict(
+            capture_forward_mode=ForwardMode.DECODE,
+            enable_pdmux=False,
+            is_encoder_decoder=False,
+            attn_backend=SimpleNamespace(enable_double_sparsity=True),
+        )
+        kwargs.update(overrides)
+        return use_ds_selector_width_keys(**kwargs)
+
+    def test_gate_on_for_ds_decode(self):
+        self.assertTrue(self._gate())
+
+    def test_gate_off_when_ds_disabled(self):
+        self.assertFalse(
+            self._gate(attn_backend=SimpleNamespace(enable_double_sparsity=False))
+        )
+
+    def test_gate_off_for_backend_without_ds_attribute(self):
+        self.assertFalse(self._gate(attn_backend=SimpleNamespace()))
+
+    def test_gate_off_for_target_verify(self):
+        from sglang.srt.model_executor.forward_batch_info import ForwardMode
+
+        self.assertFalse(self._gate(capture_forward_mode=ForwardMode.TARGET_VERIFY))
+
+    def test_gate_off_for_dllm_extend(self):
+        from sglang.srt.model_executor.forward_batch_info import ForwardMode
+
+        self.assertFalse(self._gate(capture_forward_mode=ForwardMode.DLLM_EXTEND))
+
+    def test_gate_off_for_encoder_decoder(self):
+        self.assertFalse(self._gate(is_encoder_decoder=True))
+
+    def test_gate_off_for_pdmux_even_with_ds(self):
+        self.assertFalse(self._gate(enable_pdmux=True))
+
+    def _dispatch(self, widths, forward_batch, raw_bs):
+        from sglang.srt.model_executor.cuda_graph_runner import CudaGraphRunner
+
+        fake_runner = SimpleNamespace(ds_selector_widths=widths)
+        return CudaGraphRunner._ds_selector_width_for_replay(
+            fake_runner, forward_batch, raw_bs
+        )
+
+    def test_dispatch_single_width_ladder_never_reads_seq_lens(self):
+        # A forward batch WITHOUT seq_lens_cpu: touching it would raise, so
+        # this also proves the trivial ladder path does no extra host work.
+        self.assertEqual(
+            self._dispatch([202756], SimpleNamespace(), raw_bs=29), 202756
+        )
+
+    def test_dispatch_picks_smallest_covering_width(self):
+        fb = SimpleNamespace(
+            seq_lens_cpu=torch.tensor([4096, 4608], dtype=torch.int32)
+        )
+        self.assertEqual(self._dispatch([5120, 202756], fb, raw_bs=2), 5120)
+
+    def test_dispatch_boundary_at_exact_width(self):
+        fb = SimpleNamespace(seq_lens_cpu=torch.tensor([5120], dtype=torch.int32))
+        self.assertEqual(self._dispatch([5120, 202756], fb, raw_bs=1), 5120)
+
+    def test_dispatch_overflow_routes_to_full_width(self):
+        fb = SimpleNamespace(seq_lens_cpu=torch.tensor([5121], dtype=torch.int32))
+        self.assertEqual(self._dispatch([5120, 202756], fb, raw_bs=1), 202756)
+
+    def test_dispatch_ignores_padded_rows(self):
+        # Row 1 carries a padded/stale value; raw_bs=1 must not read it.
+        fb = SimpleNamespace(
+            seq_lens_cpu=torch.tensor([4096, 999999], dtype=torch.int32)
+        )
+        self.assertEqual(self._dispatch([5120, 202756], fb, raw_bs=1), 5120)
+
+    def _metadata_key(self, fake_backend, bs):
+        from sglang.srt.layers.attention.dsa_backend import (
+            DeepseekSparseAttnBackend,
+        )
+
+        return DeepseekSparseAttnBackend._ds_decode_metadata_key(fake_backend, bs)
+
+    def test_dsa_metadata_key_plain_bs_without_variant_stamp(self):
+        self.assertEqual(
+            self._metadata_key(SimpleNamespace(_ds_graph_variant_key=None), 32), 32
+        )
+
+    def test_dsa_metadata_key_plain_bs_when_attribute_absent(self):
+        self.assertEqual(self._metadata_key(SimpleNamespace(), 32), 32)
+
+    def test_dsa_metadata_key_uses_variant_when_stamped(self):
+        self.assertEqual(
+            self._metadata_key(
+                SimpleNamespace(_ds_graph_variant_key=(32, 202756)), 32
+            ),
+            (32, 202756),
+        )
+
+
+class TestSelectorWidthBucketsConfig(unittest.TestCase):
+    """Config-borne `selector_width_buckets` parse surface."""
+
+    def test_default_is_empty_list(self):
+        from sglang.srt.layers.attention.double_sparsity.config import (
+            parse_double_sparsity_config,
+        )
+
+        cfg = parse_double_sparsity_config('{"channel_mask_path": "/tmp/x"}')
+        self.assertEqual(cfg.selector_width_buckets, [])
+
+    def test_parses_int_list(self):
+        from sglang.srt.layers.attention.double_sparsity.config import (
+            parse_double_sparsity_config,
+        )
+
+        cfg = parse_double_sparsity_config(
+            '{"channel_mask_path": "/tmp/x", "selector_width_buckets": [5120]}'
+        )
+        self.assertEqual(cfg.selector_width_buckets, [5120])
+
+    def test_rejects_non_list(self):
+        from sglang.srt.layers.attention.double_sparsity.config import (
+            parse_double_sparsity_config,
+        )
+
+        with self.assertRaises(ValueError):
+            parse_double_sparsity_config(
+                '{"channel_mask_path": "/tmp/x", "selector_width_buckets": 5120}'
+            )
+
+    def test_rejects_non_positive_width(self):
+        from sglang.srt.layers.attention.double_sparsity.config import (
+            parse_double_sparsity_config,
+        )
+
+        with self.assertRaises(ValueError):
+            parse_double_sparsity_config(
+                '{"channel_mask_path": "/tmp/x", "selector_width_buckets": [0]}'
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
