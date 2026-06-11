@@ -1,0 +1,20 @@
+{
+  "layout": "page64",
+  "shapes": {
+    "bs": 29,
+    "width": 5120,
+    "H": 8,
+    "label_dim": 32,
+    "table_t": 142272,
+    "live_seq": 4608
+  },
+  "method": "one process; interleaved captured-replay rounds (100x4 per side); medians",
+  "production_tb512_us_per_call": 19.94,
+  "stripped_same_structure_us_per_call": 31.24,
+  "budget_us_per_call_real": 25.64,
+  "in_context_interference_us": 6.0,
+  "budget_us_per_call_isolated": 19.64,
+  "bound_valid_stripped_le_production": false,
+  "exact_rung_exhausted_at_this_layout": true,
+  "compute_overhead_headroom_us": -11.3
+}

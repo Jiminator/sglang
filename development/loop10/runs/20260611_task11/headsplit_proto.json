@@ -1,0 +1,18 @@
+{
+  "bitwise_vs_production": {
+    "hs2": true,
+    "hs4": true
+  },
+  "replay_us_per_call": {
+    "random": {
+      "production": 20.58,
+      "headsplit2": 24.17,
+      "headsplit4": 32.38
+    },
+    "page64": {
+      "production": 19.83,
+      "headsplit2": 23.24,
+      "headsplit4": 30.06
+    }
+  }
+}
