@@ -45,16 +45,35 @@ truth for task state): `development/loop10/queue.md`.
   intact — task5 must pin via `override_algo=TWO_SHOT_PULL`**; NCCL 38.5 vs custom-AR 51.9
   µs/call at [29,4608] bf16 (task8 matters).
 
-### Frozen gate baselines (this loop's diff targets)
+### Frozen gate baselines (this loop's diff targets) — FROZEN 2026-06-11 round 0
 
-- bs-1 digest: `runs/20260611_m0_freeze/bs1_digest.json` — must match the loop-9 R1 fingerprint
-  (`loop9/runs/20260611_r1/selcap_digest.json`) bit-exactly at freeze time.
-- op-point digest: `runs/20260611_m0_freeze/op_digest.json` — first frozen op-point baseline
-  (raw_bs=29, padded_bs=32, graph replay proven).
+- bs-1 digest: `runs/20260611_m0_freeze/bs1_digest.json` — **matched the loop-9 R1 fingerprint
+  bit-exactly** (`bs1_diff_vs_loop9r1.json`: 64 steps, 0 SHA mismatches). This proves both
+  cross-boot selection reproducibility and that the bucket-identity tagging change is
+  selection-neutral on hardware.
+- op-point digest: `runs/20260611_m0_freeze/op_digest.json` — verdict PASS with hard
+  requirements raw_bs=29 / replay path / padded_bs=32 on every step; graph_key=32,
+  selector_width=202,756, identity uniform, 2 passes × 12 steps run-to-run deterministic,
+  8 ranks bit-identical; request seq_lens 4,046–4,166 (op-point ISL-4096 class).
+- Local forensic baselines (gitignored .pt snapshot dirs, ~3.7 GiB): `runs/20260611_m0_freeze/
+  selcap_bs1/`, `selcap_op/` — used by `diff --fail-on-diff` for row-level attribution when a
+  digest gate fails.
 - recall: `loop9/runs/20260610_m0/recall_baseline.json` (frozen, reused).
+- Measured fact: the static selector width on this build is **202,756** (`req_to_token.shape[1]`),
+  not the 202,752 quoted in the plan — immaterial (width is read from code, never hardcoded).
+
+- **task3 analyze artifact** `reviews/task3_width_bucketing_dossier.md` (round 0): the binding
+  M1 design — tuple graph key `(bs, width)` gated to DS-on decode by
+  `_use_ds_selector_width_keys`; config-borne `selector_width_buckets` (Patch 1 plumbs with an
+  empty compact list → full-width only, zero behavior change); width dispatch after the existing
+  bs bisect over `forward_batch.seq_lens_cpu[:raw_bs]` (real rows only); DS-only
+  `PinnedDSScoreReduceCA` wrapper pinning via per-call `override_algo=TWO_SHOT_PULL`; compact
+  W=5120 set costs ~1.10 GiB against ~14.2 GiB M4 headroom; 104 whole-model captures (boot-time
+  measured in task5); DS-off invariant test suite designed; 11-entry risk register tied to the
+  frozen gate observables.
 
 ### Open items / next
 
-- task3 width-bucketing design dossier (Codex, in flight).
-- task4 keying/metadata-lifetime patch — blocked on task1 frozen digests + task3.
+- task4 keying/metadata-lifetime patch (M1 Patch 1 per dossier §6) — unblocked; next round.
+- task5 compact patch (M1 Patch 2) — after task4 banks.
 - Conditional/queued: task7–task10 per `queue.md`.
