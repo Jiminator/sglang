@@ -1,0 +1,2 @@
+[selcap-diff-digest] report -> /sgl-workspace/sglang/development/loop10/runs/20260611_task4_gates/op_diff_vs_baseline.json
+[selcap-diff-digest] PASS: 24 steps bit-identical (declared identity changes: ['graph_key'])

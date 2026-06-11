@@ -1,0 +1,47 @@
+trace file : /sgl-workspace/sglang/development/loop10/runs/20260611_task4_gates/case1_ds/torch/trace/1781174420.9575248/bs-29-il-4096-1781174420.966059-TP-0-DECODE.trace.json.gz
+stage      : decode  (matched 8 staged files; 17 total)
+events=145631  total GPU-kernel us=481253
+
+=== CATEGORY ROLLUP (% of GPU-kernel time) ===
+        tot_us      %     calls  category
+        127082   26.4      3120  all-reduce
+         91942   19.1      3000  MoE
+         82879   17.2     19462  other
+         51037   10.6      3078  DS-index/scoring
+         43078    9.0      3130  attention
+         42311    8.8     10970  memcpy/set
+         24535    5.1      4760  GEMM/proj
+         18390    3.8     11780  norm/rope/elementwise
+
+=== TOP 30 KERNELS ===
+        tot_us      %     calls  kernel
+         92252   19.2       800  void (anonymous namespace)::all_reduce_two_shot_kernel<__nv_bfloat16, 8u, true>(host::distributed::A
+         88835   18.5      1500  fused_moe_kernel
+         36910    7.7       780  _logical_score_kernel
+         32981    6.9      1550  void flashinfer::trtllm_allreduce_fusion::allreduce_fusion_kernel_oneshot_lamport<(flashinfer::trtll
+         32433    6.7       780  void sm90::decode::sparse_fp8::flash_fwd_splitkv_mla_fp8_sparse_kernel<sm90::decode::sparse_fp8::Ker
+         24044    5.0      3180  void per_token_group_quant_8bit_kernel<NaiveScheduler, 128, 8, __nv_bfloat16, c10::Float8_e4m3fn, tr
+         19562    4.1      3120  _radix_hist_kernel
+         14919    3.1      1570  void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::TensorIteratorB
+         13977    2.9      2250  void at::native::sbtopk::gatherTopK<float, unsigned int, 2, false>(at::cuda::detail::TensorInfo<floa
+         11398    2.4      1590  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, 0u, 0u, 0u, 1u, 32u, 32u, 128u, 128u, 
+          7769    1.6       780  void smxx::decode::flash_fwd_mla_combine_kernel<cutlass::bfloat16_t, 512, 8, 160, 256>(CombineParams
+          7570    1.6       780  void at::native::vectorized_elementwise_kernel<8, at::native::bfloat16_copy_kernel_cuda(at::TensorIt
+          6555    1.4      1500  void at::native::bitonicSortKVInPlace<2, -1, 16, 16, float, long, at::native::GTOp<float, true>, uns
+          5826    1.2       810  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, 0u, 0u, 0u, 1u, 32u, 48u, 128u, 128u, 
+          5700    1.2      3120  _radix_scan_kernel
+          5380    1.1      2350  void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native::direct_co
+          5320    1.1       750  triton_per_fused_copy__mul_sum_0
+          4109    0.9       780  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, 0u, 0u, 0u, 1u, 32u, 16u, 128u, 128u, 
+          4050    0.8      1500  void per_token_group_quant_8bit_kernel<NaiveScheduler, 128, 8, __nv_bfloat16, c10::Float8_e4m3fn, fa
+          3987    0.8      4690  void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<int>, std::array<char*, 1u
+          3878    0.8       750  nvjet_sm90_tst_32x64_64x16_4x1_v_bz_splitK_TNN
+          3624    0.8       780  _block_count_kernel
+          3599    0.7       780  _emit_kernel
+          3414    0.7       780  void at::native::_scatter_gather_elementwise_kernel<128, 8, at::native::_cuda_scatter_gather_interna
+          3055    0.6       780  nvjet_sm90_tst_64x8_64x16_1x2_h_bz_TNT
+          2841    0.6       780  nvjet_sm90_tst_64x16_64x16_1x2_h_bz_TNT
+          2506    0.5       780  void (anonymous namespace)::act_and_mul_kernel<__nv_bfloat16, ((anonymous namespace)::ActivationKind
+          2125    0.4      1560  void at::native::index_elementwise_kernel<128, 4, at::native::index_fill_kernel_impl<at::native::Opa
+          2088    0.4       780  void at::native::index_elementwise_kernel<128, 4, at::native::index_copy_kernel_impl<at::native::Opa
+          2010    0.4       750  void moe_align_block_size_kernel<int>(int const*, int*, int*, int*, int, int, unsigned long, int*, b

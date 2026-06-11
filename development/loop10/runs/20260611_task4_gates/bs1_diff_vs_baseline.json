@@ -1,0 +1,19 @@
+{
+  "a": "/sgl-workspace/sglang/development/loop10/runs/20260611_m0_freeze/bs1_digest.json",
+  "b": "/sgl-workspace/sglang/development/loop10/runs/20260611_task4_gates/bs1_digest.json",
+  "steps_compared": 64,
+  "sha_mismatches": 0,
+  "identity_changes": {
+    "graph_key": [
+      [
+        "1",
+        "[1, 202756]"
+      ]
+    ]
+  },
+  "allowed_identity_changes": [
+    "graph_key"
+  ],
+  "verdict": "PASS",
+  "problems": []
+}
