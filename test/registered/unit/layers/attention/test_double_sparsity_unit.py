@@ -10858,6 +10858,146 @@ class TestRadixTopkKernel(unittest.TestCase):
         self.assertTrue(torch.equal(self.out_len[:2], rl))
 
 
+def _load_ds_topk_aot():
+    """The AOT DS top-k op: from the installed sgl-kernel wheel when present,
+    else an opt-in JIT compile of the in-tree source (dev boxes, env-gated)."""
+    if hasattr(torch.ops.sgl_kernel, "ds_topk_sequence_order"):
+        try:
+            torch.ops.sgl_kernel.ds_topk_sequence_order  # schema resolution probe
+            from sgl_kernel.top_k import ds_topk_sequence_order
+
+            return ds_topk_sequence_order
+        except (AttributeError, RuntimeError):
+            pass
+    if os.environ.get("SGLANG_TEST_BUILD_DS_TOPK_AOT") != "1":
+        return None
+    import tempfile
+
+    from torch.utils.cpp_extension import load
+
+    repo = os.path.abspath(os.path.join(os.path.dirname(__file__), *([".."] * 5)))
+    cu = os.path.join(repo, "sgl-kernel", "csrc", "elementwise", "ds_topk.cu")
+    build_dir = os.path.join(tempfile.gettempdir(), "ds_topk_aot_test")
+    os.makedirs(build_dir, exist_ok=True)
+    shim = os.path.join(build_dir, "shim.cpp")
+    with open(shim, "w") as fh:
+        fh.write(
+            "#include <torch/extension.h>\n"
+            "void ds_topk_sequence_order(at::Tensor, at::Tensor, at::Tensor, at::Tensor);\n"
+            "PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {"
+            ' m.def("ds_topk_sequence_order", &ds_topk_sequence_order); }\n'
+        )
+    mod = load(
+        name="ds_topk_aot_test", sources=[shim, cu], build_directory=build_dir,
+        extra_cuda_cflags=["-O3"], verbose=False,
+    )
+    return mod.ds_topk_sequence_order
+
+
+@unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
+class TestDsTopkAOT(unittest.TestCase):
+    """The AOT DS top-k operator must match the Python reference exactly —
+    the same contract the Triton suite pins (skips unless the op is available
+    via the installed wheel or the env-gated JIT build of the in-tree source)."""
+
+    WIDTH = 202752
+    K = 2048
+
+    @classmethod
+    def setUpClass(cls):
+        cls.op = _load_ds_topk_aot()
+        if cls.op is None:
+            raise unittest.SkipTest(
+                "ds_topk_sequence_order op not in the installed sgl-kernel wheel "
+                "(set SGLANG_TEST_BUILD_DS_TOPK_AOT=1 to JIT-build the in-tree source)"
+            )
+        cls.dev = torch.device("cuda")
+        cls.out_idx = torch.full((4, cls.K), -1, dtype=torch.int32, device=cls.dev)
+        cls.out_len = torch.zeros(4, dtype=torch.int32, device=cls.dev)
+
+    def _ref(self, scores, seq):
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            select_topk_sequence_order,
+        )
+
+        s = scores.clone()
+        for b in range(s.shape[0]):
+            s[b, int(seq[b]):] = float("-inf")
+        return select_topk_sequence_order(s, self.K)
+
+    def _assert_match(self, scores, seq):
+        bs = scores.shape[0]
+        type(self).op(scores, seq, self.out_idx, self.out_len)
+        ri, rl = self._ref(scores, seq)
+        self.assertTrue(torch.equal(self.out_idx[:bs], ri.to(torch.int32)))
+        self.assertTrue(torch.equal(self.out_len[:bs], rl))
+
+    def test_adversarial_fixtures(self):
+        torch.manual_seed(7)
+        sc = torch.randn(4, self.WIDTH, device=self.dev)
+        self._assert_match(
+            sc, torch.tensor([4608, 1000, 16384, 2048], dtype=torch.int32, device=self.dev)
+        )
+        sc2 = torch.full((4, self.WIDTH), -1e9, device=self.dev)
+        sc2[:, :1500] = torch.randperm(1500, device=self.dev).float() + 1000
+        sc2[:, 1500:3500] = 7.5
+        self._assert_match(sc2, torch.full((4,), 4608, dtype=torch.int32, device=self.dev))
+        sc3 = torch.randn(4, self.WIDTH, device=self.dev)
+        sc3[:, ::3] = float("-inf")
+        sc3[1, :] = float("-inf")
+        sc3[1, 10:110] = torch.randn(100, device=self.dev)
+        self._assert_match(
+            sc3, torch.tensor([3000, 5000, 1024, 4608], dtype=torch.int32, device=self.dev)
+        )
+        sc4 = torch.randn(4, self.WIDTH, device=self.dev).to(torch.bfloat16).float()
+        self._assert_match(sc4, torch.full((4,), 4608, dtype=torch.int32, device=self.dev))
+
+    def test_tie_determinism(self):
+        sc = torch.full((2, self.WIDTH), -1e9, device=self.dev)
+        sc[:, :1500] = torch.randperm(1500, device=self.dev).float() + 1000
+        sc[:, 1500:3500] = 7.5
+        seq = torch.full((2,), 4608, dtype=torch.int32, device=self.dev)
+        outs = []
+        for _ in range(10):
+            type(self).op(sc, seq, self.out_idx, self.out_len)
+            outs.append(self.out_idx[:2].clone())
+        for o in outs[1:]:
+            self.assertTrue(torch.equal(outs[0], o))
+
+    def test_graph_replay_mutation_zero_alloc(self):
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            assert_no_alloc_in_region,
+        )
+
+        torch.manual_seed(11)
+        scores = torch.randn(2, self.WIDTH, device=self.dev)
+        scores[:, 4608:] = float("-inf")
+        seq = torch.full((2,), 4608, dtype=torch.int32, device=self.dev)
+        op = type(self).op
+
+        def call():
+            op(scores, seq, self.out_idx, self.out_len)
+
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            call()
+        torch.cuda.current_stream().wait_stream(stream)
+        g = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g):
+            call()
+        new = torch.randn(2, self.WIDTH, device=self.dev)
+        new[:, 3000:] = float("-inf")
+        scores.copy_(new)
+        seq.copy_(torch.full((2,), 3000, dtype=torch.int32, device=self.dev))
+        with assert_no_alloc_in_region("ds-topk-aot-replay"):
+            g.replay()
+        torch.cuda.synchronize()
+        ri, rl = self._ref(new, seq)
+        self.assertTrue(torch.equal(self.out_idx[:2], ri.to(torch.int32)))
+        self.assertTrue(torch.equal(self.out_len[:2], rl))
+
+
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
 class TestGraphSafePipelineAdversarial(unittest.TestCase):
     """Adversarial fixtures through the PRODUCTION graph-safe selection

@@ -147,3 +147,31 @@ def fast_topk_transform_ragged_fused(
         score, lengths, topk_indices_ragged, topk_indices_offset, row_starts
     )
     return topk_indices_ragged
+
+
+def ds_topk_sequence_order(
+    score: torch.Tensor,
+    seq_lens: torch.Tensor,
+    out_indices: torch.Tensor,
+    out_lengths: torch.Tensor,
+) -> torch.Tensor:
+    """Deterministic sequence-aware top-K for Double Sparsity decode.
+
+    Exact (score descending, then logical position ascending) selection over
+    each row's live window ([0, seq_lens[i])), written into caller-owned
+    buffers: ``out_indices`` int32 [bs, K] gets the selected logical positions
+    in ascending order with -1 padding; ``out_lengths`` int32 [bs] gets
+    min(num_finite, K). Non-finite scores (-inf masked slots, NaN) are never
+    selected. Bit-deterministic run-to-run and across ranks (boundary ties
+    admit lowest positions first). Single kernel launch, no scratch,
+    CUDA-graph capturable.
+    Args:
+        score: fp32 [bs, width], rows contiguous.
+        seq_lens: int32 [bs] live window per row.
+        out_indices: int32 [bs, K] output buffer (K = the selection budget).
+        out_lengths: int32 [bs] output buffer.
+    Returns:
+        (out_indices, out_lengths).
+    """
+    torch.ops.sgl_kernel.ds_topk_sequence_order(score, seq_lens, out_indices, out_lengths)
+    return out_indices, out_lengths

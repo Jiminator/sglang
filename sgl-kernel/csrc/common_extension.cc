@@ -106,6 +106,10 @@ TORCH_LIBRARY_FRAGMENT(sgl_kernel, m) {
       "fast_topk_transform_ragged_fused(Tensor score, Tensor lengths, Tensor topk_indices_ragged, Tensor "
       "topk_indices_offset, Tensor ? row_starts) -> ()");
   m.impl("fast_topk_transform_ragged_fused", torch::kCUDA, &fast_topk_transform_ragged_interface);
+  m.def(
+      "ds_topk_sequence_order(Tensor score, Tensor seq_lens, Tensor! out_indices, "
+      "Tensor! out_lengths) -> ()");
+  m.impl("ds_topk_sequence_order", torch::kCUDA, &ds_topk_sequence_order);
 
   /*
    * From csrc/gemm

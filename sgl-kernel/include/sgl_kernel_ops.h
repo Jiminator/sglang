@@ -169,6 +169,15 @@ void fast_topk_transform_ragged_interface(
     at::Tensor& topk_indices_ragged,
     const at::Tensor& topk_indices_offset,
     std::optional<at::Tensor> row_starts_opt = std::nullopt);
+// Deterministic sequence-aware top-K for Double Sparsity decode: exact
+// (score desc, position asc) selection emitted as ascending logical
+// positions with -1 padding plus valid_lengths = min(num_finite, K);
+// work proportional to the live window; bit-deterministic across runs/ranks.
+void ds_topk_sequence_order(
+    at::Tensor score,
+    at::Tensor seq_lens,
+    at::Tensor out_indices,
+    at::Tensor out_lengths);
 
 #ifdef USE_ROCM
 void gelu_quick(at::Tensor& out, const at::Tensor& input);
