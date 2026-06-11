@@ -12,20 +12,26 @@ strong.
 
 ## Per-idea kernel-bucket ledger (Case-1 re-profiles, torch TP-0, µs / 10-step decode window)
 
-| Bucket | frozen baseline (20260609) | M0 dry-run (20260610) | M1 score-reduce (20260610) | M2 top-k | M3 logical-score |
-|---|---|---|---|---|---|
-| NCCL ring score all-reduce (`AllReduce_Sum_f32_RING`) | 124,873* | 124,949 | **0 (eliminated)** | | |
-| named custom-AR kernel (`all_reduce_two_shot_kernel<bf16,8u>`) | 0 | 1,269† | 67,343 | | |
-| score-reduce cast overhead (fp32↔bf16, in elementwise) | — | — | ≈ +18,156 | | |
-| top-k/sort stack (mbtopk/radixSort/sbtopk/scan/searchsorted) | 159,166 | 159,162 | 155,184 | | |
-| `_logical_score_kernel` | 63,107 | 63,211 | 63,161 | | |
-| all-reduce category total (incl. shared trtllm-fusion) | 163,790 | 163,177 | 102,653 | | |
-| **Total decode GPU-kernel µs** | **632,239** | **631,381** | **585,158** | | |
-| ratio vs frozen Case-2 (342,857) | 1.84× | 1.84× | 1.71× | | |
-| aggregate decode tok/s | 459 | 459.4 | **500.75** | | |
-| recall gate (Δ recall@2048 vs frozen baseline, ≤0.5pp) | — (baseline) | — (no code change) | **PASS** (+0.010pp overall; max per-length +0.24pp) | | |
-| cross-rank bit-identity (hard) | PASS (M0 selcap, 8 ranks) | — | **PASS** (selcap 8 ranks + 8-rank torchrun) | | |
-| reduce backend at the DS reduce site | torch_dist (NCCL ring) | torch_dist | **custom_ar_v2** (bf16 two-shot pull) at decode buckets; NCCL-bf16 logged fallback for >16 MB capture buckets (e.g. bs 512 prefill bucket) | | |
+| Bucket | frozen baseline (20260609) | M0 dry-run (20260610) | M1 score-reduce (20260610) | M2+M3 top-k + logical-score (20260611, combined run) |
+|---|---|---|---|---|
+| NCCL ring score all-reduce (`AllReduce_Sum_f32_RING`) | 124,873* | 124,949 | **0 (eliminated)** | 0 |
+| named custom-AR kernel (`all_reduce_two_shot_kernel<bf16,8u>`) | 0 | 1,269† | 67,343 | 95,225‡ |
+| score-reduce cast overhead (fp32↔bf16, in elementwise) | — | — | ≈ +18,156 | ≈ +18k (unchanged) |
+| torch top-k/sort lines (mbtopk/radixSort/sbtopk/gatherTopK) | 138,602 DS-attr | ≈ same | ≈ 134,714 DS-attr | **0 (eliminated)** |
+| new radix selection kernels (hist/scan/count/prefix/emit + fill) | — | — | — | **≈ 36,290** (hist 19,422 + scan 5,690 + count 3,616 + emit 3,569 + fill 3,993) |
+| shared non-DS topk/sort residual (present in Case 2 at 20,564) | 20,564 | ≈ same | ≈ same | 20,470 |
+| `_logical_score_kernel` | 63,107 | 63,211 | 63,161 | **43,180** |
+| **Total decode GPU-kernel µs** | **632,239** | **631,381** | **585,158** | **512,687** |
+| ratio vs frozen Case-2 (342,857) | 1.84× | 1.84× | 1.71× | **1.495×** |
+| aggregate decode tok/s | 459 | 459.4 | **500.75** | **646.79** |
+| recall gate (Δ recall@2048 vs frozen baseline, ≤0.5pp) | — (baseline) | — (no code change) | **PASS** (+0.010pp overall; max per-length +0.24pp) | **PASS** (64.706 — identical to M1: both changes selection-bit-identical) |
+| cross-rank bit-identity (hard) | PASS (M0 selcap, 8 ranks) | — | **PASS** (selcap 8 ranks + 8-rank torchrun) | **PASS**; selcap diff vs M1 served baseline: **0/2496 rows** |
+| reduce backend at the DS reduce site | torch_dist (NCCL ring) | torch_dist | **custom_ar_v2** (bf16 two-shot pull) at decode buckets; NCCL-bf16 logged fallback for >16 MB capture buckets (e.g. bs 512 prefill bucket) | custom_ar_v2 (unchanged) |
+
+‡ the bf16 two-shot pull kernel's attributed time grew +27,882 µs after M2 removed the long
+serializing top-k: the pull kernel absorbs cross-rank arrival skew in-kernel (wait, not work).
+Net total still −72,471 µs vs M1. The structural fix for the whole reduce bucket remains
+live-width reduction (follow-on).
 
 † small pre-existing non-DS usage of the kernel in the baseline trace.
 
@@ -84,6 +90,35 @@ width-vs-cost curve; wide-cap v2 at 23.5 MB). Group fact verified: under plain T
 `_ATTN_TP is _TP` (parallel_state.py:1906-1907) — the attention-TP group IS the custom-AR-capable
 TP GroupCoordinator.
 
+## Per-bucket gate verdicts after M1–M3 (AC-1)
+
+- **Score-reduce (AC-1.1): MET literally** — ring line eliminated, named custom-AR v2 bf16
+  kernel at the DS reduce site, backend recorded, zero replay allocations. Honest attribution:
+  the win is the bf16 byte halving; custom-AR ≈ NCCL at equal bytes.
+- **Top-k (AC-1.2): MET with margin** — DS-attributed selection cost 138.6k → ≈36.3k µs
+  (gate ≤80k); torch top-k/sort lines at zero; deterministic seq-aware radix kernel, selection
+  bit-identical, tie-deterministic across ranks. (compare_decode's frozen classifier does not
+  know the new kernel names — they appear under "other"; the ledger rows above give the
+  per-kernel-line truth.)
+- **Logical-score (AC-1.3): trend, gate near-missed (DEC-1 documentation)** — 63,107 →
+  43,180 µs vs the 40,000 gate (−32%, miss by 3.2k/8%). The microbench predicted ~34k at fixed
+  seq 4608; the served window (seq 4097→4608 growing + real cache state) lands at ~55 µs/call.
+  The remaining cost is the dead-grid launch floor over the static 202752 width; the earnest
+  next lever is the persistent/bounded-live-grid kernel redesign (task11's candidate D) —
+  recorded as the follow-on, not bundled per the surgical-change doctrine.
+- **Total (AC-1.4, secondary): STRONG marker met** — 512,687 ≤ 516,000 (minimum 560,000),
+  attributable per-bucket as above; 1.84× → 1.495× vs the frozen DSA floor; decode throughput
+  459 → 646.79 tok/s (+41%).
+
 ## Notes / deviations
 
-- (none yet)
+- M2 and M3 share one Case-1 re-profile/gate run (the M3 one-line change landed while the M2
+  gate sequence was booting; all three phases measured the combined state). Both changes are
+  selection-bit-identical by proof and touch disjoint buckets, so per-idea attribution stays
+  exact per-bucket; the recall gate covers the combined landed state. Recorded in the goal
+  tracker's Plan Evolution Log.
+- Candidate A of the top-k milestone was delivered as a measured disqualification
+  (m2_candidate_a_findings.md) rather than a full wrapper build — its radix tie races fail the
+  cross-rank hard gate and the exact repair costs more than today's pipeline; disposition
+  blessed by the benchmark-off review. The new kernel is Triton JIT; AOT promotion is a
+  follow-on (sgl-kernel here is a prebuilt wheel).
