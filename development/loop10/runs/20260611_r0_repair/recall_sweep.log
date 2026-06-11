@@ -1,0 +1,14 @@
+[oracle-sweep] trial_file=/sgl-workspace/sglang/.sglang_ds_oracle/trial.json
+[oracle-sweep] sink=/sgl-workspace/sglang/.sglang_ds_oracle/sink.jsonl
+[  1024w] issued 20/20 oracle trials (30.8s)
+[  4096w] issued 20/20 oracle trials (33.4s)
+[ 16384w] issued 20/20 oracle trials (52.1s)
+
+trial index -> /sgl-workspace/sglang/development/loop10/runs/20260611_r0_repair/oracle_trials_index.jsonl
+oracle records -> /sgl-workspace/sglang/.sglang_ds_oracle/sink.jsonl
+
+[oracle-sweep] record verification:
+  [  1024w] 20/20 trials produced oracle records
+  [  4096w] 20/20 trials produced oracle records
+  [ 16384w] 20/20 trials produced oracle records
+[oracle-sweep] OK: all issued trials recorded; no hard failures.

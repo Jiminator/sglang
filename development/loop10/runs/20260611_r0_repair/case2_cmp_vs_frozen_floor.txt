@@ -1,0 +1,61 @@
+A = r0repair  (bs-29-il-4096-1781172949.3124776-TP-0-DECODE.trace.json.gz)  total_us=340621
+B = frozenfloor  (bs-29-il-4096-1781002454.0426412-TP-0-DECODE.trace.json.gz)  total_us=342857
+A/B total ratio = 0.99x
+
+=== CATEGORY ROLLUP (us, and % of own total) ===
+category                       A_us     A%       B_us     B%     A-B us
+MoE                          118733   34.9     118590   34.6        142
+GEMM/proj                     49385   14.5      49335   14.4         50
+attention(MLA)                40550   11.9      40521   11.8         29
+all-reduce                    37452   11.0      39815   11.6      -2363
+fp8-quant(index)              30583    9.0      30617    8.9        -34
+topk/sort stack               20534    6.0      20564    6.0        -30
+norm/rope/elementwise         20289    6.0      20278    5.9         11
+DSA:topk-transform             7675    2.3       7685    2.2        -11
+DSA:mqa-logits                 6851    2.0       6875    2.0        -23
+other                          5834    1.7       5843    1.7         -9
+hadamard/sig                   2643    0.8       2641    0.8          2
+memcpy/set                       92    0.0         93    0.0         -0
+
+=== PER-KERNEL (us): A vs B, sorted by |A-B| ===
+      A_us       B_us        A-B  kernel
+       466       2791      -2325  void (anonymous namespace)::all_reduce_two_shot_kernel<__nv_bfloat16, 8u, true>(host::di
+    115736     115592        145  fused_moe_kernel
+     11374      11327         47  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, 0u, 0u, 0u, 1u, 32u, 16u, 
+     25374      25415        -41  void per_token_group_quant_8bit_kernel<NaiveScheduler, 128, 8, __nv_bfloat16, c10::Float
+     30345      30316         29  void sm90::decode::sparse_fp8::flash_fwd_splitkv_mla_fp8_sparse_kernel<sm90::decode::spa
+     13926      13955        -29  void at::native::sbtopk::gatherTopK<float, unsigned int, 2, false>(at::cuda::detail::Ten
+     33813      33841        -28  void flashinfer::trtllm_allreduce_fusion::allreduce_fusion_kernel_oneshot_lamport<(flash
+      6823       6846        -23  void deep_gemm::sm90_fp8_paged_mqa_logits<1u, 32u, 128u, 64u, true, false, 3u, 3u, 256u,
+      2393       2376         16  void (anonymous namespace)::act_and_mul_kernel<__nv_bfloat16, ((anonymous namespace)::Ac
+      5790       5776         14  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, 0u, 0u, 0u, 1u, 32u, 48u, 
+      8448       8436         12  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, 0u, 0u, 0u, 1u, 32u, 32u, 
+      7675       7685        -11  (anonymous namespace)::topk_transform_decode_kernel((anonymous namespace)::FastTopKParam
+      2561       2571        -10  void (anonymous namespace)::fused_rope_kernel<false, 64l, true, __nv_bfloat16, long, 8u>
+      1234       1244        -10  void cublasLt::splitKreduce_kernel<32, 16, int, float, __nv_bfloat16, float, __nv_bfloat
+      1822       1830         -9  kernel_cutlass_kernel_flashinfernormkernelsrmsnormRMSNormKernel_object_at__tensorptrbf16
+      2701       2710         -9  nvjet_sm90_tst_64x16_64x16_1x2_h_bz_TNT
+      3788       3780          8  void per_token_group_quant_8bit_kernel<NaiveScheduler, 128, 8, __nv_bfloat16, c10::Float
+      1316       1323         -8  void cublasLt::splitKreduce_kernel<32, 16, int, float, float, float, float, false, float
+      3838       3831          7  nvjet_sm90_tss_64x32_64x16_1x1_h_bz_splitK_TNT
+      1122       1129         -6  void (anonymous namespace)::fused_store_indexer_cache<__nv_bfloat16, long, 6u, true>((an
+      5206       5200          6  triton_per_fused_copy__mul_sum_0
+      1300       1305         -5  _quantize_k_cache_fast_kernel
+       978        973          5  triton_poi_fused_add_sigmoid_unsqueeze_0
+       643        647         -5  nvjet_sm90_tst_192x32_64x7_4x1_v_bz_TNT
+       770        775         -4  triton_poi_fused_sum_1
+      1163       1166         -4  kernel_cutlass_kernel_flashinfernormkernelsrmsnormRMSNormKernel_object_at__tensorptrbf16
+       472        469          3  ncclDevKernel_AllGather_RING_LL(ncclDevKernelArgsStorage<4096ul>)
+      1191       1188          3  void at::native::vectorized_elementwise_kernel<8, at::native::FillFunctor<c10::BFloat16>
+      3570       3566          3  void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::nativ
+      3001       3004         -3  nvjet_sm90_tst_64x8_64x16_1x2_h_bz_TNT
+       151        148          3  void at::native::reduce_kernel<512, 1, at::native::ReduceOp<float, at::native::ArgMaxOps
+      1153       1150          3  kernel_cutlass_kernel_flashinfernormkernelslayernormLayerNormKernel_object_at__tensorptr
+      1002       1004         -3  void count_and_sort_expert_tokens_kernel<int>(int const*, int*, int*, unsigned long)
+      7391       7393         -3  void smxx::decode::flash_fwd_mla_combine_kernel<cutlass::bfloat16_t, 512, 8, 160, 256>(C
+      1542       1545         -2  void at::native::(anonymous namespace)::distribution_elementwise_grid_stride_kernel<unsi
+      2643       2641          2  void (anonymous namespace)::fast_hadamard_transform_kernel<(anonymous namespace)::FastHa
+       987        985          2  set_mla_kv_buffer_kernel
+       758        756          2  triton_poi_fused_mul_0
+       124        126         -2  void at::native::unrolled_elementwise_kernel<at::native::direct_copy_kernel_cuda(at::Ten
+      5542       5543         -1  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, 0u, 0u, 0u, 1u, 32u, 64u, 

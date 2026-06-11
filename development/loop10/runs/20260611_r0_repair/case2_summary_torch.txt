@@ -1,0 +1,47 @@
+trace file : /sgl-workspace/sglang/development/loop10/runs/20260611_r0_repair/case2_dsa/torch/trace/1781172949.3042076/bs-29-il-4096-1781172949.3124776-TP-0-DECODE.trace.json.gz
+stage      : decode  (matched 8 staged files; 17 total)
+events=118203  total GPU-kernel us=340621
+
+=== CATEGORY ROLLUP (% of GPU-kernel time) ===
+        tot_us      %     calls  category
+        118733   34.9      3000  MoE
+         53486   15.7     13222  other
+         41703   12.2      3910  attention
+         37452   11.0      3120  all-reduce
+         34240   10.1      5540  GEMM/proj
+         32336    9.5      6198  DS-index/scoring
+         12436    3.7      4730  memcpy/set
+         10235    3.0      5540  norm/rope/elementwise
+
+=== TOP 30 KERNELS ===
+        tot_us      %     calls  kernel
+        115736   34.0      1500  fused_moe_kernel
+         33813    9.9      1550  void flashinfer::trtllm_allreduce_fusion::allreduce_fusion_kernel_oneshot_lamport<(flashinfer::trtll
+         30345    8.9       780  void sm90::decode::sparse_fp8::flash_fwd_splitkv_mla_fp8_sparse_kernel<sm90::decode::sparse_fp8::Ker
+         25374    7.4      3960  void per_token_group_quant_8bit_kernel<NaiveScheduler, 128, 8, __nv_bfloat16, c10::Float8_e4m3fn, tr
+         13926    4.1      2250  void at::native::sbtopk::gatherTopK<float, unsigned int, 2, false>(at::cuda::detail::TensorInfo<floa
+         11374    3.3      1560  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, 0u, 0u, 0u, 1u, 32u, 16u, 128u, 128u, 
+          8448    2.5       810  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, 0u, 0u, 0u, 1u, 32u, 32u, 128u, 128u, 
+          7675    2.3       780  (anonymous namespace)::topk_transform_decode_kernel((anonymous namespace)::FastTopKParams, int*, int
+          7391    2.2       780  void smxx::decode::flash_fwd_mla_combine_kernel<cutlass::bfloat16_t, 512, 8, 160, 256>(CombineParams
+          6823    2.0       780  void deep_gemm::sm90_fp8_paged_mqa_logits<1u, 32u, 128u, 64u, true, false, 3u, 3u, 256u, 128u, 512u,
+          6608    1.9      1500  void at::native::bitonicSortKVInPlace<2, -1, 16, 16, float, long, at::native::GTOp<float, true>, uns
+          5790    1.7       810  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, 0u, 0u, 0u, 1u, 32u, 48u, 128u, 128u, 
+          5542    1.6       780  void deep_gemm::sm90_fp8_gemm_1d2d_impl<(cute::UMMA::Major)0, 0u, 0u, 0u, 1u, 32u, 64u, 128u, 128u, 
+          5206    1.5       750  triton_per_fused_copy__mul_sum_0
+          3838    1.1       780  nvjet_sm90_tss_64x32_64x16_1x1_h_bz_splitK_TNT
+          3808    1.1       750  nvjet_sm90_tst_32x64_64x16_4x1_v_bz_splitK_TNN
+          3788    1.1      1500  void per_token_group_quant_8bit_kernel<NaiveScheduler, 128, 8, __nv_bfloat16, c10::Float8_e4m3fn, fa
+          3570    1.0      1570  void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native::direct_co
+          3001    0.9       780  nvjet_sm90_tst_64x8_64x16_1x2_h_bz_TNT
+          2701    0.8       780  nvjet_sm90_tst_64x16_64x16_1x2_h_bz_TNT
+          2643    0.8      1560  void (anonymous namespace)::fast_hadamard_transform_kernel<(anonymous namespace)::FastHadamardKernel
+          2561    0.8      1560  void (anonymous namespace)::fused_rope_kernel<false, 64l, true, __nv_bfloat16, long, 8u>((anonymous 
+          2393    0.7       780  void (anonymous namespace)::act_and_mul_kernel<__nv_bfloat16, ((anonymous namespace)::ActivationKind
+          1995    0.6       750  void moe_align_block_size_kernel<int>(int const*, int*, int*, int*, int, int, unsigned long, int*, b
+          1822    0.5       780  kernel_cutlass_kernel_flashinfernormkernelsrmsnormRMSNormKernel_object_at__tensorptrbf16gmemalign16o
+          1542    0.5       750  void at::native::(anonymous namespace)::distribution_elementwise_grid_stride_kernel<unsigned long, 2
+          1540    0.5       780  (anonymous namespace)::concat_mla_absorb_q_kernel(__nv_bfloat16*, __nv_bfloat16*, __nv_bfloat16*, in
+          1420    0.4       780  _act_quant_kernel
+          1316    0.4       780  void cublasLt::splitKreduce_kernel<32, 16, int, float, float, float, float, false, float, float, flo
+          1300    0.4       780  _quantize_k_cache_fast_kernel
