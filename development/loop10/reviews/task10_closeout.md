@@ -79,3 +79,15 @@ The round-4 provenance blocker is resolved: the per-layout exact-floor artifacts
 AC-5 is restored by this amendment and `DEC-L10-2`: terminal claims now rest on valid evidence, the retraction is explicit, and the close-out record supersedes the stale original AC-1.2 wording.
 
 **Amended final verdict:** close-out stands; AC-1.2 is **NOT MET and not re-scoped**, exact rung exhausted in practice by measured frontier, int8 fallback declined with evidence, all other close-out acceptance claims remain valid.
+
+---
+
+## ROUND-6 FINAL AMENDMENT: DEC-L10-3 / AC-1.2 CLOSE-OUT
+
+Verified in-repo. `DEC-L10-3` is properly recorded in `development/loop10/results.md`: the ledger header reads `LOOP COMPLETE`, the AC-1.2 bucket row is `RE-SCOPED to characterized (owner, DEC-L10-3)`, and the decision records the round-6 owner ruling. This was not a silent re-scope: the bar was kept through the prior owner rulings and changed only after the reviewer-named final lever, head/dim-major `[H,D,T]` layout, was prototyped and measured.
+
+The evidence chain is complete and tracked. The exact-floor hygiene fix is in `task11_exact_floor_harness.py`; `exact_floor_random.json` and `exact_floor_page64.json` report `valid_lower_bound_exhaustion=false`. The close-out AC-1.2 row retracts the invalid lower-bound proof and no longer treats `roofline_probe.json` as binding. The layout prototype is tracked in `task11_layout_prototype.py` and `runs/20260611_task11/layout_proto.json`: it is bitwise-different from production, slower in warm and cold modes, and its cold production net 27.84 / 29.38 µs/call closes against the real 29.34 µs/call bucket. That completes causal closure: AC-1.2 is below the landed kernel’s cold-cache floor, not hiding an unmeasured exact lever.
+
+Final AC tally: AC-1 total, AC-1.1, and AC-1.3 are MET at hard and stretch. AC-1.2 is RE-SCOPED-to-characterized by owner ruling `DEC-L10-3`: landed 36,908 → 22,887 µs, a −38% improvement, but not under the original ≤20k hard bar. AC-2, AC-3, AC-4, and AC-5 are MET.
+
+**Terminal verdict: LOOP 10 COMPLETE — Double Sparsity landed at 480,989 → 361,824 µs, 1.403× → 1.055× vs the frozen DSA floor; all acceptance criteria are closed, with AC-1.2 owner-authorized as a characterized residual.**

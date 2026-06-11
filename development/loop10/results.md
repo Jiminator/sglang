@@ -4,7 +4,7 @@ Rewrite-over-append: this file holds ONE authoritative current-state section, re
 state changes. History lives in git. Plan: `development/loop10/plan.md`. Queue (single source of
 truth for task state): `development/loop10/queue.md`.
 
-## Current state (round 5 — loop complete pending close-out re-verification; AC-1.2 NOT MET with a corrected measured-frontier record)
+## Current state (round 6 — LOOP COMPLETE: AC-1.2 owner-re-scoped to characterized on the completed frontier; all other bars met at hard AND stretch)
 
 ### The number
 
@@ -21,7 +21,7 @@ truth for task state): `development/loop10/queue.md`.
 | Bucket | R1 µs | now µs | hard bar | stretch | status |
 |---|---|---|---|---|---|
 | DS transport: `all_reduce_two_shot_kernel<bf16,8u>` 14,137 + `direct_copy` 2,206 + `bfloat16_copy` 1,280 | ~108–111k | **17,623** | ≤60k | ≤45k | **hard + stretch MET** (AR kernel boot-variance 14.1k↔35.4k across gate boots — skew absorption; within bars at every observed boot) |
-| `_logical_score_kernel` | 36,908 | **22,887** | ≤20k | ≤15k | **NOT MET — owner-adjudicated; corrected measured-frontier record in DEC-L10-2 below** |
+| `_logical_score_kernel` | 36,908 | **22,887** | ≤20k | ≤15k | **RE-SCOPED to characterized (owner, DEC-L10-3)** — the bar sits below the landed kernel's measured cold-cache floor; completed frontier in DEC-L10-2/3 |
 | DS radix top-k (`_radix_hist` 18,501 + `_block_count` 1,338 + `_emit` 2,546 + `_block_prefix` 886) | ≈36,300 | **≈23,271** | ≤28k | ≤24k | **hard + stretch MET** → task9 DROPPED condition-false |
 | shared non-DS topk/sort | 20,524 | ~20.5k | n/a | n/a | control, flat |
 | TOTAL | 480,989 | **361,824** | ≤420k | ≤395k | **both MET** |
@@ -170,6 +170,26 @@ Same-shape 8-rank matrix at [32, 5120] bf16 (`task8_transport_matrix.py`,
 column INVERTS the ranking (NCCL 33.7 "wins" eager), retroactively explaining the loop-9
 spike-bench conclusion as an eager artifact (BitLesson addendum recorded). DROP confirmed on
 direct evidence.
+
+### DEC-L10-3 (round 6): AC-1.2 owner-re-scoped to CHARACTERIZED on the completed frontier
+
+The round-5 review mandated the data-layout lever as the remaining exact direction. It was
+prototyped and measured (`task11_layout_prototype.py`,
+`runs/20260611_task11/layout_proto.json`): head/dim-major `[H, D, T]` signatures are
+bitwise-DIFFERENT from production (last-bit reduction-order change — the lever would have been
+value-affecting, not exact) and 3–10× SLOWER in warm AND L2-flushed cold modes on both slot
+layouts. The same harness delivered the causal closure: an L2-flushed cold-cache replay of the
+LANDED kernel costs 27.84 (page64) / 29.38 (random) µs/call — reproducing the binding
+in-context bucket (29.34) almost exactly. The AC-1.2 residual is the landed kernel's
+cold-cache floor, and that floor exceeds the bar (25.64 µs/call).
+
+With the frontier complete (8 measured levers: tb sweep, workers, block-grid, stripped,
+bitwise-exact head-split, the layout transposition, plus the int8 fallback — every one worse
+than the landed kernel), the owner ruled (AskUserQuestion, round 6): **AC-1.2 is RE-SCOPED to
+a characterized finding.** The bucket's landed state: 36,908 → 22,887 µs (−38%), at the
+measured cold-cache bandwidth ceiling of the table's access pattern. No threshold was silently
+relaxed at any point: the bar was kept through two owner rulings and re-scoped only after the
+reviewer-named final lever was measured.
 
 ### CLOSE-OUT (round 4) — task10 complete; the loop's task table is fully terminal
 
