@@ -4,27 +4,27 @@ Rewrite-over-append: this file holds ONE authoritative current-state section, re
 state changes. History lives in git. Plan: `development/loop10/plan.md`. Queue (single source of
 truth for task state): `development/loop10/queue.md`.
 
-## Current state (round 2 — M1 BANKED)
+## Current state (round 3 — M1+M2 BANKED, task9 dropped condition-false)
 
 ### The number
 
 | Reference | µs / 10-step decode window | ratio | status |
 |---|---|---|---|
 | Loop-9 final landed = loop-10 baseline (`loop9/runs/20260611_r1/`) | 480,989 | 1.403× | frozen starting point |
-| **Loop-10 current landed (M1: compact W=5120 selector variants)** | **375,892** | **1.096×** | `runs/20260611_task6r2_gates/` |
+| **Loop-10 current landed (M1 compact variants + task11 tb-512 + task7 bf16-authoritative top-k)** | **361,824** | **1.055×** | `runs/20260611_task7/` |
 | Case-2 DSA floor (frozen, never re-run) | 342,857 | 1.0× | target reference |
 | AC-1 hard bar ≤420,000 | — | ~1.23× | **MET** |
-| AC-1 stretch ≤395,000 | — | ~1.15× | **MET** |
+| AC-1 stretch ≤395,000 | — | ~1.15× | **MET** (beats the M5 projection band 1.10–1.15×) |
 
-### Per-bucket state vs bars (named kernels, `cmp_vs_loop9r1.txt`)
+### Per-bucket state vs bars (named kernels, `runs/20260611_task7/cmp_vs_loop9r1.txt`)
 
 | Bucket | R1 µs | now µs | hard bar | stretch | status |
 |---|---|---|---|---|---|
-| DS transport: `all_reduce_two_shot_kernel<bf16,8u>` 24,420 + casts (`direct_copy` 4,602 + `bfloat16_copy` 1,397) | ~108–111k | **30,419** | ≤60k | ≤45k | **hard + stretch MET** |
-| `_logical_score_kernel` | 36,908 | **23,080** | ≤20k | ≤15k | **OPEN — misses hard by 3.1k** → queue task11 (M4 contingency) |
-| DS radix top-k (`_radix_hist` 18,394 + `_block_count` 1,338 + `_emit` 2,718 + `_block_prefix` 894) | ≈36,300 | **≈23,344** | ≤28k | ≤24k | **hard + stretch MET** → task9 condition currently FALSE |
-| shared non-DS topk/sort | 20,524 | 20,554 | n/a | n/a | control, flat |
-| TOTAL | 480,989 | **375,892** | ≤420k | ≤395k | **both MET** |
+| DS transport: `all_reduce_two_shot_kernel<bf16,8u>` 14,137 + `direct_copy` 2,206 + `bfloat16_copy` 1,280 | ~108–111k | **17,623** | ≤60k | ≤45k | **hard + stretch MET** (AR kernel boot-variance 14.1k↔35.4k across gate boots — skew absorption; within bars at every observed boot) |
+| `_logical_score_kernel` | 36,908 | **22,887** | ≤20k | ≤15k | **NOT MET — measured DRAM-roofline infeasibility (see finding below); disposition escalated** |
+| DS radix top-k (`_radix_hist` 18,501 + `_block_count` 1,338 + `_emit` 2,546 + `_block_prefix` 886) | ≈36,300 | **≈23,271** | ≤28k | ≤24k | **hard + stretch MET** → task9 DROPPED condition-false |
+| shared non-DS topk/sort | 20,524 | ~20.5k | n/a | n/a | control, flat |
+| TOTAL | 480,989 | **361,824** | ≤420k | ≤395k | **both MET** |
 
 ### What is landed (loop 10)
 
@@ -114,11 +114,32 @@ Incumbent pinned two-shot at binding 31.3 µs/call (320 KiB) beats the best alte
 declared ONE_SHOT_PULL has no measured win. No candidate justifies value-affecting churn
 (declaration + third re-freeze + recall-blind risk) on a bucket 2× under its stretch bar.
 
+### task7 BANKED (round 3, KEEP — exact, zero diffs)
+
+- Landed (commit `fac0b0cfa`, gates `d6c511b20`, evidence `runs/20260611_task7/`): the radix
+  suite's score loads upcast in-register (identity for fp32, exact for bf16 — required before
+  the `_key_of` fp32 bitcast); with the radix active + bf16 reduce, the reduced bf16 buffer is
+  the authoritative top-k input and `reduce_token_scores(copy_back=False)` skips the bf16→fp32
+  copy-back; the per-request-valid mask applies to the authoritative buffer; oracle/anchor/
+  legacy consumers keep fp32. CUDA-gated regression: bf16 vs exact-fp32-upcast selection
+  identity under tie plateaus + non-finite contract.
+- Gates: bs-1 AND op-point selcap bit-exact (zero diffs, zero identity changes — the exact
+  claim PROVEN, no re-classification needed); recall 64.706%; Case-1 **361,824 µs**.
+
+### task9 DROPPED (round 3, condition false — the plan's own trigger)
+
+Post-M2 profile reads the radix suite at ≈23,271 µs ≤ 28k hard (and ≤ 24k stretch). Recorded
+per queue protocol with the measured cause; no redesign performed.
+
+### Gate baselines for task10+ exact changes
+
+`runs/20260611_task7/` digests (bs-1 + op-point). Chain: m0_freeze → task4 → task6r2 → task11
+→ task7, every hop either zero-diff-proven or declared (DEC-L10-1).
+
 ### Open items / next
 
-- task7 (bf16-authoritative radix input, copy-back eliminated — commit `fac0b0cfa`): gate run in
-  flight vs the task11 baselines; expected exact (zero diffs) with the `direct_copy` copy-back
-  kernel (~4.6k/window) removed from the transport bucket.
-- task9 (top-k redesign): condition read after task7's profile; currently ≈23.3k ≤ 28k —
-  expected drop.
-- task10 close-out after this round's reconciliation; AC-1.2 disposition escalated as above.
+- **task10 close-out** (final): AC tally with the **AC-1.2 disposition** — NOT MET at 22,887 vs
+  ≤20k hard, assessed infeasible in the exact regime at the frozen op point (DRAM-roofline
+  finding above); an immutable-AC re-scope requires explicit owner authorization, so the
+  close-out presents the evidence and leaves the bar formally unmet rather than silently
+  relaxed. All other AC-1 bars met at hard AND stretch; AC-2/AC-3/AC-4/AC-5 green.
