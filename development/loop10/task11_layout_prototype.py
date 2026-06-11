@@ -81,8 +81,6 @@ def _transposed_logical_score_kernel(
     n_live = tl.minimum(seq_len_i, max_seq_len)
     live_blocks = (n_live + TOKEN_BLOCK - 1) // TOKEN_BLOCK
     pool_idx = tl.load(rpi_ptr + batch_id).to(tl.int64)
-    d_full = tl.arange(0, LABEL_DIM_POW2)
-    d_full_mask = d_full < label_dim
 
     for tok_blk in range(worker, live_blocks, WORKERS):
         tok_offs = tok_blk * TOKEN_BLOCK + tl.arange(0, TOKEN_BLOCK)
@@ -100,20 +98,10 @@ def _transposed_logical_score_kernel(
 
         acc = tl.full((TOKEN_BLOCK,), float("-inf"), dtype=tl.float32)
         for h in range(num_heads):
-            sel_h = tl.load(
-                ch_sel_ptr + h * ch_sel_stride_h + d_full,
-                mask=d_full_mask, other=0,
-            ).to(tl.int64)
-            w_h = tl.load(
-                ch_w_ptr + h * ch_w_stride_h + d_full,
-                mask=d_full_mask, other=0.0,
-            ).to(tl.float32)
             q_base = q_ptr + batch_id * q_stride_b + h * q_stride_h
-            q_h = tl.load(q_base + sel_h, mask=d_full_mask, other=0.0).to(
-                tl.float32
-            )
-            q_proj_h = q_h * w_h
-
+            # Transposed [D, T] addressing forces the reduction into D_TILE
+            # chunks, so q_proj is reloaded per chunk below (production projects
+            # the full head width once and reduces over axis 1 in a single sum).
             dot = tl.zeros((TOKEN_BLOCK,), dtype=tl.float32)
             for d0 in range(0, label_dim, D_TILE):
                 d_offs = d0 + tl.arange(0, D_TILE)
