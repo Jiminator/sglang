@@ -5,3 +5,26 @@
 3. VERDICT: DROP. Measured cause: the landed binding incumbent is already faster than the best available alternative evidence even when that alternative was measured eagerly at a smaller size: `31.3 us/call` incumbent at 320 KiB versus NCCL `38.5 us/call` at 267 KiB. No viable candidate has measured evidence for a material win, and `ONE_SHOT_PUSH` is disqualified by crash behavior at the target size. Landing any transport change would be value-affecting, require explicit declaration, digest re-freeze, and recall-blind transport-risk accounting, while the transport bucket is already about 2x under the stretch bar and Case-1 total is already under stretch. The benefit side is not measured; the churn and risk side is concrete.
 
 4. CONSEQUENCES: Task9 should read transport as closed/drop, not as pending insurance. Close-out attribution should credit loop10 transport to the landed compact bf16 `TWO_SHOT_PULL` pin, with remaining condition pressure on AC-1.2 logical-score rather than DS score-reduce transport.
+
+---
+
+## Round-4 addendum: the same-shape measured matrix (Codex round-3 required action)
+
+Direct 8-rank matrix at the REAL compact op-point shape [32, 5120] bf16 (327,680 B,
+weak-contiguous, custom-AR eligible), `development/loop10/task8_transport_matrix.py`,
+artifact `runs/20260611_task8/task8_matrix.json`. Same conditions for all three
+non-crashing candidates; ONE_SHOT_PUSH crash evidence cited from `ar_algo_probe.json`.
+
+| Candidate | eager µs/call | captured-replay µs/call (BINDING) | µs/window @780 |
+|---|---|---|---|
+| pinned TWO_SHOT_PULL (incumbent) | 37.31 | **14.85** | **11,583** |
+| forced ONE_SHOT_PULL (declared) | 33.18 | 20.42 | 15,928 |
+| NCCL bf16 | 33.73 | 69.73 | 54,389 |
+
+VERDICT CONFIRMED: **DROP** — the incumbent wins the binding mode by 27% over the only
+viable declared one-shot and by 4.7× over NCCL. The eager column INVERTS the ranking
+(NCCL appears competitive eager), which retroactively explains the loop-9 spike bench's
+"NCCL wins at compact sizes" as an eager-measurement artifact and re-validates the
+captured-replay-is-binding discipline for collectives, not just kernels. No transport
+change lands; the original task8 measurement contract is now satisfied with direct
+same-shape evidence.

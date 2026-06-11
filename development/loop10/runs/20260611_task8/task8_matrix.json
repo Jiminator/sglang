@@ -1,0 +1,36 @@
+{
+  "shape": [
+    32,
+    5120
+  ],
+  "dtype": "torch.bfloat16",
+  "bytes": 327680,
+  "weak_contiguous": true,
+  "custom_ar_eligible": true,
+  "world_size": 8,
+  "calls_per_window": 780,
+  "one_shot_push": "not viable at this size \u2014 hard-errors above ~160 KiB (cited: runs/20260611_task6_gates/ar_algo_probe.json)",
+  "candidates": {
+    "pinned TWO_SHOT_PULL (incumbent)": {
+      "algorithm": "pinned TWO_SHOT_PULL (incumbent)",
+      "eager_us_per_call": 37.31,
+      "replay_us_per_call": 14.85,
+      "replay_us_per_window": 11581,
+      "mode": "captured_replay+eager"
+    },
+    "forced ONE_SHOT_PULL (declared one-shot)": {
+      "algorithm": "forced ONE_SHOT_PULL (declared one-shot)",
+      "eager_us_per_call": 33.18,
+      "replay_us_per_call": 20.42,
+      "replay_us_per_window": 15924,
+      "mode": "captured_replay+eager"
+    },
+    "NCCL bf16": {
+      "algorithm": "NCCL bf16",
+      "eager_us_per_call": 33.73,
+      "replay_us_per_call": 69.73,
+      "replay_us_per_window": 54388,
+      "mode": "captured_replay+eager"
+    }
+  }
+}

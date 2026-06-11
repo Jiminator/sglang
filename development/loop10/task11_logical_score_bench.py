@@ -110,8 +110,6 @@ def main() -> int:
         report["bitwise_vs_tb256"][f"tb{tb}_w{wk}"] = same
         print(f"[task11-bench] bitwise tb={tb} w={wk}: {'OK' if same else 'DIFF'}",
               flush=True)
-        if not same:
-            continue
 
     # Captured-replay timing at the op-point seq (4608) per variant.
     for tb, wk in variants:
