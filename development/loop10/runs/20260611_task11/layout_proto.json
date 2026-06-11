@@ -1,0 +1,40 @@
+{
+  "bitwise_vs_production": {
+    "tb128_dt32": false,
+    "tb256_dt16": false,
+    "tb512_dt8": false,
+    "tb64_dt32": false
+  },
+  "max_abs_delta": {
+    "tb128_dt32": 5.7220458984375e-06,
+    "tb256_dt16": 5.7220458984375e-06,
+    "tb512_dt8": 5.7220458984375e-06,
+    "tb64_dt32": 5.7220458984375e-06
+  },
+  "replay_us_per_call": {
+    "page64": {
+      "production_warm": 21.09,
+      "tr128_32_warm": 163.28,
+      "tr256_16_warm": 137.82,
+      "tr512_8_warm": 65.52,
+      "tr64_32_warm": 188.12,
+      "flush_only": 53.82,
+      "production_cold": 81.66,
+      "tr128_32_cold": 214.54,
+      "production_cold_net": 27.84,
+      "tr128_32_cold_net": 160.72
+    },
+    "random": {
+      "production_warm": 22.3,
+      "tr128_32_warm": 258.37,
+      "tr256_16_warm": 273.94,
+      "tr512_8_warm": 229.24,
+      "tr64_32_warm": 311.22,
+      "flush_only": 53.82,
+      "production_cold": 83.21,
+      "tr128_32_cold": 308.06,
+      "production_cold_net": 29.38,
+      "tr128_32_cold_net": 254.23
+    }
+  }
+}
