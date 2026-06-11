@@ -91,6 +91,14 @@ __global__ void ds_topk_sequence_order_kernel(
 
   const int n_live = min(max(seq_lens[row], 0), width);
 
+  // Initialize this row's output to the -1 padding in-kernel (true single
+  // launch — no host-side fill). The emission phase below only overwrites the
+  // selected slots; the first __syncthreads() of phase 1 orders this init
+  // before any of it.
+  for (int j = tid; j < max_top_k; j += kThreads) {
+    out_indices[static_cast<int64_t>(row) * max_top_k + j] = -1;
+  }
+
   // ---- Phase 1: four radix rounds narrow to the exact threshold key. ----
   if (tid == 0) {
     sh_prefix = 0u;
@@ -150,7 +158,7 @@ __global__ void ds_topk_sequence_order_kernel(
   const int tie_quota = sh_target;
   const int k_target = sh_k_target;
   if (k_target == 0) {
-    return;  // out_indices was pre-filled with -1 by the host wrapper
+    return;  // the row's output is already all -1 from the in-kernel init
   }
 
   // ---- Phase 2: ordered emission (ascending positions, ties by lowest). ----
@@ -210,7 +218,6 @@ void ds_topk_sequence_order(
 
   const at::cuda::OptionalCUDAGuard device_guard(score.device());
   auto stream = at::cuda::getCurrentCUDAStream();
-  out_indices.slice(0, 0, bs).fill_(-1);
   ds_topk_sequence_order_kernel<<<bs, kThreads, 0, stream>>>(
       score.data_ptr<float>(),
       seq_lens.data_ptr<int>(),

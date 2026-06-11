@@ -1,215 +1,142 @@
-# Loop 9 Ledger — DS-on Decode Kernel Optimization (running results)
+# Loop 9 Ledger — DS-on Decode Kernel Optimization
 
-## Final gap statement (close-out, revised after Round 1)
+Authoritative ledger, rewritten after Round 1 (the per-idea history is preserved below,
+explicitly labeled as the measured progression; THIS section is the current state).
 
-Frozen baseline → final landed state (Case-1, frozen recipe, one trial each):
-**632,239 → 480,989 µs** per 10-step decode window (−23.9%; AC-1.4's strong marker ≤516k met
-with margin); **1.84× → 1.403×** vs the frozen DSA floor (342,857); decode throughput
-**459 → 654.28 tok/s (+43%)**. Per-bucket — **all four AC-1 gates MET**:
-score-reduce f32 ring eliminated (124.9k → 0; named custom-AR v2 bf16 kernel + casts; AC-1.1),
-DS top-k 138.6k → ≈36.3k (gate ≤80k; AC-1.2), logical-score 63.1k → **36.9k** (gate ≤40k;
-AC-1.3, closed in Round 1 by the persistent-worker grid), total under the strong marker
-(AC-1.4). Every landed change passed the recall gate (overall Δ ≤ +0.01pp, bound 0.5pp) and the
-hard cross-rank bit-identity check; the top-k and logical-score changes are selection-
-bit-identical to the M1 served state (selcap diffs 0/2496).
+## Current state (final landed, after Round 1)
 
-Shipped state vs follow-ons, stated plainly: the SHIPPED selection path is the Triton radix
-suite + persistent-worker scorer + bf16 custom-AR reduce, all on the unmodified prebuilt
-sgl-kernel wheel. The AOT DS top-k operator is source-complete in the sgl-kernel tree
-(tested, benchmarked: better at the op point, worse at long contexts — not integrated on the
-all-shapes rule); adopting any rebuilt wheel is a future gated change. The remaining
-structural headroom vs DSA's fused indexer (~138k µs of DS-attributed index/scoring vs
-~17.2k) is the static-width dead tax in the reduce — the width-bucketed redesign proposal
-(below) is the recorded next direction (needs-user-decision). Separately, the Penalty-B
-admission cap is lifted at a re-tuned op point (bs 29 → 64, see the memory audit section).
+Case-1 (DS-on, frozen recipe from development/profiling/plan.md, one trial per run):
 
-## Follow-on notes (close-out)
-
-1. **Width-bucketed DS selector graphs (+ compact score buffers)** — the structural fix for the
-   dead-width tax in all three buckets; projected ~1.10–1.15× DSA floor; needs-user-decision
-   (cuda-graph-runner width bucketing is a real integration change).
-2. **Persistent/bounded-grid logical-score kernel** — the small slice that closes the 43.2k →
-   ≤40k gate on its own (~10–15k expected); de-risking alternative to (1).
-3. **AOT promotion of the radix top-k** — the Triton suite lands at ≈36.3k/window; a fused
-   single-kernel CUDA version (fast_topk_v2-class, ~17.7 µs/call floor) needs an sgl-kernel
-   source build (prebuilt wheel here); worth folding into (1) if pursued.
-4. **Graph-safe support for non-default DS variants** (DEC-5 follow-on: cosine/hybrid/mean/
-   anchors/int8/lifted keep riding the existing paths unchanged this loop).
-5. **Re-tuned serving op point** (mem 0.77 + cuda-graph-max-bs 64, bs-64 admission) — if it is
-   to become a served default, it needs its own SLO/profiling characterization loop; the
-   loop-9 profiling recipe stays at the frozen mem-0.7 op point.
-6. Boot-log wording: `token_label_table ... scales=fp16` is misleading in fp16 mode (no scales
-   sidecar is allocated) — cosmetic fix candidate.
-
-One column per landed idea; kept ideas stack and the running Case-1 number becomes the next
-idea's baseline. Frozen references (development/profiling/runs/20260609/, do NOT re-run except
-under the AC-4 mandatory-regression rule): Case 2 (DSA, mem 0.7, bs 29) = **342,857 µs**/10-step
-decode window, Case 3 (DSA, mem 0.8, bs 64) = 422,236 µs. One trial per profiling run; per-bucket
-gates primary (shared-kernel boot-to-boot noise ~27k µs on the total).
-
-Per-bucket gates: score-reduce — NCCL ring line eliminated + named custom-AR kernel;
-top-k stack ≤ 80,000 µs; logical-score ≤ 40,000 µs. Total (secondary trend): ≤ 560k min / ≤ 516k
-strong.
-
-## Per-idea kernel-bucket ledger (Case-1 re-profiles, torch TP-0, µs / 10-step decode window)
-
-| Bucket | frozen baseline (20260609) | M0 dry-run (20260610) | M1 score-reduce (20260610) | M2+M3 top-k + logical-score (20260611, combined run) |
-|---|---|---|---|---|
-| NCCL ring score all-reduce (`AllReduce_Sum_f32_RING`) | 124,873* | 124,949 | **0 (eliminated)** | 0 |
-| named custom-AR kernel (`all_reduce_two_shot_kernel<bf16,8u>`) | 0 | 1,269† | 67,343 | 95,225‡ |
-| score-reduce cast overhead (fp32↔bf16, in elementwise) | — | — | ≈ +18,156 | ≈ +18k (unchanged) |
-| torch top-k/sort lines (mbtopk/radixSort/sbtopk/gatherTopK) | 138,602 DS-attr | ≈ same | ≈ 134,714 DS-attr | **0 (eliminated)** |
-| new radix selection kernels (hist/scan/count/prefix/emit + fill) | — | — | — | **≈ 36,290** (hist 19,422 + scan 5,690 + count 3,616 + emit 3,569 + fill 3,993) |
-| shared non-DS topk/sort residual (present in Case 2 at 20,564) | 20,564 | ≈ same | ≈ same | 20,470 |
-| `_logical_score_kernel` | 63,107 | 63,211 | 63,161 | **43,180** |
-| **Total decode GPU-kernel µs** | **632,239** | **631,381** | **585,158** | **512,687** |
-| ratio vs frozen Case-2 (342,857) | 1.84× | 1.84× | 1.71× | **1.495×** |
-| aggregate decode tok/s | 459 | 459.4 | **500.75** | **646.79** |
-| recall gate (Δ recall@2048 vs frozen baseline, ≤0.5pp) | — (baseline) | — (no code change) | **PASS** (+0.010pp overall; max per-length +0.24pp) | **PASS** (64.706 — identical to M1: both changes selection-bit-identical) |
-| cross-rank bit-identity (hard) | PASS (M0 selcap, 8 ranks) | — | **PASS** (selcap 8 ranks + 8-rank torchrun) | **PASS**; selcap diff vs M1 served baseline: **0/2496 rows** |
-| reduce backend at the DS reduce site | torch_dist (NCCL ring) | torch_dist | **custom_ar_v2** (bf16 two-shot pull) at decode buckets; NCCL-bf16 logged fallback for >16 MB capture buckets (e.g. bs 512 prefill bucket) | custom_ar_v2 (unchanged) |
-
-‡ the bf16 two-shot pull kernel's attributed time grew +27,882 µs after M2 removed the long
-serializing top-k: the pull kernel absorbs cross-rank arrival skew in-kernel (wait, not work).
-Net total still −72,471 µs vs M1. The structural fix for the whole reduce bucket remains
-live-width reduction (follow-on).
-
-### Round-1 column — logical-score gate closed (20260611, runs/20260611_r1/)
-
-| Bucket | M2+M3 (prev) | R1: persistent-worker logical score |
+| Metric | frozen baseline (20260609) | final landed (20260611, runs/20260611_r1/) |
 |---|---|---|
-| `_logical_score_kernel` | 43,180 | **36,908 — AC-1.3 GATE MET (≤40,000)** |
-| new radix selection kernels (in "other") | ≈36.3k | ≈36.3k (unchanged; hist 19,527) |
-| torch top-k/sort lines | 0 | 0 (residual 20,524 = shared non-DS sorts) |
-| NCCL ring score reduce | 0 | 0; custom-AR bf16 two-shot 93,480 |
-| **Total decode GPU-kernel µs** | 512,687 | **480,989** |
-| ratio vs frozen Case-2 (342,857) | 1.495× | **1.403×** |
-| aggregate decode tok/s | 646.79 | **654.28** |
-| recall gate (≤0.5pp) | PASS 64.706 | **PASS 64.706** (identical — change is selection-bit-identical) |
-| cross-rank bit-identity (hard) | PASS | **PASS**; selcap diff vs M2 served: **0/2496 rows** |
+| decode GPU-kernel µs / 10-step window | 632,239 | **480,989** (−23.9%) |
+| ratio vs frozen Case-2 DSA floor (342,857) | 1.84× | **1.403×** |
+| aggregate decode tok/s | 459 | **654.28** (+43%) |
 
-The change: `_logical_score_kernel` restructured to a persistent-worker grid (static
-(bs, ≤128) programs; each strides device-side over its LIVE blocks) + dead `-inf` stores
-skipped on the radix path (the seq-bounded selector never reads past seq_len; the legacy
-torch fallback and the recall-oracle/anchor paths keep them — regression-pinned). The −31.7k
-total also carries shared-kernel boot variance (trtllm fusion −16.4k, fp8-quant −6.5k); the
-attributable per-bucket win is the logical-score −6,272. All four per-bucket gates now MET.
+**All four AC-1 per-bucket gates are MET:**
 
-† small pre-existing non-DS usage of the kernel in the baseline trace.
+- **AC-1.1 (score-reduce): MET** — `AllReduce_Sum_f32_RING` eliminated (124,873 → 0); the
+  named custom-AR kernel `all_reduce_two_shot_kernel<bf16,8u>` serves the DS reduce
+  (backend recorded: `custom_ar_v2`, bf16 two-shot pull at decode buckets; logged NCCL-bf16
+  fallback for >16 MB capture buckets). Honest attribution: the win is the bf16 byte halving;
+  custom-AR ≈ NCCL at equal bytes.
+- **AC-1.2 (top-k): MET with margin** — DS-attributed selection 138.6k → ≈36.3k µs (gate
+  ≤80k); torch mbtopk/radixSort/sbtopk/gatherTopK lines at zero; the shipped kernel is the
+  deterministic sequence-aware Triton radix suite (exact, tie-deterministic, zero-alloc
+  replay). The 20.5k "topk/sort" residual in the category rollup is shared non-DS sorting
+  (present identically in Case 2).
+- **AC-1.3 (logical-score): MET** — 63,107 → **36,908 µs** (gate ≤40,000), closed in Round 1
+  by the persistent-worker kernel (static (bs, ≤128) grid, device-side loops over live
+  blocks) plus the radix-path dead-store skip.
+- **AC-1.4 (total, secondary): strong marker MET** — 480,989 ≤ 516,000 (minimum 560,000).
 
-M1 verdict (AC-1.1 + AC-2): the f32 ring line is eliminated at the DS reduce site and replaced by
-the NAMED custom-AR v2 bf16 kernel; CUDA graph capture succeeded in the production runner (74.6 s,
-all buckets) and the 8-rank determinism test proved zero replay allocations + cross-rank
-bit-identity at the real shape. Honest attribution per the spike: the win is the bf16 byte
-halving (custom-AR ≈ NCCL at equal bytes); net score-reduce path 124,949 → ≈85.5k
-(67,343 kernel + ≈18.2k casts) = −39.4k µs, total −46.2k µs. Selected-index diff vs the frozen
-oracle: 74.84% of (layer,row) selections moved (the expected bf16 boundary reshuffle —
-recorded for attribution; recall gate proves the swaps quality-neutral). The residual ~67k µs
-reduce cost is the dead-width tax (static 202752 width vs ≤4608 live tokens) — structural
-remainder for M5/follow-on, per the spike findings. Artifacts: development/loop9/runs/20260610_m1/.
+**AC-2 held for every landed change**: recall@2048 deltas ≤ +0.010pp (bound 0.5pp); cross-rank
+selection bit-identity PASS on every gate run (hard); the top-k/logical-score changes are
+selection-bit-identical to the M1 served state (selcap diffs 0/2496). **AC-3 intact** (channel
+mask → signatures → scoring → top-k → sparse MLA decode; no dense/DSA fallback). **AC-4
+untouched** (no shared kernel modified; the DS-specific AOT op is a new file/op; DS-off
+behavior unchanged). **AC-5**: one trial per run, Case 1 only re-profiled, frozen Case-2/3
+references reused throughout; deviations recorded in the goal tracker's Plan Evolution Log
+and under Notes below.
 
-M0 dry-run verdict (protocol check, AC-5): run_case.sh + summarize_torch.py + compare_decode.py all
-work end-to-end; dry-run vs frozen Case-1 same-config reboot agrees per-bucket within ~600 µs
-(total Δ = −858 µs), far inside the planned ~27k µs noise allowance — per-bucket gates have full
-sensitivity. Dry-run vs frozen Case 2: 1.84×, deltas reproduce (+123,362 all-reduce / +138,598
-topk-stack / +63,211 logical-score). Artifacts: development/loop9/runs/m0_dryrun/.
+**The shipped path** (all on the unmodified prebuilt sgl-kernel wheel):
+bf16 score-reduce transport through custom-AR v2 (`reduce_token_scores`, fp32 escape hatch via
+`score_reduce_dtype`) + the deterministic seq-aware Triton radix top-k (`topk_kernel.py`) +
+the persistent-worker logical-score kernel with radix-path dead-store skip.
 
-\* the ring line is the DS-attributed share measured as Case1−Case2 NCCL f32 delta; the category
-row above it is the full all-reduce category including the shared trtllm fusion all-reduce.
+**M2 two-candidate contract (DEC-4): complete.** All candidates built and measured — exact
+fast_topk_v2 wrapper (1530.1 µs/call: correctness around the racy kernel costs back its win),
+raw fast_topk_v2 (17.7 µs floor, disqualified: tie-nondeterministic), B-Triton (52.6 µs
+captured op-point, shipped), B-AOT one-block-per-row op (true single launch; 43.2 µs op-point
+captured but 71.0 at 16k / 629.3 all-live → not integrated on the all-shapes decision). The
+AOT op is source-complete in the sgl-kernel tree with registered tests, and the full wheel
+build succeeded on this box (op symbol + schema verified in `sm90/common_ops.abi3.so`; wheel
+deliberately not installed — frozen-reference protection). Full record:
+m2_benchmark_off_final.md; build log: runs/20260611_r1/sgl_kernel_build.log (committed).
+
+**Penalty B**: the audit (reviews/task13_m4_memory_audit.md) found the recoverable memory in
+the over-captured decode graph ladder, not signatures; the measured re-tune (mem 0.77 +
+cuda-graph-max-bs 64 — a NEW characterized op point, the frozen recipe untouched) lifts the
+admission cap **bs 29 → 64 decoding under CUDA graph** (pool 142,208 → 330,048 tokens, capture
+pool 17.68 → 0.88 GB). Artifacts: runs/20260611_m4/.
+
+## Measured progression (historical, per landed idea — no current verdicts here)
+
+Per-bucket µs / 10-step decode window, torch TP-0, one trial each:
+
+| Bucket | frozen (20260609) | M0 dry-run | M1 score-reduce | M2+M3 (combined run) | R1 final |
+|---|---|---|---|---|---|
+| `AllReduce_Sum_f32_RING` (DS reduce) | 124,873 | 124,949 | 0 | 0 | 0 |
+| named custom-AR bf16 kernel | 0 | 1,269† | 67,343 | 95,225‡ | 93,480 |
+| torch top-k/sort lines (DS-attributed) | 138,602 | ≈same | ≈134,714 | 0 | 0 |
+| new radix selection kernels | — | — | — | ≈36,290 | ≈36.3k |
+| shared non-DS topk/sort residual | 20,564 | ≈same | ≈same | 20,470 | 20,524 |
+| `_logical_score_kernel` | 63,107 | 63,211 | 63,161 | 43,180 | **36,908** |
+| **Total** | **632,239** | **631,381** | **585,158** | **512,687** | **480,989** |
+| decode tok/s | 459 | 459.4 | 500.75 | 646.79 | 654.28 |
+| recall gate | (baseline) | — | PASS +0.010pp | PASS (=M1) | PASS (=M2) |
+| cross-rank bit-identity | PASS (M0) | — | PASS | PASS | PASS |
+
+† small pre-existing non-DS usage of that kernel in the baseline trace.
+‡ the pull kernel absorbs cross-rank arrival skew in-kernel once the long serializing top-k is
+gone (wait, not work); net total still fell 72k that step.
+
+Boot-to-boot noise context: the M0 dry-run reproduced the frozen baseline per-bucket within
+~600 µs; shared-kernel variance (trtllm fusion, fp8-quant, MoE) of up to ~27k µs appears
+between boots — per-bucket attribution is primary, totals secondary (per DEC-1).
 
 ## Frozen M0 baselines (AC-2 references) — captured 2026-06-10
 
-- **Production selection oracle** (CUDA-graph mode, served Case-1 op-point at cuda-graph-max-bs 4,
-  fixed 4-prompt deterministic workload: 546/2878/6121/12531 prompt tokens × 8 decode steps,
-  2 passes): `development/loop9/runs/20260610_m0/selcap_baseline_digest.json` — **PASS**:
-  64 steps × 78 layers × 8 ranks bit-identical (cross-rank hard gate), output contract clean,
-  pass0 == pass1 (same-boot run-to-run deterministic). Raw per-(layer,step) dumps (315 MB) on
-  disk at `runs/20260610_m0/selcap_baseline/` (untracked; regenerable deterministically at this
-  commit) — the `diff` input for per-change attribution.
-- **NIAH oracle recall@2048 baseline** (eager mode, recall_oracle config-borne, fixed gated
-  workload: lengths 1024/4096/16384 words × N=20 × 4 decode steps = 18,720 samples):
-  `development/loop9/runs/20260610_m0/recall_baseline.json` — overall **64.696%**
-  (1024w: 100.0% — dense, decode sound; 4096w: 58.045%; 16384w: 36.042%); zero failure markers;
-  recall@2048 == selected_contains_needle at every length (score-rank rule matches decode
-  selection); all 60 trials offline-token == server-token (needle span mapping exact).
-  Gate resolution: 0.5pp ≈ 31 samples per length bucket.
-- **Tie-semantics check**: production graph-safe pipeline (raw torch.topk) tie behavior matches
-  the documented (score desc, pos asc) eager contract on this torch build — probed at widths
-  4/4096/163840 incl. boundary plateaus; pinned by `TestGraphSafePipelineAdversarial` fixtures.
-  No pre-existing tie-semantics defect.
+- **Production selection oracle** (CUDA-graph mode, served op-point, fixed 4-prompt
+  deterministic workload: 546/2878/6121/12531 prompt tokens × 8 decode steps, 2 passes):
+  runs/20260610_m0/selcap_baseline_digest.json — 64 steps × 78 layers × 8 ranks bit-identical,
+  contract clean, same-boot AND cross-boot deterministic (fresh-boot digest identical:
+  runs/20260610_m0_xboot/). Raw dumps on disk (gitignored; regenerable at the recorded
+  commits).
+- **NIAH oracle recall@2048 baseline** (eager, config-borne oracle, fixed gated workload:
+  1024/4096/16384 words × N=20 × 4 decode steps = 18,720 samples):
+  runs/20260610_m0/recall_baseline.json — overall **64.696%** (100.0 / 58.045 / 36.042 per
+  length); recall@2048 == selected_contains_needle at every length; all 60 trials
+  offline-token == server-token. Gate resolution: 0.5pp ≈ 31 samples per length bucket.
+- **Tie-semantics check**: the pre-loop production pipeline's torch.topk tie behavior matched
+  the documented (score desc, pos asc) contract on this build (probed at widths 4/4096/202752
+  incl. boundary plateaus); the shipped radix kernel enforces that contract by construction.
 
-## M1 premise correction (spike evidence, feeds task3/task4)
+## Historical context notes (kept for attribution; no current verdicts)
 
-The plan's Feasibility Hints assumed the DS score reduce is ~[29, 4608] fp32 ≈ 534 KB. Measured
-reality: the graph-safe reduce operates on `scratch_scores[:bs, :max_seq_len]` with
-`max_seq_len = req_to_token.shape[1] = context_len = 202752` (served boot log) — **[29, 202752]
-fp32 ≈ 23.5 MB per call**, consistent with the frozen 160 µs/call (124,873 µs / 780 calls).
-Custom-AR caps: v1 `_MAX_CAR_SIZE` = 8 MB; v2 max pull 16 MB (default), one/two-shot thresholds
-160 KB at TP=8 on H200. ⇒ the production-width fp32 reduce is custom-AR-ineligible as-is; the
-spike benches NCCL ring vs coordinator dispatch vs a 32 MB-pull v2 across widths/dtypes
-(m1_spike_allreduce_bench.py) to evidence the viable levers (bf16 reduce ≈ 11.7 MB ≤ 16 MB pull;
-width-vs-cost curve; wide-cap v2 at 23.5 MB). Group fact verified: under plain TP=8,
-`_ATTN_TP is _TP` (parallel_state.py:1906-1907) — the attention-TP group IS the custom-AR-capable
-TP GroupCoordinator.
+- **M1 premise correction**: the plan assumed a ~534 KB reduce; measured reality is
+  [bs, context_len=202752] fp32 ≈ 23.5 MB at bs 29 (matches the frozen 160 µs/call). Custom-AR
+  caps: v1 8 MB, v2 16 MB pull / 160 KB one-shot (TP=8 H200); `_ATTN_TP is _TP` under plain
+  TP=8. Full evidence: m1_spike_findings.md + runs/20260610_m0/m1_spike.json.
+- **M3 measure-first chain**: the dead-grid floor dominated the logical-score kernel
+  (TOKEN_BLOCK 64→256 first, then Round 1's persistent-worker grid landed the gate; the
+  dead-store-only hypothesis measured at just −1.1 µs/call before the grid restructure).
+- The recall-oracle runs measure the eager server (the oracle is host-syncing); pre/post
+  comparisons hold the mode constant. The binding production-selection evidence is the
+  graph-mode selcap captures.
 
-## Per-bucket gate verdicts after M1–M3 (AC-1)
+## Structural headroom after this loop (follow-ons; recorded, not deferred work)
 
-- **Score-reduce (AC-1.1): MET literally** — ring line eliminated, named custom-AR v2 bf16
-  kernel at the DS reduce site, backend recorded, zero replay allocations. Honest attribution:
-  the win is the bf16 byte halving; custom-AR ≈ NCCL at equal bytes.
-- **Top-k (AC-1.2): MET with margin** — DS-attributed selection cost 138.6k → ≈36.3k µs
-  (gate ≤80k); torch top-k/sort lines at zero; deterministic seq-aware radix kernel, selection
-  bit-identical, tie-deterministic across ranks. (compare_decode's frozen classifier does not
-  know the new kernel names — they appear under "other"; the ledger rows above give the
-  per-kernel-line truth.)
-- **Logical-score (AC-1.3): trend, gate near-missed (DEC-1 documentation)** — 63,107 →
-  43,180 µs vs the 40,000 gate (−32%, miss by 3.2k/8%). The microbench predicted ~34k at fixed
-  seq 4608; the served window (seq 4097→4608 growing + real cache state) lands at ~55 µs/call.
-  The remaining cost is the dead-grid launch floor over the static 202752 width; the earnest
-  next lever is the persistent/bounded-live-grid kernel redesign (task11's candidate D) —
-  recorded as the follow-on, not bundled per the surgical-change doctrine.
-- **Total (AC-1.4, secondary): STRONG marker met** — 512,687 ≤ 516,000 (minimum 560,000),
-  attributable per-bucket as above; 1.84× → 1.495× vs the frozen DSA floor; decode throughput
-  459 → 646.79 tok/s (+41%).
+1. **Width-bucketed DS selector graphs + compact per-bucket score buffers** — attacks the
+   remaining static-width dead tax in the reduce (the dominant residual: ~93k µs bf16 reduce
+   on a ≤4608-token live window); projected total ~1.10–1.15× the DSA floor. A real
+   cuda-graph-runner integration change. **Needs-user-decision** for a future loop
+   (reviews/task15_m5_wildcard_proposal.md).
+2. **Fused multi-block AOT top-k redesign** — several blocks per row with cross-block
+   coordination, targeting the 17.7 µs/call floor across ALL context lengths (the landed
+   one-block-per-row AOT op wins only at the op point). Ideally folded into (1).
+3. **Rebuilt-wheel adoption** — gated op-point change + mandatory DSA regression (DS-off
+   smoke + Case-2 re-validation) whenever a wheel containing the AOT op is to be installed.
+4. **bs-64 re-tuned op point** (mem 0.77 + graph-max-bs 64) — needs its own SLO/profiling
+   characterization loop before becoming a served default.
+5. Boot-log `scales=fp16` wording in fp16 mode (no scales sidecar exists) — cosmetic.
 
-## Memory audit + admission re-tune (Penalty B)
+## Notes / process deviations (recorded for AC-5)
 
-Audit verdict (Codex over the measured per-rank budget): **re-tune** — the recoverable memory is
-NOT the signatures (fp16 mode allocates no scales sidecar; the boot log's `scales=fp16` wording
-is misleading) and NOT table padding (~2.4 MiB), but the **over-captured decode graph ladder**:
-the default capture set goes to bs 512 while the KV pool caps admission at ~30, and the DS graph
-state (scratch_scores fp32 + bf16 reduce scratch per decode bucket, each [bs_i, 202752]) made the
-capture pool 17.68 GB.
-
-Measured re-tune (new characterized op point — the frozen Case-1 recipe is unchanged):
-`--cuda-graph-max-bs 64 --mem-fraction-static 0.77` →
-- max_total_num_tokens 142,208 → **330,048** (KV 18.9 GB); token_label_table 5.29 → 12.28 GB/rank
-  (grows proportionally with the pool); graph capture pool 17.68 → **0.88 GB**; 12.6 GB steady
-  headroom; boot + capture clean (29.6 s).
-- bs-64 bench batch (4096 ISL): **64 requests decoding concurrently under CUDA graph**
-  (server log `#running-req: 64, cuda graph: True`, token usage 0.81), output throughput
-  1023.44 tok/s on a 64-OSL probe. The DS bs-29 admission cap is lifted; artifacts:
-  development/loop9/runs/20260611_m4/.
-
-## Wildcard proposal (logical-score gate shortfall; next-loop user decision)
-
-The one unmet per-bucket gate after M1–M3 is logical-score (43.2k vs 40k). The reviewed redesign
-ranking (Codex, full analysis in the round artifacts): (1) **width-bucketed DS selector graphs
-with compact per-bucket score buffers** — kills the dead-width tax in ALL THREE buckets incl.
-the reduce; projected total ~377–395k µs ≈ 1.10–1.15× the DSA floor; requires a real
-cuda-graph-runner integration (width bucketing alongside bs bucketing); (2) persistent/
-bounded-grid logical-score kernel — smallest reliable patch, ~10–15k for that bucket alone,
-total ~1.35×. Disposition: **needs-user-decision** for the next loop.
-
-## Notes / deviations
-
-- M2 and M3 share one Case-1 re-profile/gate run (the M3 one-line change landed while the M2
-  gate sequence was booting; all three phases measured the combined state). Both changes are
-  selection-bit-identical by proof and touch disjoint buckets, so per-idea attribution stays
-  exact per-bucket; the recall gate covers the combined landed state. Recorded in the goal
-  tracker's Plan Evolution Log.
-- Candidate A of the top-k milestone was delivered as a measured disqualification
-  (m2_candidate_a_findings.md) rather than a full wrapper build — its radix tie races fail the
-  cross-rank hard gate and the exact repair costs more than today's pipeline; disposition
-  blessed by the benchmark-off review. The new kernel is Triton JIT; AOT promotion is a
-  follow-on (sgl-kernel here is a prebuilt wheel).
+- M2 and M3 shared one Case-1 gate/profile run (sequencing slip; both selection-bit-identical,
+  disjoint buckets — per-bucket attribution exact; recorded in the Plan Evolution Log).
+- The original task8 review ran before the final candidates were built; the FINAL
+  benchmark-off analyze review over the built artifacts is
+  reviews/task8_m2_benchmark_off_final_review.md (Round 2).
+- The wheel-build evidence log is force-committed past the repo's *.log ignore because the
+  round summaries cite that exact path.
