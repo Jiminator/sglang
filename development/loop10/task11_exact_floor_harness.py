@@ -217,13 +217,21 @@ def main() -> int:
             "in_context_interference_us": INTERFERENCE_US,
             "budget_us_per_call_isolated": round(budget_iso, 2),
             "bound_valid_stripped_le_production": bool(strip_us <= prod_us + 0.3),
-            "exact_rung_exhausted_at_this_layout": bool(strip_us > budget_iso),
+            # Two separate facts that must not be conflated: whether the
+            # stripped variant exceeded the budget (true regardless of bound
+            # validity), and whether that constitutes a VALID lower-bound
+            # exhaustion claim (only when the stripped variant is actually no
+            # slower than production — otherwise no bound exists).
+            "stripped_above_budget": bool(strip_us > budget_iso),
+            "valid_lower_bound_exhaustion": bool(
+                strip_us <= prod_us + 0.3 and strip_us > budget_iso
+            ),
             "compute_overhead_headroom_us": round(prod_us - strip_us, 2),
         }
         print(f"[exact-floor] {layout}: production {prod_us:.2f} vs stripped "
               f"{strip_us:.2f} us/call (budget {budget_iso:.2f}; "
               f"bound_valid={report['bound_valid_stripped_le_production']}, "
-              f"exhausted={report['exact_rung_exhausted_at_this_layout']})",
+              f"valid_exhaustion={report['valid_lower_bound_exhaustion']})",
               flush=True)
         if args.out:
             path = f"{args.out}_{layout}.json"

@@ -9,12 +9,13 @@
     "live_seq": 4608
   },
   "method": "one process; interleaved captured-replay rounds (100x4 per side); medians",
-  "production_tb512_us_per_call": 20.74,
-  "stripped_same_structure_us_per_call": 36.22,
+  "production_tb512_us_per_call": 20.94,
+  "stripped_same_structure_us_per_call": 36.49,
   "budget_us_per_call_real": 25.64,
   "in_context_interference_us": 6.0,
   "budget_us_per_call_isolated": 19.64,
   "bound_valid_stripped_le_production": false,
-  "exact_rung_exhausted_at_this_layout": true,
-  "compute_overhead_headroom_us": -15.47
+  "stripped_above_budget": true,
+  "valid_lower_bound_exhaustion": false,
+  "compute_overhead_headroom_us": -15.55
 }
