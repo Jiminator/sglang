@@ -1,0 +1,2 @@
+[selcap-verify] digest -> /sgl-workspace/sglang/development/loop10/runs/20260611_task11/op_digest.json
+[selcap-verify] PASS: 2 pass(es), 24 steps, 8 ranks bit-identical, contract clean

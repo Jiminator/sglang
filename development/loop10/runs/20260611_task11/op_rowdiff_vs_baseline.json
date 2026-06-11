@@ -1,0 +1,82 @@
+{
+  "a": "/sgl-workspace/sglang/development/loop10/runs/20260611_task6r2_gates/selcap_op/pass0",
+  "b": "/sgl-workspace/sglang/development/loop10/runs/20260611_task11/selcap_op/pass0",
+  "total_layer_rows": 27144,
+  "layer_rows_differing": 0,
+  "fraction_differing": 0.0,
+  "fail_on_diff": true,
+  "per_step": [
+    {
+      "step_a": 7,
+      "step_b": 7,
+      "rows": 2262,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 8,
+      "step_b": 8,
+      "rows": 2262,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 9,
+      "step_b": 9,
+      "rows": 2262,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 10,
+      "step_b": 10,
+      "rows": 2262,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 11,
+      "step_b": 11,
+      "rows": 2262,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 12,
+      "step_b": 12,
+      "rows": 2262,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 13,
+      "step_b": 13,
+      "rows": 2262,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 14,
+      "step_b": 14,
+      "rows": 2262,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 15,
+      "step_b": 15,
+      "rows": 2262,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 16,
+      "step_b": 16,
+      "rows": 2262,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 17,
+      "step_b": 17,
+      "rows": 2262,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 18,
+      "step_b": 18,
+      "rows": 2262,
+      "rows_differing": 0
+    }
+  ]
+}
