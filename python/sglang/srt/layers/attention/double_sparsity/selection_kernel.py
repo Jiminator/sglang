@@ -1403,6 +1403,8 @@ def retrieve_topk_graph_safe(
     scratch_pv_mask: Optional[torch.Tensor] = None,        # bool [max_bs, max_seq_len]
     scratch_throwaway_idx: Optional[torch.Tensor] = None,  # int64 [max_bs, max_top_k]
     scratch_scores_bf16: Optional[torch.Tensor] = None,    # bf16 [max_bs, max_seq_len]
+    radix_topk_scratch: Optional[dict] = None,  # topk_kernel scratch bundle
+    topk_block: int = 1024,
     token_scales: Optional[torch.Tensor] = None,           # fp16 [L, T, H] int8 dequant scale, else None
     process_group=None,
     reduce_ca=None,
@@ -1549,59 +1551,80 @@ def retrieve_topk_graph_safe(
         torch.logical_not(pv_view, out=pv_view)
         scores_view.masked_fill_(pv_view, float("-inf"))
 
-    effective_k = min(max_top_k, max_seq_len)
-    topk_vals_view = scratch_topk_values[:bs, :effective_k]
-    topk_idx_view = scratch_topk_indices[:bs, :effective_k]
-    invalid_view = scratch_invalid_mask[:bs, :effective_k]
-    sorted_vals_view = scratch_sorted_vals[:bs, :effective_k]
-    boundary_view = scratch_boundary[:bs]
-    valid_i64_view = scratch_valid_i64[:bs]
-
-    # Step 1: top-K by score (unsorted, largest).
     torch.cuda.nvtx.range_push("ds_topk_select")
-    torch.topk(
-        scores_view,
-        effective_k,
-        dim=-1,
-        largest=True,
-        sorted=False,
-        out=(topk_vals_view, topk_idx_view),
-    )
+    if radix_topk_scratch is not None:
+        # Sequence-aware deterministic radix top-k: work proportional to each
+        # row's live window, exact (score desc, pos asc) selection emitted in
+        # ascending order directly (replaces the two full-width torch.topk
+        # passes below). Fixed grids; allocation-free with the scratch bundle.
+        from sglang.srt.layers.attention.double_sparsity.topk_kernel import (
+            select_topk_sequence_order_triton,
+        )
 
-    # Step 2: sentinel-out invalid (-inf) entries; replace their position with max_seq_len.
-    torch.isneginf(topk_vals_view, out=invalid_view)
-    topk_idx_view.masked_fill_(invalid_view, max_seq_len)
+        select_topk_sequence_order_triton(
+            scores_view,
+            seq_lens,
+            max_top_k,
+            out_indices=out_indices,
+            out_lengths=out_lengths,
+            block=topk_block,
+            **radix_topk_scratch,
+        )
+        if max_top_k < out_indices.shape[1]:
+            out_indices[:bs, max_top_k:].fill_(-1)
+    else:
+        effective_k = min(max_top_k, max_seq_len)
+        topk_vals_view = scratch_topk_values[:bs, :effective_k]
+        topk_idx_view = scratch_topk_indices[:bs, :effective_k]
+        invalid_view = scratch_invalid_mask[:bs, :effective_k]
+        sorted_vals_view = scratch_sorted_vals[:bs, :effective_k]
+        boundary_view = scratch_boundary[:bs]
+        valid_i64_view = scratch_valid_i64[:bs]
 
-    # Step 3: ascending sort using topk(largest=False, sorted=True).
-    # PyTorch's topk requires output indices NOT to alias input — aliasing
-    # corrupts the read (observed: input [3, 1] → output values [0, 1]).
-    # Route throwaway gather indices into a dedicated scratch.
-    assert scratch_throwaway_idx is not None, (
-        "scratch_throwaway_idx is required for the graph-safe topk pipeline"
-    )
-    throwaway_view = scratch_throwaway_idx[:bs, :effective_k]
-    torch.topk(
-        topk_idx_view,
-        effective_k,
-        dim=-1,
-        largest=False,
-        sorted=True,
-        out=(sorted_vals_view, throwaway_view),
-    )
+        # Step 1: top-K by score (unsorted, largest).
+        torch.topk(
+            scores_view,
+            effective_k,
+            dim=-1,
+            largest=True,
+            sorted=False,
+            out=(topk_vals_view, topk_idx_view),
+        )
 
-    # Step 4: copy sorted positions to int32 output, then sentinel → -1.
-    out_indices[:bs, :effective_k].copy_(sorted_vals_view)
-    torch.ge(sorted_vals_view, max_seq_len, out=invalid_view)
-    out_indices[:bs, :effective_k].masked_fill_(invalid_view, -1)
-    if effective_k < out_indices.shape[1]:
-        out_indices[:bs, effective_k:].fill_(-1)
+        # Step 2: sentinel-out invalid (-inf) entries; replace their position with max_seq_len.
+        torch.isneginf(topk_vals_view, out=invalid_view)
+        topk_idx_view.masked_fill_(invalid_view, max_seq_len)
 
-    # Step 5: count valid (< max_seq_len) entries via searchsorted on the sorted vector.
-    boundary_view.fill_(max_seq_len)
-    torch.searchsorted(
-        sorted_vals_view, boundary_view, right=False, out=valid_i64_view
-    )
-    out_lengths[:bs].copy_(valid_i64_view.squeeze(-1))
+        # Step 3: ascending sort using topk(largest=False, sorted=True).
+        # PyTorch's topk requires output indices NOT to alias input — aliasing
+        # corrupts the read (observed: input [3, 1] → output values [0, 1]).
+        # Route throwaway gather indices into a dedicated scratch.
+        assert scratch_throwaway_idx is not None, (
+            "scratch_throwaway_idx is required for the graph-safe topk pipeline"
+        )
+        throwaway_view = scratch_throwaway_idx[:bs, :effective_k]
+        torch.topk(
+            topk_idx_view,
+            effective_k,
+            dim=-1,
+            largest=False,
+            sorted=True,
+            out=(sorted_vals_view, throwaway_view),
+        )
+
+        # Step 4: copy sorted positions to int32 output, then sentinel → -1.
+        out_indices[:bs, :effective_k].copy_(sorted_vals_view)
+        torch.ge(sorted_vals_view, max_seq_len, out=invalid_view)
+        out_indices[:bs, :effective_k].masked_fill_(invalid_view, -1)
+        if effective_k < out_indices.shape[1]:
+            out_indices[:bs, effective_k:].fill_(-1)
+
+        # Step 5: count valid (< max_seq_len) entries via searchsorted on the sorted vector.
+        boundary_view.fill_(max_seq_len)
+        torch.searchsorted(
+            sorted_vals_view, boundary_view, right=False, out=valid_i64_view
+        )
+        out_lengths[:bs].copy_(valid_i64_view.squeeze(-1))
     torch.cuda.nvtx.range_pop()
 
     # Graph-safe anchor-budget force-include (R9): tensorized, fixed-shape, no

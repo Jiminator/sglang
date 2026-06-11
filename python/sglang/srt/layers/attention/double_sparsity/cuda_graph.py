@@ -71,6 +71,17 @@ class DSGraphState:
     # == "bf16"): the fp32 scores are cast into this view, reduced, and cast
     # back — halving the reduce bytes over the static score width.
     scratch_scores_bf16: Optional[torch.Tensor] = None    # bf16 [max_bs, max_seq_len]
+    # Scratch bundle for the sequence-aware deterministic radix top-k
+    # (topk_kernel.select_topk_sequence_order_triton). When present, the
+    # graph-safe selection replaces the two full-width torch.topk passes.
+    scratch_topk_hist: Optional[torch.Tensor] = None        # int32 [max_bs, 256]
+    scratch_topk_key_prefix: Optional[torch.Tensor] = None  # int64 [max_bs]
+    scratch_topk_quota: Optional[torch.Tensor] = None       # int32 [max_bs]
+    scratch_topk_block_above: Optional[torch.Tensor] = None  # int32 [max_bs, nblocks]
+    scratch_topk_block_tie: Optional[torch.Tensor] = None    # int32 [max_bs, nblocks]
+    scratch_topk_above_pref: Optional[torch.Tensor] = None   # int32 [max_bs, nblocks]
+    scratch_topk_tie_pref: Optional[torch.Tensor] = None     # int32 [max_bs, nblocks]
+    topk_block: int = 1024
     # Production input scratch — `forward_batch.req_pool_indices` is int64 in
     # production (scheduler + cuda_graph_runner.py:178) but the captured
     # selector region requires int32. `_select_topk_indices` does an in-place
@@ -113,6 +124,7 @@ def allocate_graph_state(
     label_dim: int = 0,
     selection_capture_layers: int = 0,
     score_reduce_bf16: bool = False,
+    topk_block: int = 1024,
     enable_lifted_budget_decode: bool = False,
     lifted_q_pad_heads: int = 0,
     lifted_head_dim: int = 576,
@@ -182,6 +194,13 @@ def allocate_graph_state(
     scratch_req_pool_indices = None
     scratch_seq_lens = None
     lp_error_scratch = None
+    scratch_topk_hist = None
+    scratch_topk_key_prefix = None
+    scratch_topk_quota = None
+    scratch_topk_block_above = None
+    scratch_topk_block_tie = None
+    scratch_topk_above_pref = None
+    scratch_topk_tie_pref = None
     if max_seq_len > 0:
         scratch_scores = torch.zeros(
             (max_bs, max_seq_len), dtype=torch.float32, device=device,
@@ -221,6 +240,26 @@ def allocate_graph_state(
             scratch_scores_bf16 = torch.zeros(
                 (max_bs, max_seq_len), dtype=torch.bfloat16, device=device,
             )
+        topk_nblocks = (max_seq_len + topk_block - 1) // topk_block
+        scratch_topk_hist = torch.zeros(
+            (max_bs, 256), dtype=torch.int32, device=device,
+        )
+        scratch_topk_key_prefix = torch.zeros(
+            (max_bs,), dtype=torch.int64, device=device,
+        )
+        scratch_topk_quota = torch.zeros((max_bs,), dtype=torch.int32, device=device)
+        scratch_topk_block_above = torch.zeros(
+            (max_bs, topk_nblocks), dtype=torch.int32, device=device,
+        )
+        scratch_topk_block_tie = torch.zeros(
+            (max_bs, topk_nblocks), dtype=torch.int32, device=device,
+        )
+        scratch_topk_above_pref = torch.zeros(
+            (max_bs, topk_nblocks), dtype=torch.int32, device=device,
+        )
+        scratch_topk_tie_pref = torch.zeros(
+            (max_bs, topk_nblocks), dtype=torch.int32, device=device,
+        )
 
     # Selection-capture mirrors — only when the config-borne diagnostic is on
     # (selection_capture_layers = the token-label table's layer count).
@@ -275,6 +314,14 @@ def allocate_graph_state(
         scratch_pv_mask=scratch_pv_mask,
         scratch_throwaway_idx=scratch_throwaway_idx,
         scratch_scores_bf16=scratch_scores_bf16,
+        scratch_topk_hist=scratch_topk_hist,
+        scratch_topk_key_prefix=scratch_topk_key_prefix,
+        scratch_topk_quota=scratch_topk_quota,
+        scratch_topk_block_above=scratch_topk_block_above,
+        scratch_topk_block_tie=scratch_topk_block_tie,
+        scratch_topk_above_pref=scratch_topk_above_pref,
+        scratch_topk_tie_pref=scratch_topk_tie_pref,
+        topk_block=topk_block,
         scratch_req_pool_indices=scratch_req_pool_indices,
         scratch_seq_lens=scratch_seq_lens,
         lp_error_scratch=lp_error_scratch,
@@ -286,6 +333,23 @@ def allocate_graph_state(
         lifted_compact_kv=lifted_compact_kv,
         lifted_q_padded=lifted_q_padded,
     )
+
+
+def radix_topk_scratch(state: Optional["DSGraphState"]) -> Optional[dict]:
+    """The radix top-k scratch bundle of a graph state, as kwargs for
+    ``topk_kernel.select_topk_sequence_order_triton`` — or None when the
+    state has no bundle (legacy torch.topk pipeline)."""
+    if state is None or state.scratch_topk_hist is None:
+        return None
+    return {
+        "scratch_hist": state.scratch_topk_hist,
+        "scratch_key_prefix": state.scratch_topk_key_prefix,
+        "scratch_quota": state.scratch_topk_quota,
+        "scratch_block_above": state.scratch_topk_block_above,
+        "scratch_block_tie": state.scratch_topk_block_tie,
+        "scratch_above_pref": state.scratch_topk_above_pref,
+        "scratch_tie_pref": state.scratch_topk_tie_pref,
+    }
 
 
 def capture_decode_step(
@@ -412,6 +476,8 @@ def capture_decode_step(
                 scratch_pv_mask=state.scratch_pv_mask,
                 scratch_throwaway_idx=state.scratch_throwaway_idx,
                 scratch_scores_bf16=state.scratch_scores_bf16,
+                radix_topk_scratch=radix_topk_scratch(state),
+                topk_block=state.topk_block,
                 token_scales=selector.token_label_table.scales,
                 process_group=getattr(selector, "process_group", None),
                 reduce_ca=getattr(selector, "reduce_ca", None),

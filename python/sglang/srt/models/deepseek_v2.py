@@ -2315,6 +2315,9 @@ class DeepseekV2AttentionMLA(
                     and req_to_token is not None
                 )
                 if _use_graph_safe:
+                    from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+                        radix_topk_scratch as _radix_topk_scratch,
+                    )
                     from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
                         retrieve_topk_graph_safe,
                     )
@@ -2372,6 +2375,8 @@ class DeepseekV2AttentionMLA(
                         scratch_scores_bf16=getattr(
                             _ds_graph_state, "scratch_scores_bf16", None
                         ),
+                        radix_topk_scratch=_radix_topk_scratch(_ds_graph_state),
+                        topk_block=getattr(_ds_graph_state, "topk_block", 1024),
                         token_scales=_selector.token_label_table.scales,
                         process_group=getattr(_selector, "process_group", None),
                         reduce_ca=getattr(_selector, "reduce_ca", None),

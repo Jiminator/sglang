@@ -10665,6 +10665,144 @@ class TestScoreReduceGraphStateScratch(unittest.TestCase):
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
+class TestRadixTopkKernel(unittest.TestCase):
+    """Sequence-aware deterministic radix top-k vs the reference selector —
+    exact on adversarial fixtures, deterministic on ties, graph-safe."""
+
+    WIDTH = 202752
+    K = 2048
+
+    @classmethod
+    def setUpClass(cls):
+        from sglang.srt.layers.attention.double_sparsity.topk_kernel import (
+            allocate_topk_scratch,
+        )
+
+        cls.dev = torch.device("cuda")
+        cls.scratch = allocate_topk_scratch(max_bs=4, width=cls.WIDTH, device=cls.dev)
+        cls.out_idx = torch.full((4, cls.K), -1, dtype=torch.int32, device=cls.dev)
+        cls.out_len = torch.zeros(4, dtype=torch.int32, device=cls.dev)
+
+    def _run(self, scores, seq):
+        from sglang.srt.layers.attention.double_sparsity.topk_kernel import (
+            select_topk_sequence_order_triton,
+        )
+
+        select_topk_sequence_order_triton(
+            scores, seq, self.K,
+            out_indices=self.out_idx, out_lengths=self.out_len, **self.scratch,
+        )
+        bs = scores.shape[0]
+        return self.out_idx[:bs].clone(), self.out_len[:bs].clone()
+
+    def _ref(self, scores, seq):
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            select_topk_sequence_order,
+        )
+
+        s = scores.clone()
+        for b in range(s.shape[0]):
+            s[b, int(seq[b]):] = float("-inf")
+        idx, lens = select_topk_sequence_order(s, self.K)
+        return idx, lens
+
+    def _assert_match(self, scores, seq):
+        gi, gl = self._run(scores, seq)
+        ri, rl = self._ref(scores, seq)
+        self.assertTrue(torch.equal(gi, ri), "indices diverge from reference")
+        self.assertTrue(torch.equal(gl, rl), "lengths diverge from reference")
+        return gi, gl
+
+    def test_random_scores_mixed_seq_lens(self):
+        torch.manual_seed(7)
+        sc = torch.randn(4, self.WIDTH, device=self.dev)
+        seq = torch.tensor([4608, 1000, 16384, 2048], dtype=torch.int32, device=self.dev)
+        self._assert_match(sc, seq)
+
+    def test_tie_plateau_straddling_k(self):
+        sc = torch.full((4, self.WIDTH), -1e9, device=self.dev)
+        sc[:, :1500] = torch.randperm(1500, device=self.dev).float() + 1000
+        sc[:, 1500:3500] = 7.5
+        seq = torch.full((4,), 4608, dtype=torch.int32, device=self.dev)
+        gi, _ = self._assert_match(sc, seq)
+        # Lowest-position tie admission: plateau picks are 1500..2047.
+        self.assertEqual(int(gi[0, 1500]), 1500)
+        self.assertEqual(int(gi[0, 2047]), 2047)
+
+    def test_neg_inf_interleaved_and_underfull_rows(self):
+        torch.manual_seed(8)
+        sc = torch.randn(4, self.WIDTH, device=self.dev)
+        sc[:, ::3] = float("-inf")
+        sc[1, :] = float("-inf")
+        sc[1, 10:110] = torch.randn(100, device=self.dev)
+        seq = torch.tensor([3000, 5000, 1024, 4608], dtype=torch.int32, device=self.dev)
+        gi, gl = self._assert_match(sc, seq)
+        self.assertEqual(int(gl[1]), 100)  # num_finite < K
+
+    def test_bf16_quantized_scores(self):
+        # The served reality after the bf16 score-reduce: heavy natural ties.
+        torch.manual_seed(9)
+        sc = torch.randn(4, self.WIDTH, device=self.dev).to(torch.bfloat16).float()
+        seq = torch.full((4,), 4608, dtype=torch.int32, device=self.dev)
+        self._assert_match(sc, seq)
+
+    def test_zero_pair_canonicalized(self):
+        sc = torch.full((4, self.WIDTH), -2.0, device=self.dev)
+        sc[:, : self.K - 50] = torch.randperm(self.K - 50, device=self.dev).float() + 10
+        sc[:, self.K - 50 : self.K + 50 : 2] = 0.0
+        sc[:, self.K - 49 : self.K + 50 : 2] = -0.0
+        seq = torch.full((4,), 8192, dtype=torch.int32, device=self.dev)
+        self._assert_match(sc, seq)
+
+    def test_deterministic_on_ties(self):
+        sc = torch.full((2, self.WIDTH), -1e9, device=self.dev)
+        sc[:, :1500] = torch.randperm(1500, device=self.dev).float() + 1000
+        sc[:, 1500:3500] = 7.5
+        seq = torch.full((2,), 4608, dtype=torch.int32, device=self.dev)
+        outs = [self._run(sc, seq)[0] for _ in range(10)]
+        for o in outs[1:]:
+            self.assertTrue(torch.equal(outs[0], o), "tie selection not deterministic")
+
+    def test_graph_replay_tracks_mutation_zero_alloc(self):
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            assert_no_alloc_in_region,
+        )
+        from sglang.srt.layers.attention.double_sparsity.topk_kernel import (
+            select_topk_sequence_order_triton,
+        )
+
+        torch.manual_seed(11)
+        static_scores = torch.randn(2, self.WIDTH, device=self.dev)
+        static_scores[:, 4608:] = float("-inf")
+        static_seq = torch.full((2,), 4608, dtype=torch.int32, device=self.dev)
+
+        def call():
+            select_topk_sequence_order_triton(
+                static_scores, static_seq, self.K,
+                out_indices=self.out_idx, out_lengths=self.out_len, **self.scratch,
+            )
+
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            call()
+        torch.cuda.current_stream().wait_stream(stream)
+        g = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g):
+            call()
+        new_scores = torch.randn(2, self.WIDTH, device=self.dev)
+        new_scores[:, 3000:] = float("-inf")
+        static_scores.copy_(new_scores)
+        static_seq.copy_(torch.full((2,), 3000, dtype=torch.int32, device=self.dev))
+        with assert_no_alloc_in_region("radix-topk-replay"):
+            g.replay()
+        torch.cuda.synchronize()
+        ri, rl = self._ref(new_scores, static_seq)
+        self.assertTrue(torch.equal(self.out_idx[:2], ri))
+        self.assertTrue(torch.equal(self.out_len[:2], rl))
+
+
+@unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
 class TestGraphSafePipelineAdversarial(unittest.TestCase):
     """Adversarial fixtures through the PRODUCTION graph-safe selection
     pipeline (Triton score kernel + in-place torch.topk pipeline), checked
@@ -10719,7 +10857,7 @@ class TestGraphSafePipelineAdversarial(unittest.TestCase):
 
     def _run_graph_safe(self, sel, req_to_token, seq_len, sparse_mask=None):
         from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
-            allocate_graph_state,
+            allocate_graph_state, radix_topk_scratch,
         )
         from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
             retrieve_topk_graph_safe,
@@ -10730,6 +10868,7 @@ class TestGraphSafePipelineAdversarial(unittest.TestCase):
         state = allocate_graph_state(
             max_bs=1, max_top_k=sel.max_top_k, max_seq_len=T, device=device,
         )
+        self._radix_bundle = radix_topk_scratch(state)
         retrieve_topk_graph_safe(
             queries=torch.ones(1, 1, 1, dtype=torch.float32, device=device),
             token_signatures=sel.token_label_table.signatures,
@@ -10754,6 +10893,8 @@ class TestGraphSafePipelineAdversarial(unittest.TestCase):
             per_request_valid=sparse_mask,
             scratch_pv_mask=state.scratch_pv_mask,
             scratch_throwaway_idx=state.scratch_throwaway_idx,
+            radix_topk_scratch=self._radix_bundle,
+            topk_block=state.topk_block,
             token_scales=sel.token_label_table.scales,
             process_group=None,
         )
