@@ -46,7 +46,7 @@ Tracked source provenance verified: `task11_exact_floor_harness.py`, `task11_hea
 
 Explicitly local forensic evidence: raw trace trees, raw serve/run logs, selcap pass directories, and oracle sink files; their durable claims are represented by tracked summaries, digests, comparisons, and JSON reports.
 
-Finding: `development/loop10/results.md` is modified relative to HEAD and is treated as authoritative per this regeneration request; the existing `reviews/task10_closeout.md` is the superseded layered artifact. No binding cited artifact is untracked.
+Current state (round-9 correction of a generation-time sentence): `results.md`, `queue.md`, and this regenerated close-out are all committed and current at HEAD; the prior layered close-out exists only in git history as the superseded artifact. No binding cited artifact is untracked.
 
 ## QUEUE/PROTOCOL COMPLIANCE
 
