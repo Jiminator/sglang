@@ -1,0 +1,5 @@
+[selcap-run-op] pass 0: wiped 56 stale dump file(s)
+[selcap-run-op] pass 0: 29 requests in 9.3s, snapshot 96 files -> development/loop10/runs/20260611_m0_freeze/selcap_op/pass0
+[selcap-run-op] pass 1: wiped 0 stale dump file(s)
+[selcap-run-op] pass 1: 29 requests in 7.1s, snapshot 96 files -> development/loop10/runs/20260611_m0_freeze/selcap_op/pass1
+[selcap-run-op] meta -> development/loop10/runs/20260611_m0_freeze/selcap_op/meta.json

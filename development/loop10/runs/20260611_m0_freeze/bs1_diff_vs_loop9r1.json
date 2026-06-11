@@ -1,0 +1,10 @@
+{
+  "a": "/sgl-workspace/sglang/development/loop9/runs/20260611_r1/selcap_digest.json",
+  "b": "development/loop10/runs/20260611_m0_freeze/bs1_digest.json",
+  "steps_compared": 64,
+  "sha_mismatches": 0,
+  "identity_changes": {},
+  "allowed_identity_changes": [],
+  "verdict": "PASS",
+  "problems": []
+}

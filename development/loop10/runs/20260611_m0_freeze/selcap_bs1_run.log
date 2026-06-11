@@ -1,0 +1,13 @@
+[selcap-run] pass 0: wiped 56 stale dump file(s)
+[selcap-run]   prompt 0: 400w -> 546 tokens (0.5s)
+[selcap-run]   prompt 1: 2200w -> 2878 tokens (2.4s)
+[selcap-run]   prompt 2: 4600w -> 6121 tokens (0.6s)
+[selcap-run]   prompt 3: 9400w -> 12531 tokens (1.0s)
+[selcap-run] pass 0: snapshot 256 files -> development/loop10/runs/20260611_m0_freeze/selcap_bs1/pass0
+[selcap-run] pass 1: wiped 0 stale dump file(s)
+[selcap-run]   prompt 0: 400w -> 546 tokens (0.4s)
+[selcap-run]   prompt 1: 2200w -> 2878 tokens (0.5s)
+[selcap-run]   prompt 2: 4600w -> 6121 tokens (0.6s)
+[selcap-run]   prompt 3: 9400w -> 12531 tokens (1.0s)
+[selcap-run] pass 1: snapshot 256 files -> development/loop10/runs/20260611_m0_freeze/selcap_bs1/pass1
+[selcap-run] meta -> development/loop10/runs/20260611_m0_freeze/selcap_bs1/meta.json

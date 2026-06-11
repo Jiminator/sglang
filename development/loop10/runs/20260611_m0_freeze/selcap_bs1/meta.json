@@ -1,0 +1,77 @@
+{
+  "mode": "bs1-sequential",
+  "base_url": "http://127.0.0.1:30000",
+  "decode_steps": 8,
+  "word_counts": [
+    400,
+    2200,
+    4600,
+    9400
+  ],
+  "prompt_sha256": [
+    "a18d1b9f8b659bb4c0cac207cc75a004a519fe79ac77d585141a96ebe80ca4a8",
+    "9616c4e15983e2d089a8b9850bdcaddfc0708c1ab0f9e6cddf08007dcda141fc",
+    "926f4e8f88814be05ec7332ae471a243fa3c7dfcfe91ab3172e907f175cd6ac6",
+    "939834bfd42c7ff8f4b47a4113c2b1f9e06ddd9d24b3cca75aa4b4f3ada62b83"
+  ],
+  "passes": [
+    {
+      "requests": [
+        {
+          "prompt_words": 400,
+          "prompt_tokens": 546,
+          "completion_tokens": 9,
+          "latency_s": 0.45
+        },
+        {
+          "prompt_words": 2200,
+          "prompt_tokens": 2878,
+          "completion_tokens": 9,
+          "latency_s": 2.43
+        },
+        {
+          "prompt_words": 4600,
+          "prompt_tokens": 6121,
+          "completion_tokens": 9,
+          "latency_s": 0.57
+        },
+        {
+          "prompt_words": 9400,
+          "prompt_tokens": 12531,
+          "completion_tokens": 9,
+          "latency_s": 1.02
+        }
+      ],
+      "dump_files": 256
+    },
+    {
+      "requests": [
+        {
+          "prompt_words": 400,
+          "prompt_tokens": 546,
+          "completion_tokens": 9,
+          "latency_s": 0.43
+        },
+        {
+          "prompt_words": 2200,
+          "prompt_tokens": 2878,
+          "completion_tokens": 9,
+          "latency_s": 0.5
+        },
+        {
+          "prompt_words": 4600,
+          "prompt_tokens": 6121,
+          "completion_tokens": 9,
+          "latency_s": 0.56
+        },
+        {
+          "prompt_words": 9400,
+          "prompt_tokens": 12531,
+          "completion_tokens": 9,
+          "latency_s": 1.03
+        }
+      ],
+      "dump_files": 256
+    }
+  ]
+}
