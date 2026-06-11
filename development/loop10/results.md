@@ -169,8 +169,15 @@ column INVERTS the ranking (NCCL 33.7 "wins" eager), retroactively explaining th
 spike-bench conclusion as an eager artifact (BitLesson addendum recorded). DROP confirmed on
 direct evidence.
 
-### Open items / next
+### CLOSE-OUT (round 4) — task10 complete; the loop's task table is fully terminal
 
-- **task10 close-out** (final, analyze): AC tally with DEC-L10-2's adjudicated AC-1.2
-  disposition; queue/results/tracker reconciliation; evidence pre-flight. All other AC-1 bars
-  met at hard AND stretch; AC-2/AC-3/AC-4/AC-5 green.
+`reviews/task10_closeout.md` (Codex analyze): final AC tally — AC-1 total / AC-1.1 / AC-1.3
+MET at hard AND stretch; **AC-1.2 NOT MET (owner-adjudicated DEC-L10-2, not re-scoped)**;
+AC-2 MET under the declared regimes (DEC-L10-1 the sole exception, op-point zero-diff);
+AC-2.1–2.4, AC-3, AC-4.1/4.2, AC-5 all MET with binding artifacts. Evidence pre-flight: no
+cited-but-untracked artifacts; raw traces/.pt dirs explicitly local-forensic. Queue
+reconciled: task0–task11 terminal, task8/task9 dropped with measured causes, cand1/cand2
+dispositioned. Protocol: frozen references never re-run/replaced; baseline chain
+m0_freeze → task4 → task6r2 → task11 → task7 integral (every hop zero-diff or declared).
+
+**Loop headline: 480,989 → 361,824 µs — 1.403× → 1.055× vs the frozen DSA floor.**
