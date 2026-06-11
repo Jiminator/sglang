@@ -40,14 +40,21 @@ zero-alloc) that activate when an op-bearing wheel is installed (env-gated JIT b
 in-tree source for dev boxes). Compile-verified and benchmarked on this box via
 `torch.utils.cpp_extension` over the in-tree source (30.7 s compile, sm_90).
 
-The full wheel build was attempted on this box (prebuilt-wheel environment, no prior build
-tree): first attempts failed on CUDA-toolchain discovery (nvcc not on PATH; stale subproject
-cache) — see `runs/20260611_r1/sgl_kernel_build.log` for the final attempt's outcome.
-Deliberately NOT `pip install`ed even on success: force-reinstalling a rebuilt wheel would
-replace the prebuilt binary that every frozen reference and baseline in this loop ran on,
-invalidating the frozen-reference premise for all subsequent profiling (the AC-4 rule's
-spirit). Adopting a rebuilt wheel is a separate, gated op-point change for a future loop,
-paired with the mandatory DSA regression.
+The full wheel build **succeeded** on this box after an escalating fix chain (nvcc not on
+PATH → stale subproject caches → CUDA 13's CCCL relocated to `<toolkit>/include/cccl/` which
+third-party deps don't expect → a vendored cu12-CCCL version conflict; final working
+configuration: clean build dir + `-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc`
+`-DCMAKE_CUDA_ARCHITECTURES=90` `-DCMAKE_CXX_FLAGS=-I/usr/local/cuda/include/cccl`,
+wheel-only via `uv build`). Result: `sglang_kernel-0.4.2.post2-cp310-abi3-linux_x86_64.whl`
+(323 MB, sm_90; sha256 20ec104f6f2b7d7e9c60ae2ea8839804…), with `ds_topk_sequence_order`
+registered in `sgl_kernel/sm90/common_ops.abi3.so` (symbol + torch schema verified by
+inspection). Attempt log: `runs/20260611_r1/sgl_kernel_build.log`.
+
+The wheel is deliberately NOT installed: force-reinstalling a rebuilt wheel would replace the
+prebuilt binary that every frozen reference and baseline in this loop ran on, invalidating the
+frozen-reference premise for all subsequent profiling (the AC-4 rule's spirit). Adopting it is
+a separate, gated op-point change for a future loop, paired with the mandatory DSA regression
+(DS-off smoke + Case-2 re-validation).
 
 ## Follow-on (unchanged)
 
