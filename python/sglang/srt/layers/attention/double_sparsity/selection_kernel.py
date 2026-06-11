@@ -670,6 +670,7 @@ def reduce_token_scores(
     reduce_ca=None,
     bf16_scratch: Optional[torch.Tensor] = None,
     use_bf16: bool = False,
+    copy_back: bool = True,
 ) -> torch.Tensor:
     """SUM-reduce per-rank partial token scores across the attention TP group.
 
@@ -692,6 +693,12 @@ def reduce_token_scores(
 
     ``use_bf16=False`` keeps the original in-place fp32 reduce. No process
     group / distributed not initialized → no-op.
+
+    ``copy_back=False`` (bf16 path only) skips the bf16→fp32 copy-back and
+    returns the REDUCED BF16 tensor as the authoritative result — for
+    consumers that upcast in-register (the radix top-k), whose compared
+    values are then bit-identical to the copy-back fp32 values (bf16→fp32
+    is exact) while the copy-back kernel disappears.
     """
     global _score_reduce_fallback_logged
 
@@ -719,6 +726,8 @@ def reduce_token_scores(
             algorithm=getattr(reduce_ca, "pinned_algo_name", "size_based"),
         )
         reduced = reduce_ca.custom_all_reduce(bf16_view)
+        if not copy_back:
+            return reduced
         token_scores.copy_(reduced)
         return token_scores
     if reduce_ca is not None and not _score_reduce_fallback_logged:
@@ -736,6 +745,8 @@ def reduce_token_scores(
         op=torch.distributed.ReduceOp.SUM,
         group=process_group,
     )
+    if not copy_back:
+        return bf16_view
     token_scores.copy_(bf16_view)
     return token_scores
 
@@ -1664,15 +1675,32 @@ def retrieve_topk_graph_safe(
     )
     torch.cuda.nvtx.range_pop()
 
+    # The radix selector upcasts score loads in-register, so the reduced bf16
+    # buffer can be its authoritative input: the compared values are
+    # bit-identical to the fp32 copy-back (bf16→fp32 is exact) and the
+    # copy-back kernel disappears. The full-row fp32 consumers — the legacy
+    # torch.topk pipeline, the recall oracle's ranking, and the anchor
+    # force-include — keep the copy-back.
+    bf16_used = score_reduce_bf16 and scratch_scores_bf16 is not None
+    bf16_authoritative = (
+        radix_topk_scratch is not None
+        and bf16_used
+        and not recall_oracle
+        and anchor_mode == "off"
+    )
+    topk_scores = scores_view
     if process_group is not None and torch.distributed.is_available() and torch.distributed.is_initialized():
         torch.cuda.nvtx.range_push("ds_score_allreduce")
-        reduce_token_scores(
+        reduced = reduce_token_scores(
             scores_view,
             process_group=process_group,
             reduce_ca=reduce_ca,
             bf16_scratch=scratch_scores_bf16,
-            use_bf16=score_reduce_bf16 and scratch_scores_bf16 is not None,
+            use_bf16=bf16_used,
+            copy_back=not bf16_authoritative,
         )
+        if bf16_authoritative:
+            topk_scores = reduced
         torch.cuda.nvtx.range_pop()
 
     if per_request_valid is not None:
@@ -1684,7 +1712,9 @@ def retrieve_topk_graph_safe(
         pv_view.copy_(per_request_valid)
         # In-place flip: True = valid → True = invalid; then masked_fill_(invalid, -inf).
         torch.logical_not(pv_view, out=pv_view)
-        scores_view.masked_fill_(pv_view, float("-inf"))
+        # Masks the AUTHORITATIVE buffer: bf16(-inf) upcasts to fp32(-inf),
+        # so the masked selection is identical on either dtype.
+        topk_scores.masked_fill_(pv_view, float("-inf"))
 
     torch.cuda.nvtx.range_push("ds_topk_select")
     if radix_topk_scratch is not None:
@@ -1697,7 +1727,7 @@ def retrieve_topk_graph_safe(
         )
 
         select_topk_sequence_order_triton(
-            scores_view,
+            topk_scores,
             seq_lens,
             max_top_k,
             out_indices=out_indices,

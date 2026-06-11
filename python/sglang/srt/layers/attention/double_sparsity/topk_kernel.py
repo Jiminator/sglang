@@ -67,7 +67,7 @@ if _TRITON_AVAILABLE:
 
     @triton.jit
     def _radix_hist_kernel(
-        scores_ptr,      # fp32 [bs, width]
+        scores_ptr,      # fp32/bf16 [bs, width] (loads upcast to fp32)
         seq_lens_ptr,    # int32 [bs]
         prefix_ptr,      # int64 [bs] accumulated high key bits (<< shift aligned)
         hist_ptr,        # int32 [bs, NUM_BINS] (pre-zeroed)
@@ -88,7 +88,9 @@ if _TRITON_AVAILABLE:
             return
         offs = start + tl.arange(0, BLOCK)
         in_win = offs < n
-        s = tl.load(scores_ptr + row * scores_stride_b + offs, mask=in_win, other=float("-inf"))
+        s = tl.load(
+            scores_ptr + row * scores_stride_b + offs, mask=in_win, other=float("-inf")
+        ).to(tl.float32)  # exact upcast: bf16 input compares as its fp32 value
         finite = in_win & (s == s) & (s != float("-inf"))
         key = _key_of(s)
         if PREFIX_BITS > 0:
@@ -158,7 +160,9 @@ if _TRITON_AVAILABLE:
             return
         offs = start + tl.arange(0, BLOCK)
         in_win = offs < n
-        s = tl.load(scores_ptr + row * scores_stride_b + offs, mask=in_win, other=float("-inf"))
+        s = tl.load(
+            scores_ptr + row * scores_stride_b + offs, mask=in_win, other=float("-inf")
+        ).to(tl.float32)  # exact upcast: bf16 input compares as its fp32 value
         finite = in_win & (s == s) & (s != float("-inf"))
         key = _key_of(s)
         t = tl.load(thr_ptr + row)
@@ -210,7 +214,9 @@ if _TRITON_AVAILABLE:
             return
         offs = start + tl.arange(0, BLOCK)
         in_win = offs < n
-        s = tl.load(scores_ptr + row * scores_stride_b + offs, mask=in_win, other=float("-inf"))
+        s = tl.load(
+            scores_ptr + row * scores_stride_b + offs, mask=in_win, other=float("-inf")
+        ).to(tl.float32)  # exact upcast: bf16 input compares as its fp32 value
         finite = in_win & (s == s) & (s != float("-inf"))
         key = _key_of(s)
         t = tl.load(thr_ptr + row)
@@ -237,7 +243,7 @@ if _TRITON_AVAILABLE:
 
 
 def select_topk_sequence_order_triton(
-    token_scores: torch.Tensor,   # fp32 [bs, width]
+    token_scores: torch.Tensor,   # fp32 or bf16 [bs, width] (kernels upcast in-register)
     seq_lens: torch.Tensor,       # int32 [bs]
     max_top_k: int,
     *,

@@ -11711,6 +11711,56 @@ class TestCompactSelectorWidthAllocation(unittest.TestCase):
         self.assertTrue(torch.equal(outs[256], outs[512]))
         self.assertTrue(torch.equal(outs[256], outs[None]))
 
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
+    def test_radix_topk_bf16_input_selects_identically_to_fp32_upcast(self):
+        """The radix suite upcasts score loads in-register, so a bf16 score
+        buffer must select exactly what its exact fp32 upcast selects —
+        including tie plateaus (common in bf16) and the non-finite contract
+        (-inf/NaN never selected)."""
+        from sglang.srt.layers.attention.double_sparsity.topk_kernel import (
+            select_topk_sequence_order_triton,
+        )
+
+        device = torch.device("cuda:0")
+        torch.manual_seed(20260611)
+        bs, width, k, block = 4, 5120, 64, 1024
+        nblocks = (width + block - 1) // block
+        scores_bf16 = torch.randn(bs, width, dtype=torch.float32, device=device)
+        # Force heavy tie plateaus and non-finites.
+        scores_bf16[0, 100:600] = 0.5
+        scores_bf16[1, ::7] = float("-inf")
+        scores_bf16[2, 50:80] = float("nan")
+        scores_bf16[3, :] = 1.0
+        scores_bf16 = scores_bf16.to(torch.bfloat16)
+        seq = torch.tensor([4608, 5120, 2886, 547], dtype=torch.int32, device=device)
+
+        def scratch():
+            return dict(
+                scratch_hist=torch.zeros(bs, 256, dtype=torch.int32, device=device),
+                scratch_key_prefix=torch.zeros(bs, dtype=torch.int64, device=device),
+                scratch_quota=torch.zeros(bs, dtype=torch.int32, device=device),
+                scratch_block_above=torch.zeros(bs, nblocks, dtype=torch.int32, device=device),
+                scratch_block_tie=torch.zeros(bs, nblocks, dtype=torch.int32, device=device),
+                scratch_above_pref=torch.zeros(bs, nblocks, dtype=torch.int32, device=device),
+                scratch_tie_pref=torch.zeros(bs, nblocks, dtype=torch.int32, device=device),
+            )
+
+        out_i_a = torch.full((bs, k), -1, dtype=torch.int32, device=device)
+        out_l_a = torch.zeros(bs, dtype=torch.int32, device=device)
+        select_topk_sequence_order_triton(
+            scores_bf16, seq, k, out_indices=out_i_a, out_lengths=out_l_a,
+            block=block, **scratch(),
+        )
+        out_i_b = torch.full((bs, k), -1, dtype=torch.int32, device=device)
+        out_l_b = torch.zeros(bs, dtype=torch.int32, device=device)
+        select_topk_sequence_order_triton(
+            scores_bf16.float(), seq, k, out_indices=out_i_b, out_lengths=out_l_b,
+            block=block, **scratch(),
+        )
+        torch.cuda.synchronize()
+        self.assertTrue(torch.equal(out_i_a, out_i_b))
+        self.assertTrue(torch.equal(out_l_a, out_l_b))
+
     def test_shared_graph_state_one_object_per_width(self):
         """Graph state is shared per selector width across batch-size
         variants: same object for repeat captures of one width, distinct
