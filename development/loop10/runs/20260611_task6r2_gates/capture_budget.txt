@@ -1,0 +1,19 @@
+# task6 R2 capture-memory / boot-time evidence (from serve logs)
+
+## serve.log
+[2026-06-11 11:58:28 TP0] Capture cuda graph bs [1, 2, 4, 8, 12, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512]
+[2026-06-11 11:58:28 TP0] DS selector-width graph variants: [5120, 202756]
+capture window (first/last 'Capturing batches' avail_mem):
+Capturing batches (bs=512 avail_mem=30.61 GB)
+Capturing batches (bs=1 avail_mem=26.68 GB)
+capture timestamps:
+[2026-06-11 12:00:28] The server is fired up and ready to roll!
+
+## selcap_op_serve.log
+[2026-06-11 11:48:27 TP0] Capture cuda graph bs [1, 2, 4, 8, 12, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512]
+[2026-06-11 11:48:27 TP0] DS selector-width graph variants: [5120, 202756]
+capture window (first/last 'Capturing batches' avail_mem):
+Capturing batches (bs=512 avail_mem=30.61 GB)
+Capturing batches (bs=1 avail_mem=25.97 GB)
+capture timestamps:
+[2026-06-11 11:50:27] The server is fired up and ready to roll!

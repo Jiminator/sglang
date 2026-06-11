@@ -1,0 +1,26 @@
+{
+  "a": "/sgl-workspace/sglang/development/loop10/runs/20260611_task4_gates/op_digest.json",
+  "b": "/sgl-workspace/sglang/development/loop10/runs/20260611_task6r2_gates/op_digest.json",
+  "steps_compared": 24,
+  "sha_mismatches": 0,
+  "identity_changes": {
+    "selector_width": [
+      [
+        "202756",
+        "5120"
+      ]
+    ],
+    "graph_key": [
+      [
+        "[32, 202756]",
+        "[32, 5120]"
+      ]
+    ]
+  },
+  "allowed_identity_changes": [
+    "graph_key",
+    "selector_width"
+  ],
+  "verdict": "PASS",
+  "problems": []
+}

@@ -1,0 +1,2 @@
+[recall-gate] summary -> /sgl-workspace/sglang/development/loop10/runs/20260611_task6r2_gates/recall_gate.json
+[recall-gate] PASS: overall recall@2048 64.706% within ±0.5pp of baseline

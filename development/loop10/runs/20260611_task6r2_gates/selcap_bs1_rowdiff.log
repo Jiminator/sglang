@@ -1,0 +1,2 @@
+[selcap-diff] report -> /sgl-workspace/sglang/development/loop10/runs/20260611_task6r2_gates/bs1_rowdiff_vs_baseline.json
+[selcap-diff] FAIL: 621/2496 (layer,row) selections differ — exact-change gate violated
