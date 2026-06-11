@@ -83,10 +83,19 @@ def maybe_dump_selection_capture(forward_batch, attn_backend, tp_rank: int) -> N
         seq_lens[:bs].detach().to("cpu").tolist() if seq_lens is not None else None
     )
     # Bucket identity: which captured variant served this step, at what
-    # allocated row count and selector width. `graph_key` comes from the
-    # backend's pre-replay stamp (None == eager path, whose graph state is
-    # freshly allocated per forward and never stamped).
+    # batch bucket and selector width. `graph_key` comes from the backend's
+    # pre-replay stamp (None == eager path, whose graph state is freshly
+    # allocated per forward and never stamped). The padded batch size comes
+    # from the key — the capture mirrors are sized at the GLOBAL max capture
+    # batch size (graph state is shared per width across bs variants), so
+    # the mirror shape no longer identifies the variant's bucket.
     graph_key = getattr(gs, "last_replay_graph_key", None)
+    if isinstance(graph_key, tuple):
+        padded_bs = int(graph_key[0])
+    elif isinstance(graph_key, int):
+        padded_bs = graph_key
+    else:
+        padded_bs = int(gs.capture_indices.shape[1])
     record = {
         "bs": bs,
         "seq_lens": seq_lens_list,
@@ -94,7 +103,7 @@ def maybe_dump_selection_capture(forward_batch, attn_backend, tp_rank: int) -> N
         "indices": gs.capture_indices[:, :bs].detach().to("cpu").clone(),
         "lengths": gs.capture_lengths[:, :bs].detach().to("cpu").clone(),
         "raw_bs": bs,
-        "padded_bs": int(gs.capture_indices.shape[1]),
+        "padded_bs": padded_bs,
         "selector_width": int(getattr(gs, "max_seq_len", 0) or 0),
         "graph_key": graph_key,
         "replay_path": graph_key is not None,

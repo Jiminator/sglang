@@ -98,10 +98,47 @@ truth for task state): `development/loop10/queue.md`.
   digests (bs-1 + op-point), with `selector_width` (202756→5120 at the op point) and `graph_key`
   as the declared identity changes; indices/lengths SHAs must remain bit-identical.
 
+### DEC-L10-1 (round 2): task5 transport component re-classified value-affecting (plan-sanctioned path)
+
+The task6 bs-1 hard gate FIRED on the first compact landing — working exactly as designed — and
+the diagnosis produced two measured findings:
+
+1. **Pre-existing alignment accident**: the bs-1 FULL-WIDTH score reduce was never custom-AR
+   eligible (1 × 202,756 × 2 B = 405,512 B fails `should_custom_ar`'s 16-byte divisibility) —
+   every frozen bs-1 fingerprint (loop-9 R1, m0_freeze, task4) embeds a silent NCCL reduce for
+   bs-1 while the op point embeds custom-AR two-shot. The pre-change transport was already
+   shape-dependent. Compact buffers (bs × 5120 × 2 B, always 16-aligned) made those buckets
+   custom-AR-eligible → algorithm flip NCCL→pinned two-shot on exactly the compact bs-1 steps →
+   summation-order change → boundary churn where selection is score-sensitive (seq > top_k):
+   measured median ~107/2,048 positions (5.2%), mean 130, max 695 (`runs/20260611_task6_gates/`
+   + forensic row diffs). Steps with seq ≤ top_k and all full-width steps are bit-identical.
+2. **Correctness probe** (`ar_algo_probe.py` / `ar_algo_probe.json`, 8 ranks): two-shot,
+   one-shot-pull, one-shot-push, size-based, and NCCL all produce EXACT sums on
+   exactly-representable inputs at every probed shape incl. 10 KiB — the effect is summation
+   ORDER only, not corruption. (Side finding: ONE_SHOT_PUSH hard-errors >160 KB — an unpinned
+   flip could crash, reinforcing the pin.)
+
+Per the plan's change classification ("revert, or re-classify with a user-visible ledger
+entry"), the compact-bucket transport flip is DECLARED VALUE-AFFECTING under the loop-9 bf16
+precedent: cross-rank bit-identity HARD (PASS), run-to-run determinism (PASS), recall@2048
+±0.5pp fail-closed (gate rerun), selcap diff recorded as evidence (expected nonzero at bs-1).
+Deliberately replicating the alignment accident (forcing NCCL on compact buckets) to preserve
+digest equality was rejected as enshrining a bug; the op point keeps two-shot on both sides.
+After this landing banks, the task6-state digests become the exact-diff baselines for task7+.
+
+### Capture-memory amendment (round 2, measured): DSGraphState shared per width
+
+Per-variant DSGraphState ownership OOM'd CUDA-graph capture at 41/104 captures (mem 0.7,
+`runs/20260611_task6_gates/selcap_op_serve.log`): width-proportional scratch and selcap mirrors
+multiplied by the 52-entry ladder (~15 GiB full-width scratch + ~6.7 GiB mirrors → ×2 with
+compact variants). Amended (dossier §1 deviation, documented): ONE shared DSGraphState per
+selector width, allocated at the global max capture bs; every same-width variant's DSAMetadata
+references it. Aliasing is safe (one replay at a time; each replay fully rewrites the rows it
+reads). This also REALIZES the loop-9 M4 audit's recoverable headroom (~14 GiB) instead of
+merely respecting it. The dump's padded_bs now derives from the graph key.
+
 ### Open items / next
 
-- task5 compact patch (M1 Patch 2 per dossier §6) — next round's mainline: real per-width
-  DSGraphState buffers (W=5120 + full fallback, whole ladder), real-row dispatch already landed,
-  pinned two-shot via `override_algo=TWO_SHOT_PULL` (NOT `override_shot(2)` — task2 caveat),
-  weak-contiguity assertion, boundary tests, capture-memory/boot-time measurement.
-- task6 M1 gate run; then task7/task8; task9 conditional; task10 close-out per `queue.md`.
+- task6 M1 gate rerun (in flight): SELCAP_DIFF_AS_EVIDENCE for the declared component, recall
+  HARD, same-round Case-2, Case-1 profile + per-bucket read, capture budget artifact.
+- Then task7/task8; task9 conditional; task10 close-out per `queue.md`.

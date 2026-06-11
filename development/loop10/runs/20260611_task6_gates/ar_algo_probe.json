@@ -1,0 +1,293 @@
+{
+  "world_size": 8,
+  "ca_type": "CustomAllReduceV2",
+  "ca_disabled": false,
+  "expected_exact_sum": 36.0,
+  "cases": [
+    {
+      "shape": [
+        1,
+        5120
+      ],
+      "bytes": 10240,
+      "algos": {
+        "TWO_SHOT_PULL": {
+          "mismatched_elements": 0,
+          "total": 5120,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "ONE_SHOT_PUSH": {
+          "mismatched_elements": 0,
+          "total": 5120,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "ONE_SHOT_PULL": {
+          "mismatched_elements": 0,
+          "total": 5120,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "size_based": {
+          "mismatched_elements": 0,
+          "total": 5120,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "nccl": {
+          "mismatched_elements": 0,
+          "total": 5120
+        }
+      },
+      "should_custom_ar": true,
+      "order_noise_two_shot_vs_nccl": {
+        "max_abs_delta": 0.0625,
+        "frac_nonzero": 0.5171875357627869
+      }
+    },
+    {
+      "shape": [
+        2,
+        5120
+      ],
+      "bytes": 20480,
+      "algos": {
+        "TWO_SHOT_PULL": {
+          "mismatched_elements": 0,
+          "total": 10240,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "ONE_SHOT_PUSH": {
+          "mismatched_elements": 0,
+          "total": 10240,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "ONE_SHOT_PULL": {
+          "mismatched_elements": 0,
+          "total": 10240,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "size_based": {
+          "mismatched_elements": 0,
+          "total": 10240,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "nccl": {
+          "mismatched_elements": 0,
+          "total": 10240
+        }
+      },
+      "should_custom_ar": true,
+      "order_noise_two_shot_vs_nccl": {
+        "max_abs_delta": 0.0625,
+        "frac_nonzero": 0.5243164300918579
+      }
+    },
+    {
+      "shape": [
+        4,
+        5120
+      ],
+      "bytes": 40960,
+      "algos": {
+        "TWO_SHOT_PULL": {
+          "mismatched_elements": 0,
+          "total": 20480,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "ONE_SHOT_PUSH": {
+          "mismatched_elements": 0,
+          "total": 20480,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "ONE_SHOT_PULL": {
+          "mismatched_elements": 0,
+          "total": 20480,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "size_based": {
+          "mismatched_elements": 0,
+          "total": 20480,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "nccl": {
+          "mismatched_elements": 0,
+          "total": 20480
+        }
+      },
+      "should_custom_ar": true,
+      "order_noise_two_shot_vs_nccl": {
+        "max_abs_delta": 0.0625,
+        "frac_nonzero": 0.5221191644668579
+      }
+    },
+    {
+      "shape": [
+        16,
+        5120
+      ],
+      "bytes": 163840,
+      "algos": {
+        "TWO_SHOT_PULL": {
+          "mismatched_elements": 0,
+          "total": 81920,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "ONE_SHOT_PUSH": {
+          "mismatched_elements": 0,
+          "total": 81920,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "ONE_SHOT_PULL": {
+          "mismatched_elements": 0,
+          "total": 81920,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "size_based": {
+          "mismatched_elements": 0,
+          "total": 81920,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "nccl": {
+          "mismatched_elements": 0,
+          "total": 81920
+        }
+      },
+      "should_custom_ar": true,
+      "order_noise_two_shot_vs_nccl": {
+        "max_abs_delta": 0.09375,
+        "frac_nonzero": 0.520861804485321
+      }
+    },
+    {
+      "shape": [
+        32,
+        5120
+      ],
+      "bytes": 327680,
+      "algos": {
+        "TWO_SHOT_PULL": {
+          "mismatched_elements": 0,
+          "total": 163840,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "ONE_SHOT_PUSH": {
+          "error": "RuntimeError: Runtime check failed at /sgl-workspace/sglang/python/sglang/jit_kernel/csrc/distributed/custom_all_reduce_push.cuh:238: Input is too large, num items: 163840"
+        },
+        "ONE_SHOT_PULL": {
+          "mismatched_elements": 0,
+          "total": 163840,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "size_based": {
+          "mismatched_elements": 0,
+          "total": 163840,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "nccl": {
+          "mismatched_elements": 0,
+          "total": 163840
+        }
+      },
+      "should_custom_ar": true,
+      "order_noise_two_shot_vs_nccl": {
+        "max_abs_delta": 0.125,
+        "frac_nonzero": 0.520397961139679
+      }
+    },
+    {
+      "shape": [
+        29,
+        4608
+      ],
+      "bytes": 267264,
+      "algos": {
+        "TWO_SHOT_PULL": {
+          "mismatched_elements": 0,
+          "total": 133632,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "ONE_SHOT_PUSH": {
+          "error": "RuntimeError: Runtime check failed at /sgl-workspace/sglang/python/sglang/jit_kernel/csrc/distributed/custom_all_reduce_push.cuh:238: Input is too large, num items: 133632"
+        },
+        "ONE_SHOT_PULL": {
+          "mismatched_elements": 0,
+          "total": 133632,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "size_based": {
+          "mismatched_elements": 0,
+          "total": 133632,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "nccl": {
+          "mismatched_elements": 0,
+          "total": 133632
+        }
+      },
+      "should_custom_ar": true,
+      "order_noise_two_shot_vs_nccl": {
+        "max_abs_delta": 0.0625,
+        "frac_nonzero": 0.5216041207313538
+      }
+    },
+    {
+      "shape": [
+        32,
+        202756
+      ],
+      "bytes": 12976384,
+      "algos": {
+        "TWO_SHOT_PULL": {
+          "mismatched_elements": 0,
+          "total": 6488192,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "ONE_SHOT_PUSH": {
+          "error": "RuntimeError: Runtime check failed at /sgl-workspace/sglang/python/sglang/jit_kernel/csrc/distributed/custom_all_reduce_push.cuh:238: Input is too large, num items: 6488192"
+        },
+        "ONE_SHOT_PULL": {
+          "mismatched_elements": 0,
+          "total": 6488192,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "size_based": {
+          "mismatched_elements": 0,
+          "total": 6488192,
+          "min": 36.0,
+          "max": 36.0
+        },
+        "nccl": {
+          "mismatched_elements": 0,
+          "total": 6488192
+        }
+      },
+      "should_custom_ar": true,
+      "order_noise_two_shot_vs_nccl": {
+        "max_abs_delta": 0.0,
+        "frac_nonzero": 0.0
+      }
+    }
+  ]
+}

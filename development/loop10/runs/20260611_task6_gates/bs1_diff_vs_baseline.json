@@ -1,0 +1,43 @@
+{
+  "a": "/sgl-workspace/sglang/development/loop10/runs/20260611_task4_gates/bs1_digest.json",
+  "b": "/sgl-workspace/sglang/development/loop10/runs/20260611_task6_gates/bs1_digest.json",
+  "steps_compared": 64,
+  "sha_mismatches": 16,
+  "identity_changes": {
+    "selector_width": [
+      [
+        "202756",
+        "5120"
+      ]
+    ],
+    "graph_key": [
+      [
+        "[1, 202756]",
+        "[1, 5120]"
+      ]
+    ]
+  },
+  "allowed_identity_changes": [
+    "graph_key",
+    "selector_width"
+  ],
+  "verdict": "FAIL",
+  "problems": [
+    "pass0/step15 vs pass0/step15: indices_sha256 mismatch",
+    "pass0/step16 vs pass0/step16: indices_sha256 mismatch",
+    "pass0/step17 vs pass0/step17: indices_sha256 mismatch",
+    "pass0/step18 vs pass0/step18: indices_sha256 mismatch",
+    "pass0/step19 vs pass0/step19: indices_sha256 mismatch",
+    "pass0/step20 vs pass0/step20: indices_sha256 mismatch",
+    "pass0/step21 vs pass0/step21: indices_sha256 mismatch",
+    "pass0/step22 vs pass0/step22: indices_sha256 mismatch",
+    "pass1/step47 vs pass1/step47: indices_sha256 mismatch",
+    "pass1/step48 vs pass1/step48: indices_sha256 mismatch",
+    "pass1/step49 vs pass1/step49: indices_sha256 mismatch",
+    "pass1/step50 vs pass1/step50: indices_sha256 mismatch",
+    "pass1/step51 vs pass1/step51: indices_sha256 mismatch",
+    "pass1/step52 vs pass1/step52: indices_sha256 mismatch",
+    "pass1/step53 vs pass1/step53: indices_sha256 mismatch",
+    "pass1/step54 vs pass1/step54: indices_sha256 mismatch"
+  ]
+}

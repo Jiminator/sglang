@@ -1041,6 +1041,16 @@ class DeepseekSparseAttnBackend(
         This creates fixed-size tensors that will be reused during CUDA graph replay
         to avoid memory allocations.
         """
+        # DS selector graph state is shared per SELECTOR WIDTH across all
+        # batch-size variants (allocated lazily at the first capture of each
+        # width, sized [max_bs, width]). Per-variant ownership would multiply
+        # the width-proportional scratch and capture mirrors by the ladder
+        # length (~15 GiB at the full ladder — a measured capture-OOM at
+        # mem-fraction 0.7). Sharing is safe: graphs alias the same buffers,
+        # only one graph replays at a time, and every replay fully rewrites
+        # the rows it reads.
+        self._ds_graph_max_bs: int = max_bs
+        self._ds_graph_state_by_width: Dict = {}
         self.decode_cuda_graph_metadata: Dict = {
             "cache_seqlens": torch.ones(
                 max_num_tokens, dtype=torch.int32, device=self.device
@@ -1087,6 +1097,30 @@ class DeepseekSparseAttnBackend(
         if isinstance(variant_key, tuple):
             return int(variant_key[1])
         return int(self.req_to_token.shape[1])
+
+    def _ds_shared_graph_state(self, device) -> "DSGraphState":
+        """The per-WIDTH shared DSGraphState for graph capture/replay.
+
+        One state per selector width serves every batch-size variant of that
+        width: allocated at the max capture batch size on first use, then
+        referenced by each variant's DSAMetadata (stable lifetime — graphs
+        bake these addresses in).
+        """
+        width = self._ds_selector_width_from_variant()
+        state = self._ds_graph_state_by_width.get(width)
+        if state is None:
+            state = allocate_graph_state(
+                max_bs=self._ds_graph_max_bs,
+                max_top_k=self.ds_max_top_k,
+                max_seq_len=width,
+                selection_capture_layers=self.ds_selection_capture_layers,
+                score_reduce_bf16=self.ds_score_reduce_bf16,
+                enable_lifted_budget_decode=self.ds_lifted_budget_decode,
+                lifted_q_pad_heads=(128 if self.device_sm_major >= 10 else 64),
+                device=device,
+            )
+            self._ds_graph_state_by_width[width] = state
+        return state
 
     def init_forward_metadata_capture_cuda_graph(
         self,
@@ -1232,16 +1266,7 @@ class DeepseekSparseAttnBackend(
                 dtype=torch.int32,
                 device=cache_seqlens_int32.device,
             )
-            ds_graph_state = allocate_graph_state(
-                max_bs=bs,
-                max_top_k=self.ds_max_top_k,
-                max_seq_len=self._ds_selector_width_from_variant(),
-                selection_capture_layers=self.ds_selection_capture_layers,
-                score_reduce_bf16=self.ds_score_reduce_bf16,
-                enable_lifted_budget_decode=self.ds_lifted_budget_decode,
-                lifted_q_pad_heads=(128 if self.device_sm_major >= 10 else 64),
-                device=cache_seqlens_int32.device,
-            )
+            ds_graph_state = self._ds_shared_graph_state(cache_seqlens_int32.device)
 
         metadata = DSAMetadata(
             page_size=self.real_page_size,

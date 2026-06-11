@@ -10293,8 +10293,8 @@ class TestSelectionCaptureDump(unittest.TestCase):
 
     def test_replay_stamped_dump_records_graph_key_and_padded_bs(self):
         """A graph state stamped by the pre-replay metadata init dumps the
-        graph key and reports padded rows from the mirror allocation, while
-        raw_bs stays the forward batch's real row count."""
+        graph key and reports padded rows from the key, while raw_bs stays
+        the forward batch's real row count."""
         from sglang.srt.layers.attention.double_sparsity.selection_capture import (
             maybe_dump_selection_capture,
         )
@@ -10312,6 +10312,26 @@ class TestSelectionCaptureDump(unittest.TestCase):
         self.assertEqual(rec["graph_key"], 4)
         self.assertTrue(rec["replay_path"])
         self.assertEqual(list(rec["indices"].shape)[1], 2)
+
+    def test_tuple_key_dump_takes_padded_bs_from_key_not_mirror(self):
+        """With width-shared graph state the mirror is sized at the GLOBAL max
+        capture batch size; the variant's padded bs must come from the
+        stamped (bs, width) key."""
+        from sglang.srt.layers.attention.double_sparsity.selection_capture import (
+            maybe_dump_selection_capture,
+        )
+
+        gs = self._graph_state(bs=16)  # shared-state mirror, wider than bucket
+        gs.last_replay_graph_key = (4, 5120)
+        fb = self._decode_batch(gs, bs=2)
+        maybe_dump_selection_capture(fb, SimpleNamespace(), 0)
+        rec = torch.load(
+            os.path.join(self._tmp, "rank0_step00000.pt"), weights_only=True
+        )
+        self.assertEqual(rec["raw_bs"], 2)
+        self.assertEqual(rec["padded_bs"], 4)
+        self.assertEqual(rec["graph_key"], (4, 5120))
+        self.assertTrue(rec["replay_path"])
 
 
 class TestSelectTopkIndicesCaptureMirror(unittest.TestCase):
@@ -11644,6 +11664,40 @@ class TestCompactSelectorWidthAllocation(unittest.TestCase):
         with self.assertRaises(AssertionError):
             pinned.should_custom_ar(strided)
         self.assertEqual(calls, [])
+
+    def test_shared_graph_state_one_object_per_width(self):
+        """Graph state is shared per selector width across batch-size
+        variants: same object for repeat captures of one width, distinct
+        objects across widths, sized at the global max capture batch size."""
+        from sglang.srt.layers.attention.dsa_backend import (
+            DeepseekSparseAttnBackend,
+        )
+
+        fake = SimpleNamespace(
+            _ds_graph_max_bs=16,
+            ds_max_top_k=8,
+            ds_selection_capture_layers=0,
+            ds_score_reduce_bf16=True,
+            ds_lifted_budget_decode=False,
+            device_sm_major=9,
+            req_to_token=torch.zeros(1, 202756, dtype=torch.int32),
+            _ds_graph_state_by_width={},
+            _ds_graph_variant_key=(4, 5120),
+        )
+        fake._ds_selector_width_from_variant = (
+            lambda: DeepseekSparseAttnBackend._ds_selector_width_from_variant(fake)
+        )
+        dev = torch.device("cpu")
+        gs_a = DeepseekSparseAttnBackend._ds_shared_graph_state(fake, dev)
+        fake._ds_graph_variant_key = (8, 5120)
+        gs_b = DeepseekSparseAttnBackend._ds_shared_graph_state(fake, dev)
+        self.assertIs(gs_a, gs_b)
+        self.assertEqual(gs_a.max_seq_len, 5120)
+        self.assertEqual(list(gs_a.scratch_scores.shape), [16, 5120])
+        fake._ds_graph_variant_key = None  # full-width variant
+        gs_full = DeepseekSparseAttnBackend._ds_shared_graph_state(fake, dev)
+        self.assertIsNot(gs_full, gs_a)
+        self.assertEqual(gs_full.max_seq_len, 202756)
 
 
 if __name__ == "__main__":
