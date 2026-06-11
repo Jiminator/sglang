@@ -1,5 +1,37 @@
 # Loop 9 Ledger — DS-on Decode Kernel Optimization (running results)
 
+## Final gap statement (close-out)
+
+Frozen baseline → after this loop (Case-1, frozen recipe, one trial each):
+**632,239 → 512,687 µs** per 10-step decode window (−18.9%; the strong AC-1.4 marker ≤516k is
+met); **1.84× → 1.495×** vs the frozen DSA floor (342,857); decode throughput
+**459 → 646.79 tok/s (+41%)**. Per-bucket: score-reduce f32 ring eliminated (124.9k → 0; bf16
+custom-AR v2 + casts ≈ 113k incl. cross-rank wait absorption), DS top-k 138.6k → ≈36.3k,
+logical-score 63.1k → 43.2k (its 40k gate near-missed by 8% — DEC-1 trend documentation). Every
+landed change passed the recall gate (overall Δ ≤ +0.01pp, bound 0.5pp) and the hard cross-rank
+bit-identity check; M2+M3 are selection-bit-identical to M1 served (0/2496 selcap rows). The
+DS index/scoring tax vs DSA's fused indexer remains structurally dominated by the static-width
+(202752) dead tax — see the wildcard proposal below. Separately, the Penalty-B admission cap is
+lifted at a re-tuned op point (bs 29 → 64, see the memory audit section).
+
+## Follow-on notes (close-out)
+
+1. **Width-bucketed DS selector graphs (+ compact score buffers)** — the structural fix for the
+   dead-width tax in all three buckets; projected ~1.10–1.15× DSA floor; needs-user-decision
+   (cuda-graph-runner width bucketing is a real integration change).
+2. **Persistent/bounded-grid logical-score kernel** — the small slice that closes the 43.2k →
+   ≤40k gate on its own (~10–15k expected); de-risking alternative to (1).
+3. **AOT promotion of the radix top-k** — the Triton suite lands at ≈36.3k/window; a fused
+   single-kernel CUDA version (fast_topk_v2-class, ~17.7 µs/call floor) needs an sgl-kernel
+   source build (prebuilt wheel here); worth folding into (1) if pursued.
+4. **Graph-safe support for non-default DS variants** (DEC-5 follow-on: cosine/hybrid/mean/
+   anchors/int8/lifted keep riding the existing paths unchanged this loop).
+5. **Re-tuned serving op point** (mem 0.77 + cuda-graph-max-bs 64, bs-64 admission) — if it is
+   to become a served default, it needs its own SLO/profiling characterization loop; the
+   loop-9 profiling recipe stays at the frozen mem-0.7 op point.
+6. Boot-log wording: `token_label_table ... scales=fp16` is misleading in fp16 mode (no scales
+   sidecar is allocated) — cosmetic fix candidate.
+
 One column per landed idea; kept ideas stack and the running Case-1 number becomes the next
 idea's baseline. Frozen references (development/profiling/runs/20260609/, do NOT re-run except
 under the AC-4 mandatory-regression rule): Case 2 (DSA, mem 0.7, bs 29) = **342,857 µs**/10-step
@@ -109,6 +141,35 @@ TP GroupCoordinator.
 - **Total (AC-1.4, secondary): STRONG marker met** — 512,687 ≤ 516,000 (minimum 560,000),
   attributable per-bucket as above; 1.84× → 1.495× vs the frozen DSA floor; decode throughput
   459 → 646.79 tok/s (+41%).
+
+## Memory audit + admission re-tune (Penalty B)
+
+Audit verdict (Codex over the measured per-rank budget): **re-tune** — the recoverable memory is
+NOT the signatures (fp16 mode allocates no scales sidecar; the boot log's `scales=fp16` wording
+is misleading) and NOT table padding (~2.4 MiB), but the **over-captured decode graph ladder**:
+the default capture set goes to bs 512 while the KV pool caps admission at ~30, and the DS graph
+state (scratch_scores fp32 + bf16 reduce scratch per decode bucket, each [bs_i, 202752]) made the
+capture pool 17.68 GB.
+
+Measured re-tune (new characterized op point — the frozen Case-1 recipe is unchanged):
+`--cuda-graph-max-bs 64 --mem-fraction-static 0.77` →
+- max_total_num_tokens 142,208 → **330,048** (KV 18.9 GB); token_label_table 5.29 → 12.28 GB/rank
+  (grows proportionally with the pool); graph capture pool 17.68 → **0.88 GB**; 12.6 GB steady
+  headroom; boot + capture clean (29.6 s).
+- bs-64 bench batch (4096 ISL): **64 requests decoding concurrently under CUDA graph**
+  (server log `#running-req: 64, cuda graph: True`, token usage 0.81), output throughput
+  1023.44 tok/s on a 64-OSL probe. The DS bs-29 admission cap is lifted; artifacts:
+  development/loop9/runs/20260611_m4/.
+
+## Wildcard proposal (logical-score gate shortfall; next-loop user decision)
+
+The one unmet per-bucket gate after M1–M3 is logical-score (43.2k vs 40k). The reviewed redesign
+ranking (Codex, full analysis in the round artifacts): (1) **width-bucketed DS selector graphs
+with compact per-bucket score buffers** — kills the dead-width tax in ALL THREE buckets incl.
+the reduce; projected total ~377–395k µs ≈ 1.10–1.15× the DSA floor; requires a real
+cuda-graph-runner integration (width bucketing alongside bs bucketing); (2) persistent/
+bounded-grid logical-score kernel — smallest reliable patch, ~10–15k for that bucket alone,
+total ~1.35×. Disposition: **needs-user-decision** for the next loop.
 
 ## Notes / deviations
 
