@@ -1,0 +1,42 @@
+{
+  "shapes": {
+    "bs": 29,
+    "width": 5120,
+    "H": 8,
+    "label_dim": 32,
+    "table_t": 142272,
+    "live_seq": 4608
+  },
+  "budget_us_per_call_real": 25.64,
+  "measured_in_context_overhead_us": 6.0,
+  "budget_us_per_call_isolated": 19.64,
+  "floors": {
+    "fp16": {
+      "replay_us_per_call": 25.47,
+      "gather_gb_per_call": 0.0684,
+      "effective_tbps": 2.69,
+      "window_us_at_780": 19868
+    },
+    "int8": {
+      "replay_us_per_call": 26.14,
+      "gather_gb_per_call": 0.0342,
+      "effective_tbps": 1.31,
+      "window_us_at_780": 20392
+    }
+  },
+  "exact_regime_exhausted": true,
+  "page_contiguous_floors": {
+    "fp16": {
+      "replay_us_per_call": 25.15
+    },
+    "int8": {
+      "replay_us_per_call": 23.68
+    },
+    "note": "best-case page-64-contiguous slot layout (the real allocator pattern); int8 gains ~1.5 us/call even here \u2014 the gather is transaction-limited, not byte-limited"
+  },
+  "int8_fallback_projection": {
+    "best_case_real_bucket_us_per_window": "21500-22000",
+    "bar": 20000,
+    "verdict": "authorized int8 fallback CANNOT meet the bar; not landed (would add quantization-lossiness risk for a measured miss)"
+  }
+}

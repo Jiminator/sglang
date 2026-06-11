@@ -136,10 +136,41 @@ per queue protocol with the measured cause; no redesign performed.
 `runs/20260611_task7/` digests (bs-1 + op-point). Chain: m0_freeze → task4 → task6r2 → task11
 → task7, every hop either zero-diff-proven or declared (DEC-L10-1).
 
+### DEC-L10-2 (round 4): AC-1.2 owner adjudication and the measured exhaustion of the full ladder
+
+The owner ruled (AskUserQuestion, round 4): **"Keep the bar; keep trying exact only; once
+that's exhausted, authorize int8 signatures."** Both rungs were then closed by direct
+measurement (`task11_roofline_probe.py`, `runs/20260611_task11/roofline_probe.json`):
+
+1. **Exact regime EXHAUSTED**: a stripped kernel performing ONLY the irreducible signature
+   gather (the lower bound on every exact implementation) replays at **25.47 µs/call**
+   (random-slot) / **25.15** (best-case page-64-contiguous) vs the **19.64 µs/call isolated
+   budget** (= 25.64 bar − the measured ~6 µs/call in-context interference). The landed
+   optimum kernel (23.3 µs/call isolated) already sits at this floor with its scoring math
+   included.
+2. **The authorized int8 fallback CANNOT meet the bar either**: int8 gather floor 26.14
+   (random) / 23.68 (page-contiguous best case) — the gather is TRANSACTION-limited, not
+   byte-limited (halving bytes halves effective bandwidth; scales add a third scattered
+   access). Best-case projected real bucket ≈ 21.5–22k vs the 20k bar. int8 is therefore NOT
+   landed: it would add quantization-lossiness risk (value-affecting recipe change, recall
+   gates, re-freeze) for a measured miss. This is a decline-with-evidence of the conditional
+   authorization, stated for owner/review override.
+
+**AC-1.2 final disposition: NOT MET — measured-infeasible at the frozen op point under every
+available lever including the owner-authorized fallback.** The bucket closed 36,908 → 22,887
+(−38%); the residual is the physics of 68.5 MB/call of scattered signature gathers.
+
+### task8 measurement contract SATISFIED (round 4)
+
+Same-shape 8-rank matrix at [32, 5120] bf16 (`task8_transport_matrix.py`,
+`runs/20260611_task8/task8_matrix.json`): captured-replay two-shot **14.85** vs one-shot-pull
+20.42 vs NCCL 69.73 µs/call — the incumbent wins the binding mode by 27% / 4.7×. The eager
+column INVERTS the ranking (NCCL 33.7 "wins" eager), retroactively explaining the loop-9
+spike-bench conclusion as an eager artifact (BitLesson addendum recorded). DROP confirmed on
+direct evidence.
+
 ### Open items / next
 
-- **task10 close-out** (final): AC tally with the **AC-1.2 disposition** — NOT MET at 22,887 vs
-  ≤20k hard, assessed infeasible in the exact regime at the frozen op point (DRAM-roofline
-  finding above); an immutable-AC re-scope requires explicit owner authorization, so the
-  close-out presents the evidence and leaves the bar formally unmet rather than silently
-  relaxed. All other AC-1 bars met at hard AND stretch; AC-2/AC-3/AC-4/AC-5 green.
+- **task10 close-out** (final, analyze): AC tally with DEC-L10-2's adjudicated AC-1.2
+  disposition; queue/results/tracker reconciliation; evidence pre-flight. All other AC-1 bars
+  met at hard AND stretch; AC-2/AC-3/AC-4/AC-5 green.
