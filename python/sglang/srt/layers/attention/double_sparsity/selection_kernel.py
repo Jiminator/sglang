@@ -1421,13 +1421,15 @@ def _logical_score_triton(
     max_seq_len: int,
     *,
     scale_layer: Optional[torch.Tensor] = None,  # [T, H] per-(slot, head) int8 dequant scale, else None
-    # 256 quarters the launch grid vs 64: at the served op point ~97% of token
-    # blocks are early-exit (past seq_len), so the dead-grid floor dominates
-    # the kernel's cost; measured 89.7 -> 43.5 us/call at the Case-1 shapes.
     # Per-position score math is independent of the block partition (each
     # position's label-dim reduction is self-contained), so output is
     # bit-identical across block sizes — pinned by a bitwise regression.
-    token_block: int = 256,
+    # None picks the measured optimum per score width: 512 for compact
+    # selector widths (few all-live tiles; 24.6 -> 23.3 us/call captured
+    # replay at the [29, 5120] op point), 256 for full width, where the
+    # dead-grid scale set the optimum (89.7 -> 43.5 us/call vs 64 at the
+    # Case-1 shapes).
+    token_block: Optional[int] = None,
     store_dead_neg_inf: bool = True,
     # Persistent-worker count per row: caps the launch grid at (bs, workers)
     # while each worker loops over its share of LIVE blocks. 128 covers the
@@ -1452,6 +1454,8 @@ def _logical_score_triton(
     scale_stride_t = scale_layer.stride(0) if has_scale else 0
     scale_stride_h = scale_layer.stride(1) if has_scale else 0
 
+    if token_block is None:
+        token_block = 512 if max_seq_len <= 8192 else 256
     desired_block = min(token_block, max(max_seq_len, 1))
     token_block_pow2 = _next_pow2(desired_block)
     label_dim_pow2 = _next_pow2(max(label_dim, 1))

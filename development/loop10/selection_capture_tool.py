@@ -501,6 +501,9 @@ def _digest_steps(digest: dict) -> list:
     return out
 
 
+_INDEX_DIFF_PROBLEM = "indices_sha256 mismatch"
+
+
 def cmd_diff_digest(args: argparse.Namespace) -> int:
     with open(args.a) as fh:
         da = json.load(fh)
@@ -545,6 +548,18 @@ def cmd_diff_digest(args: argparse.Namespace) -> int:
         "verdict": "PASS" if not problems else "FAIL",
         "problems": problems,
     }
+    # Declared value-affecting evidence mode: ONLY per-step index-SHA
+    # mismatches are tolerated (recorded, exit 0). Everything structural —
+    # step-count/shape mismatches, lengths SHAs, identity changes outside the
+    # --allow-identity-change list, missing data — remains a hard failure even
+    # in this mode, so a declared transport change cannot mask a broken run.
+    if args.index_diffs_as_evidence and problems:
+        structural = [p for p in problems if _INDEX_DIFF_PROBLEM not in p]
+        if not structural:
+            out["verdict"] = "EVIDENCE"
+            out["problems_tolerated_as_evidence"] = problems
+            out["problems"] = []
+            problems = []
     if args.out:
         os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
         with open(args.out, "w") as fh:
@@ -555,6 +570,12 @@ def cmd_diff_digest(args: argparse.Namespace) -> int:
         for p in problems[:30]:
             print(f"  - {p}")
         return 1
+    if out["verdict"] == "EVIDENCE":
+        print(
+            f"[selcap-diff-digest] EVIDENCE: {out['sha_mismatches']} declared "
+            "index-diff step(s) recorded; structural checks clean"
+        )
+        return 0
     print(
         f"[selcap-diff-digest] PASS: {out['steps_compared']} steps bit-identical"
         + (
@@ -626,6 +647,12 @@ def main() -> int:
         default=None,
         help="identity fields whose change is explicitly declared "
         f"(subset of {list(_IDENTITY_FIELDS) + ['max_real_seq_len']})",
+    )
+    p.add_argument(
+        "--index-diffs-as-evidence",
+        action="store_true",
+        help="declared value-affecting regime: per-step index-SHA mismatches "
+        "are recorded as evidence (exit 0) — structural failures stay hard",
     )
     p.set_defaults(func=cmd_diff_digest)
 

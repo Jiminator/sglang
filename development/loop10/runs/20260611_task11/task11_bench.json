@@ -1,0 +1,23 @@
+{
+  "shapes": {
+    "bs": 29,
+    "width": 5120,
+    "H": 8,
+    "label_dim": 32,
+    "table_t": 142272
+  },
+  "bitwise_vs_tb256": {
+    "tb256_w128": true,
+    "tb256_w10": true,
+    "tb512_w128": true,
+    "tb512_w5": true,
+    "tb1024_w128": true
+  },
+  "replay_us_per_call": {
+    "tb256_w128": 24.67,
+    "tb256_w10": 42.14,
+    "tb512_w128": 23.58,
+    "tb512_w5": 39.62,
+    "tb1024_w128": 41.86
+  }
+}

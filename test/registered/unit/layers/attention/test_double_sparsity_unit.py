@@ -11268,8 +11268,9 @@ class TestGraphSafePipelineAdversarial(unittest.TestCase):
         finite garbage there must not change the selection. The boundary block
         still masks its own invalid tail to -inf in-block."""
         device = torch.device("cuda")
-        # Wide table so fully-dead blocks exist (TOKEN_BLOCK=256 -> blocks
-        # [256:) are entirely past seq_len=4; block 0 is the boundary block).
+        # Wide table so fully-dead blocks exist past the boundary block
+        # (compact widths pick TOKEN_BLOCK=512 -> blocks [512:) are entirely
+        # past seq_len=4; block 0 is the boundary block).
         sigs = [4.0, 9.0, 2.0, 7.0] + [float(i % 5) for i in range(2044)]
         sel, req_to_token = self._bound_selector(device, sigs, 3)
         g_idx, g_len = self._run_graph_safe(
@@ -11280,12 +11281,12 @@ class TestGraphSafePipelineAdversarial(unittest.TestCase):
         self.assertTrue(torch.equal(g_len, e_len))
         # Fully-dead blocks keep the poison: the no-dead-store path ran...
         self.assertTrue(
-            bool((self._last_state.scratch_scores[:, 256:] == 1e9).all()),
+            bool((self._last_state.scratch_scores[:, 512:] == 1e9).all()),
             "fully-dead blocks must keep the planted garbage (no dead store)",
         )
         # ...while the boundary block still -inf-masks its invalid tail.
         self.assertTrue(
-            bool(torch.isneginf(self._last_state.scratch_scores[:, 4:256]).all())
+            bool(torch.isneginf(self._last_state.scratch_scores[:, 4:512]).all())
         )
 
     def test_legacy_path_still_writes_dead_neg_inf(self):
@@ -11664,6 +11665,51 @@ class TestCompactSelectorWidthAllocation(unittest.TestCase):
         with self.assertRaises(AssertionError):
             pinned.should_custom_ar(strided)
         self.assertEqual(calls, [])
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
+    def test_logical_score_token_block_choice_is_bitwise_identical(self):
+        """The width-conditional TOKEN_BLOCK choice (512 compact / 256 full)
+        must be bitwise-invariant: each position's label-dim reduction is
+        self-contained, so the block partition only changes which worker
+        computes a position. Mixed rows cover the served boundaries."""
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            _logical_score_triton,
+        )
+
+        device = torch.device("cuda:0")
+        torch.manual_seed(20260611)
+        width, bs, heads, label_dim, head_dim, table_t = 5120, 8, 8, 32, 192, 16384
+        q = torch.randn(bs, heads, head_dim, dtype=torch.float32, device=device)
+        ch_sel = torch.randint(
+            0, head_dim, (heads, label_dim), dtype=torch.int32, device=device
+        )
+        ch_w = torch.randn(heads, label_dim, dtype=torch.float32, device=device)
+        sig = torch.randn(
+            table_t, heads, label_dim, dtype=torch.float16, device=device
+        )
+        written = torch.ones(table_t, dtype=torch.bool, device=device)
+        rpi = torch.arange(bs, dtype=torch.int32, device=device)
+        rtt = torch.randint(
+            0, table_t, (bs, width), dtype=torch.int32, device=device
+        )
+        seq = torch.tensor(
+            [4096, 4608, 5120, 547, 2886, 1, 64, 5119][:bs],
+            dtype=torch.int32,
+            device=device,
+        )
+
+        outs = {}
+        for tb in (256, 512, None):
+            out = torch.empty(bs, width, dtype=torch.float32, device=device)
+            _logical_score_triton(
+                q, ch_sel, ch_w, sig, written, rpi, rtt, seq, out, width,
+                scale_layer=None, token_block=tb, store_dead_neg_inf=True,
+                scorer_norm="off", head_agg="max", hybrid_threshold=8192,
+            )
+            torch.cuda.synchronize()
+            outs[tb] = out
+        self.assertTrue(torch.equal(outs[256], outs[512]))
+        self.assertTrue(torch.equal(outs[256], outs[None]))
 
     def test_shared_graph_state_one_object_per_width(self):
         """Graph state is shared per selector width across batch-size

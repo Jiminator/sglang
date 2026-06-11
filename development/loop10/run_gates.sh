@@ -61,19 +61,24 @@ if [[ -n "${ALLOW_IDENTITY_CHANGE:-}" ]]; then
   ALLOW_ARGS=(--allow-identity-change ${ALLOW_IDENTITY_CHANGE})
 fi
 
-# Run a selcap comparison as a HARD gate (default) or, under the declared
-# value-affecting regime, record its report as evidence and continue.
+# Selcap comparisons are ALWAYS hard at the shell level; under the declared
+# value-affecting regime the TOOL tolerates per-step index-SHA mismatches only
+# (--index-diffs-as-evidence) while every structural failure — step/shape
+# mismatches, lengths SHAs, unallowed identity changes, missing data — still
+# exits nonzero and fails the run.
 diff_gate() {  # <label> <log> <cmd...>
   local label="$1" log="$2"; shift 2
-  if "$@" > "$log" 2>&1; then
-    return 0
-  fi
-  if [[ "${SELCAP_DIFF_AS_EVIDENCE:-0}" == "1" ]]; then
-    echo ">>> $label: nonzero diff recorded as DECLARED value-affecting evidence (see $log)"
-    return 0
-  fi
-  fail "$label" "$log"
+  "$@" > "$log" 2>&1 || fail "$label" "$log"
 }
+
+EVIDENCE_ARGS=()
+ROWDIFF_HARD=(--fail-on-diff)
+if [[ "${SELCAP_DIFF_AS_EVIDENCE:-0}" == "1" ]]; then
+  EVIDENCE_ARGS=(--index-diffs-as-evidence)
+  # The digest gate above still validates structure; the per-row diff then
+  # runs diagnostically to quantify the declared churn.
+  ROWDIFF_HARD=()
+fi
 
 if [[ "${SKIP_SELCAP:-0}" != "1" ]]; then
   DS_CONFIG_SELCAP="${DS_CONFIG%\}}, \"selection_capture\": true}"
@@ -105,13 +110,13 @@ if [[ "${SKIP_SELCAP:-0}" != "1" ]]; then
       "$OUTDIR/selcap_bs1_diff.log" \
       python "$TOOL" diff-digest \
       --a "$BASELINE/bs1_digest.json" --b "$OUTDIR/bs1_digest.json" \
-      --out "$OUTDIR/bs1_diff_vs_baseline.json" "${ALLOW_ARGS[@]}"
+      --out "$OUTDIR/bs1_diff_vs_baseline.json" "${ALLOW_ARGS[@]}" "${EVIDENCE_ARGS[@]}"
     if [[ -d "$BASELINE/selcap_bs1/pass0" ]]; then
       diff_gate "bs-1 selcap per-row diff vs frozen baseline" \
         "$OUTDIR/selcap_bs1_rowdiff.log" \
         python "$TOOL" diff \
         --a "$BASELINE/selcap_bs1/pass0" --b "$OUTDIR/selcap_bs1/pass0" \
-        --out "$OUTDIR/bs1_rowdiff_vs_baseline.json" --fail-on-diff
+        --out "$OUTDIR/bs1_rowdiff_vs_baseline.json" "${ROWDIFF_HARD[@]}"
     fi
   fi
   echo ">>> gate A1 done (cross-rank verify PASS; digest comparison PASS)"
@@ -140,13 +145,13 @@ if [[ "${SKIP_OPPOINT:-0}" != "1" ]]; then
       "$OUTDIR/selcap_op_diff.log" \
       python "$TOOL" diff-digest \
       --a "$BASELINE/op_digest.json" --b "$OUTDIR/op_digest.json" \
-      --out "$OUTDIR/op_diff_vs_baseline.json" "${ALLOW_ARGS[@]}"
+      --out "$OUTDIR/op_diff_vs_baseline.json" "${ALLOW_ARGS[@]}" "${EVIDENCE_ARGS[@]}"
     if [[ -d "$BASELINE/selcap_op/pass0" ]]; then
       diff_gate "op-point selcap per-row diff vs frozen baseline" \
         "$OUTDIR/selcap_op_rowdiff.log" \
         python "$TOOL" diff \
         --a "$BASELINE/selcap_op/pass0" --b "$OUTDIR/selcap_op/pass0" \
-        --out "$OUTDIR/op_rowdiff_vs_baseline.json" --fail-on-diff
+        --out "$OUTDIR/op_rowdiff_vs_baseline.json" "${ROWDIFF_HARD[@]}"
     fi
   fi
   echo ">>> gate A2 done (op-point verify PASS; raw_bs=29 on graph replay proven)"
