@@ -71,9 +71,11 @@ _ALLOWED_FIELDS = {
 #   (byte-identical selection, zero hot-path cost when off).
 # selector_width_buckets: compact DS selector score widths (prefix windows) to
 #   capture as additional CUDA-graph variants alongside the always-present
-#   full req_to_token width. Empty (default) captures full width only —
-#   byte-identical selection. Each width must be a positive int; widths at or
-#   above the full req_to_token width are dropped at the runner.
+#   full req_to_token width. Default [5120]; an explicit [] captures full
+#   width only. Selection is bit-identical across widths (prefix-window
+#   semantics; overflow routes to the full-width variant). Each width must be
+#   a positive int; widths at or above the full req_to_token width are
+#   dropped at the runner.
 # score_reduce_dtype: transport dtype for the cross-TP score SUM-reduce.
 #   "bf16" (default): scores are cast fp32->bf16 into preallocated scratch,
 #   reduced (custom-all-reduce v2 when the byte size passes its eligibility
@@ -102,6 +104,12 @@ _DEFAULT_ANCHOR_BUDGET = 0
 
 
 _DEFAULT_TOP_K = 2048           # matches DeepSeek-V3.2 index_topk (max tokens per request)
+# Default compact selector score width: a prefix window comfortably covering
+# the served decode windows while shrinking the per-call cross-TP score
+# reduce ~40x vs the full req_to_token width. The full width is always
+# captured as the overflow fallback; widths >= the model's full width are
+# dropped at the runner, so small-context models degrade to full-width-only.
+_DEFAULT_SELECTOR_WIDTH_BUCKETS = (5120,)
 _DEFAULT_PAGE_SIZE = 64         # FlashMLA KV layout requirement
 _DEFAULT_DEVICE_BUFFER_SIZE = 4096  # score-scratch buffer cap in tokens
 _DEFAULT_SIGNATURE_DTYPE = "fp16"   # full-precision labels until the compact path is hardware-validated
@@ -122,7 +130,9 @@ class DoubleSparsityConfig:
     anchor_budget: int = _DEFAULT_ANCHOR_BUDGET
     recall_oracle: bool = False
     selection_capture: bool = False
-    selector_width_buckets: List[int] = field(default_factory=list)
+    selector_width_buckets: List[int] = field(
+        default_factory=lambda: list(_DEFAULT_SELECTOR_WIDTH_BUCKETS)
+    )
     score_reduce_dtype: str = "bf16"
     enable_lifted_budget_decode: bool = False
     lifted_budget_top_k: int = _DEFAULT_LIFTED_BUDGET_TOP_K
@@ -260,12 +270,18 @@ def _coerce_bool(value: Any, field: str = "flag") -> bool:
 
 
 def _coerce_width_buckets(value: Any) -> List[int]:
-    if not isinstance(value, list):
+    # Fail closed: this knob drives the CUDA-graph capture ladder, so a
+    # silently coerced bool/float/string width would capture an unintended
+    # selector variant. Only genuine positive JSON integers are accepted.
+    if (
+        not isinstance(value, list)
+        or any(type(w) is not int or w <= 0 for w in value)
+    ):
         raise ValueError(
             f"Double Sparsity 'selector_width_buckets' must be a JSON array of "
             f"positive integers, got {value!r}."
         )
-    return [int(w) for w in value]
+    return list(value)
 
 
 def parse_double_sparsity_config(payload: str) -> DoubleSparsityConfig:
@@ -327,7 +343,9 @@ def parse_double_sparsity_config(payload: str) -> DoubleSparsityConfig:
             data.get("selection_capture", False), "selection_capture"
         ),
         selector_width_buckets=_coerce_width_buckets(
-            data.get("selector_width_buckets", [])
+            data.get(
+                "selector_width_buckets", list(_DEFAULT_SELECTOR_WIDTH_BUCKETS)
+            )
         ),
         score_reduce_dtype=str(data.get("score_reduce_dtype", "bf16")),
         enable_lifted_budget_decode=_coerce_bool(

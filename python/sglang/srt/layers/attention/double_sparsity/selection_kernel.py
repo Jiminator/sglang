@@ -584,6 +584,84 @@ def compute_token_scores(
 
 _score_reduce_fallback_logged = False
 
+# Transport evidence: one log line per distinct (shape, dtype, path, algorithm)
+# score-reduce bucket, emitted from the host-side reduce call (capture/eager —
+# graph replay re-runs the captured kernels, not this Python).
+_score_reduce_buckets_logged: set = set()
+
+
+def _log_score_reduce_bucket(
+    view: torch.Tensor, custom_ar: bool, algorithm: str
+) -> None:
+    key = (tuple(view.shape), str(view.dtype), custom_ar, algorithm)
+    if key in _score_reduce_buckets_logged:
+        return
+    _score_reduce_buckets_logged.add(key)
+    from sglang.srt.distributed.device_communicators.custom_all_reduce_utils import (
+        is_weak_contiguous,
+    )
+
+    logger.info(
+        "double_sparsity score reduce bucket: shape=%s dtype=%s bytes=%d "
+        "weak_contiguous=%s custom_ar=%s algorithm=%s",
+        tuple(view.shape),
+        view.dtype,
+        view.numel() * view.element_size(),
+        bool(is_weak_contiguous(view)),
+        custom_ar,
+        algorithm,
+    )
+
+
+class PinnedDSScoreReduceCA:
+    """Custom-AR wrapper that pins the DS score reduce to one algorithm.
+
+    Floating-point summation order is part of the DS selection exactness
+    contract: CustomAllReduceV2's size-based algorithm selection would
+    silently flip small compact score buffers (<=160 KB on 8 ranks) to
+    one-shot, changing the summation order relative to the served two-shot
+    path. This wrapper passes a per-call override so ONLY the DS score reduce
+    is pinned — the wrapped communicator object and every default model
+    collective keep their size-based behavior.
+
+    ``should_custom_ar`` additionally REFUSES (raises on) a non-weak-contiguous
+    input instead of letting the eligibility check route it to NCCL: a strided
+    view handed to the reduce means a compact scratch buffer was sliced out of
+    a wider allocation, and a silent transport change is forbidden while the
+    pin is in force.
+    """
+
+    pinned_algo_name = "TWO_SHOT_PULL"
+
+    def __init__(self, base_ca):
+        from sglang.jit_kernel.all_reduce import AllReduceAlgo
+
+        self.base_ca = base_ca
+        self.pinned_algo = AllReduceAlgo.TWO_SHOT_PULL
+
+    @property
+    def disabled(self) -> bool:
+        return bool(getattr(self.base_ca, "disabled", False))
+
+    def should_custom_ar(self, inp: torch.Tensor) -> bool:
+        from sglang.srt.distributed.device_communicators.custom_all_reduce_utils import (
+            is_weak_contiguous,
+        )
+
+        if not is_weak_contiguous(inp):
+            raise AssertionError(
+                "double_sparsity score reduce: bf16 tensor "
+                f"shape={tuple(inp.shape)} strides={tuple(inp.stride())} is not "
+                "weak-contiguous. Compact selector scratch must be a real "
+                "allocation, not a strided view of a wider buffer — a strided "
+                "input would silently fall back to NCCL, which the pinned "
+                "transport contract forbids."
+            )
+        return self.base_ca.should_custom_ar(inp)
+
+    def custom_all_reduce(self, inp: torch.Tensor) -> torch.Tensor:
+        return self.base_ca.custom_all_reduce(inp, override_algo=self.pinned_algo)
+
 
 def reduce_token_scores(
     token_scores: torch.Tensor,
@@ -635,6 +713,11 @@ def reduce_token_scores(
     else:
         bf16_view = token_scores.to(torch.bfloat16)
     if reduce_ca is not None and reduce_ca.should_custom_ar(bf16_view):
+        _log_score_reduce_bucket(
+            bf16_view,
+            custom_ar=True,
+            algorithm=getattr(reduce_ca, "pinned_algo_name", "size_based"),
+        )
         reduced = reduce_ca.custom_all_reduce(bf16_view)
         token_scores.copy_(reduced)
         return token_scores
@@ -647,6 +730,7 @@ def reduce_token_scores(
             bf16_view.numel() * bf16_view.element_size(),
         )
         _score_reduce_fallback_logged = True
+    _log_score_reduce_bucket(bf16_view, custom_ar=False, algorithm="NCCL_BF16")
     torch.distributed.all_reduce(
         bf16_view,
         op=torch.distributed.ReduceOp.SUM,

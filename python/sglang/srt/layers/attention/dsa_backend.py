@@ -1079,6 +1079,15 @@ class DeepseekSparseAttnBackend(
         variant_key = getattr(self, "_ds_graph_variant_key", None)
         return bs if variant_key is None else variant_key
 
+    def _ds_selector_width_from_variant(self) -> int:
+        """Selector score width for the graph variant being captured: the
+        width half of the stamped (bs, width) key, else the full
+        req_to_token width (eager forwards and un-stamped captures)."""
+        variant_key = getattr(self, "_ds_graph_variant_key", None)
+        if isinstance(variant_key, tuple):
+            return int(variant_key[1])
+        return int(self.req_to_token.shape[1])
+
     def init_forward_metadata_capture_cuda_graph(
         self,
         bs: int,
@@ -1226,7 +1235,7 @@ class DeepseekSparseAttnBackend(
             ds_graph_state = allocate_graph_state(
                 max_bs=bs,
                 max_top_k=self.ds_max_top_k,
-                max_seq_len=int(self.req_to_token.shape[1]),
+                max_seq_len=self._ds_selector_width_from_variant(),
                 selection_capture_layers=self.ds_selection_capture_layers,
                 score_reduce_bf16=self.ds_score_reduce_bf16,
                 enable_lifted_budget_decode=self.ds_lifted_budget_decode,

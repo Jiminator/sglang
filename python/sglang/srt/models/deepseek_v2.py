@@ -2068,6 +2068,18 @@ class DeepseekV2AttentionMLA(
                 reduce_ca = getattr(_attn_tp_group, "ca_comm", None)
                 if reduce_ca is not None and getattr(reduce_ca, "disabled", True):
                     reduce_ca = None
+                if reduce_ca is not None:
+                    # Pin the DS score reduce to two-shot via a per-call
+                    # override: the summation order is part of the selection
+                    # exactness contract, and compact score buffers would
+                    # otherwise flip to one-shot below the size threshold.
+                    # Only this wrapper is pinned — the communicator and all
+                    # default model collectives keep size-based selection.
+                    from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+                        PinnedDSScoreReduceCA,
+                    )
+
+                    reduce_ca = PinnedDSScoreReduceCA(reduce_ca)
             except Exception:
                 process_group = None
                 reduce_ca = None
@@ -2369,7 +2381,15 @@ class DeepseekV2AttentionMLA(
                         scratch_sorted_vals=_ds_graph_state.scratch_sorted_vals,
                         scratch_boundary=_ds_graph_state.scratch_boundary,
                         scratch_valid_i64=_ds_graph_state.scratch_valid_i64,
-                        per_request_valid=_sparse_mask,
+                        # Compact selector variants score the [0, W) prefix;
+                        # width dispatch guarantees live rows fit, so a wider
+                        # mask's tail beyond W is dead by construction.
+                        per_request_valid=(
+                            _sparse_mask
+                            if _sparse_mask is None
+                            or _sparse_mask.shape[-1] <= _max_seq_len
+                            else _sparse_mask[:, :_max_seq_len]
+                        ),
                         scratch_pv_mask=_ds_graph_state.scratch_pv_mask,
                         scratch_throwaway_idx=_ds_graph_state.scratch_throwaway_idx,
                         scratch_scores_bf16=getattr(

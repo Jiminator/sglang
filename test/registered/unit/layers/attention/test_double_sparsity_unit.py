@@ -11450,12 +11450,22 @@ class TestDsSelectorWidthGraphKeys(unittest.TestCase):
 class TestSelectorWidthBucketsConfig(unittest.TestCase):
     """Config-borne `selector_width_buckets` parse surface."""
 
-    def test_default_is_empty_list(self):
+    def test_default_is_compact_5120(self):
         from sglang.srt.layers.attention.double_sparsity.config import (
             parse_double_sparsity_config,
         )
 
         cfg = parse_double_sparsity_config('{"channel_mask_path": "/tmp/x"}')
+        self.assertEqual(cfg.selector_width_buckets, [5120])
+
+    def test_explicit_empty_list_disables_compact(self):
+        from sglang.srt.layers.attention.double_sparsity.config import (
+            parse_double_sparsity_config,
+        )
+
+        cfg = parse_double_sparsity_config(
+            '{"channel_mask_path": "/tmp/x", "selector_width_buckets": []}'
+        )
         self.assertEqual(cfg.selector_width_buckets, [])
 
     def test_parses_int_list(self):
@@ -11487,6 +11497,153 @@ class TestSelectorWidthBucketsConfig(unittest.TestCase):
             parse_double_sparsity_config(
                 '{"channel_mask_path": "/tmp/x", "selector_width_buckets": [0]}'
             )
+
+    def test_rejects_bool_element(self):
+        from sglang.srt.layers.attention.double_sparsity.config import (
+            parse_double_sparsity_config,
+        )
+
+        with self.assertRaises(ValueError):
+            parse_double_sparsity_config(
+                '{"channel_mask_path": "/tmp/x", "selector_width_buckets": [true]}'
+            )
+
+    def test_rejects_float_element(self):
+        from sglang.srt.layers.attention.double_sparsity.config import (
+            parse_double_sparsity_config,
+        )
+
+        with self.assertRaises(ValueError):
+            parse_double_sparsity_config(
+                '{"channel_mask_path": "/tmp/x", "selector_width_buckets": [5120.9]}'
+            )
+
+    def test_rejects_string_element(self):
+        from sglang.srt.layers.attention.double_sparsity.config import (
+            parse_double_sparsity_config,
+        )
+
+        with self.assertRaises(ValueError):
+            parse_double_sparsity_config(
+                '{"channel_mask_path": "/tmp/x", "selector_width_buckets": ["5120"]}'
+            )
+
+
+class TestCompactSelectorWidthAllocation(unittest.TestCase):
+    """Compact graph variants allocate REAL width-W selector scratch (never
+    strided views of full-width buffers), the backend derives the width from
+    the stamped variant key, and the DS score-reduce pin requests two-shot
+    per call without touching the wrapped communicator."""
+
+    def test_backend_width_from_tuple_variant_key(self):
+        from sglang.srt.layers.attention.dsa_backend import (
+            DeepseekSparseAttnBackend,
+        )
+
+        fake = SimpleNamespace(
+            _ds_graph_variant_key=(32, 5120),
+            req_to_token=torch.zeros(1, 202756, dtype=torch.int32),
+        )
+        self.assertEqual(
+            DeepseekSparseAttnBackend._ds_selector_width_from_variant(fake), 5120
+        )
+
+    def test_backend_width_full_when_unstamped(self):
+        from sglang.srt.layers.attention.dsa_backend import (
+            DeepseekSparseAttnBackend,
+        )
+
+        fake = SimpleNamespace(
+            _ds_graph_variant_key=None,
+            req_to_token=torch.zeros(1, 202756, dtype=torch.int32),
+        )
+        self.assertEqual(
+            DeepseekSparseAttnBackend._ds_selector_width_from_variant(fake), 202756
+        )
+
+    def test_compact_graph_state_scratch_is_real_width_allocation(self):
+        from sglang.srt.distributed.device_communicators.custom_all_reduce_utils import (
+            is_weak_contiguous,
+        )
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state,
+        )
+
+        gs = allocate_graph_state(
+            max_bs=4,
+            max_top_k=8,
+            max_seq_len=5120,
+            num_local_heads=2,
+            label_dim=4,
+            score_reduce_bf16=True,
+            device=torch.device("cpu"),
+        )
+        self.assertEqual(gs.max_seq_len, 5120)
+        for name in ("scratch_scores", "scratch_scores_bf16", "scratch_pv_mask"):
+            t = getattr(gs, name)
+            self.assertEqual(list(t.shape), [4, 5120], name)
+            self.assertTrue(t.is_contiguous(), name)
+        # The exact tensor handed to the reduce — a full-row prefix of the
+        # compact allocation — passes the custom-AR contiguity requirement...
+        self.assertTrue(is_weak_contiguous(gs.scratch_scores_bf16[:2]))
+        # ...while a column-sliced view of a WIDER buffer (the forbidden
+        # shape) fails it: this is what the real allocation rule prevents.
+        wide = torch.zeros(4, 202756, dtype=torch.bfloat16)
+        self.assertFalse(is_weak_contiguous(wide[:2, :5120]))
+        self.assertEqual(int(gs.scratch_boundary[0, 0]), 5120)
+
+    def _fake_ca(self):
+        calls = []
+
+        class _FakeCA:
+            disabled = False
+
+            def should_custom_ar(self, inp):
+                return True
+
+            def custom_all_reduce(self, inp, override_algo=None):
+                calls.append(override_algo)
+                return inp
+
+        return _FakeCA(), calls
+
+    def test_pin_requests_two_shot_below_one_shot_threshold(self):
+        from sglang.jit_kernel.all_reduce import AllReduceAlgo
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            PinnedDSScoreReduceCA,
+        )
+
+        base, calls = self._fake_ca()
+        pinned = PinnedDSScoreReduceCA(base)
+        # 2 KB bf16 — far below the 160 KB one-shot boundary; size-based
+        # selection would pick one-shot, the pin must still say two-shot.
+        small = torch.zeros(1, 1024, dtype=torch.bfloat16)
+        self.assertTrue(pinned.should_custom_ar(small))
+        pinned.custom_all_reduce(small)
+        self.assertEqual(calls, [AllReduceAlgo.TWO_SHOT_PULL])
+
+    def test_pin_does_not_mutate_wrapped_communicator(self):
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            PinnedDSScoreReduceCA,
+        )
+
+        base, _ = self._fake_ca()
+        pinned = PinnedDSScoreReduceCA(base)
+        pinned.custom_all_reduce(torch.zeros(1, 1024, dtype=torch.bfloat16))
+        self.assertFalse(hasattr(base, "override_algo"))
+        self.assertFalse(pinned.disabled)
+
+    def test_strided_input_is_rejected_not_silently_fallen_back(self):
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            PinnedDSScoreReduceCA,
+        )
+
+        base, calls = self._fake_ca()
+        pinned = PinnedDSScoreReduceCA(base)
+        strided = torch.zeros(4, 202756, dtype=torch.bfloat16)[:2, :5120]
+        with self.assertRaises(AssertionError):
+            pinned.should_custom_ar(strided)
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":
