@@ -2937,3 +2937,13 @@ Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
 Successfully built dist/sglang_kernel-0.4.2.post2-cp310-abi3-linux_x86_64.whl
 build rc=0
 dist/sglang_kernel-0.4.2.post2-cp310-abi3-linux_x86_64.whl
+
+=== symbol/schema verification probe (appended as committed evidence) ===
+$ unzip -q -o dist/sglang_kernel-0.4.2.post2-cp310-abi3-linux_x86_64.whl 'sgl_kernel/sm90/common_ops.abi3.so'
+$ strings sgl_kernel/sm90/common_ops.abi3.so | grep ds_topk_sequence_order
+_Z22ds_topk_sequence_orderN2at6TensorES0_S0_S0_
+ds_topk_sequence_order(Tensor score, Tensor seq_lens, Tensor! out_indices, Tensor! out_lengths) -> ()
+_ZN43_GLOBAL__N__46f34ee3_10_ds_topk_cu_ea1aecbb29ds_topk_sequence_order_kernelEPKfPKiPiS4_lii
+ds_topk_sequence_order
+$ sha256sum dist/*.whl
+20ec104f6f2b7d7e9c60ae2ea8839804e80e848765a05e6df9797edbdb802131  /sgl-workspace/sglang/sgl-kernel/dist/sglang_kernel-0.4.2.post2-cp310-abi3-linux_x86_64.whl

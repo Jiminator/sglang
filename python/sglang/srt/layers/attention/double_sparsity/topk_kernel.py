@@ -13,8 +13,10 @@ contract:
     bit-deterministic run-to-run and across TP ranks.
   * output: ``selected_indices`` int32 ``[bs, max_top_k]`` in ascending
     position order with ``-1`` padding, plus ``valid_lengths`` int32 ``[bs]``.
-  * non-finite scores (``-inf`` masked/unwritten slots, NaN) are never
-    selected; ``valid_lengths = min(num_finite, max_top_k)`` per row.
+  * ``-inf`` (masked/unwritten slots) and NaN are never selected;
+    ``valid_lengths = min(num_selectable, max_top_k)`` per row. ``+inf`` is
+    not producible by the scorer but, if present, ranks as the maximal score
+    — matching the torch reference selector and the AOT op exactly.
   * graph-safe: fixed grids, no host syncs, allocation-free given the scratch
     bundle (all intermediates are caller-owned buffers).
 

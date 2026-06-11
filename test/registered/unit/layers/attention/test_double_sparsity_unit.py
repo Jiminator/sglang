@@ -10819,6 +10819,26 @@ class TestRadixTopkKernel(unittest.TestCase):
         for o in outs[1:]:
             self.assertTrue(torch.equal(outs[0], o), "tie selection not deterministic")
 
+    def test_nan_excluded_pos_inf_maximal(self):
+        """The strict non-finite contract: NaN is never selected (defensive —
+        the scorer cannot produce it); +inf ranks as the maximal score,
+        matching the torch reference. The reference is NaN-unaware, so it is
+        fed the same scores with NaN pre-masked to -inf."""
+        torch.manual_seed(13)
+        sc = torch.randn(2, self.WIDTH, device=self.dev)
+        sc[:, 100:110] = float("nan")
+        sc[:, 200:203] = float("inf")
+        seq = torch.full((2,), 4608, dtype=torch.int32, device=self.dev)
+        gi, gl = self._run(sc, seq)
+        ref_in = torch.nan_to_num(sc, nan=float("-inf"), posinf=float("inf"))
+        ri, rl = self._ref(ref_in, seq)
+        self.assertTrue(torch.equal(gi, ri.to(torch.int32)))
+        self.assertTrue(torch.equal(gl, rl))
+        # +inf positions selected; NaN positions never.
+        sel = set(gi[0][gi[0] >= 0].tolist())
+        self.assertTrue({200, 201, 202}.issubset(sel))
+        self.assertFalse(sel & set(range(100, 110)))
+
     def test_graph_replay_tracks_mutation_zero_alloc(self):
         from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
             assert_no_alloc_in_region,
@@ -10963,6 +10983,23 @@ class TestDsTopkAOT(unittest.TestCase):
             outs.append(self.out_idx[:2].clone())
         for o in outs[1:]:
             self.assertTrue(torch.equal(outs[0], o))
+
+    def test_nan_excluded_pos_inf_maximal(self):
+        """Strict non-finite contract, aligned with the Triton suite and the
+        torch reference: NaN never selected; +inf ranks maximal."""
+        torch.manual_seed(13)
+        sc = torch.randn(2, self.WIDTH, device=self.dev)
+        sc[:, 100:110] = float("nan")
+        sc[:, 200:203] = float("inf")
+        seq = torch.full((2,), 4608, dtype=torch.int32, device=self.dev)
+        type(self).op(sc, seq, self.out_idx, self.out_len)
+        ref_in = torch.nan_to_num(sc, nan=float("-inf"), posinf=float("inf"))
+        ri, rl = self._ref(ref_in, seq)
+        self.assertTrue(torch.equal(self.out_idx[:2], ri.to(torch.int32)))
+        self.assertTrue(torch.equal(self.out_len[:2], rl))
+        sel = set(self.out_idx[0][self.out_idx[0] >= 0].tolist())
+        self.assertTrue({200, 201, 202}.issubset(sel))
+        self.assertFalse(sel & set(range(100, 110)))
 
     def test_graph_replay_mutation_zero_alloc(self):
         from sglang.srt.layers.attention.double_sparsity.cuda_graph import (

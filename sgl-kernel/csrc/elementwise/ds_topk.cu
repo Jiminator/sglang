@@ -18,7 +18,8 @@ limitations under the License.
 // Selects, per row, the top-K live finite scores under the exact
 // (score DESCENDING, then logical position ASCENDING) contract and emits the
 // selected logical positions in ascending order with -1 padding plus
-// valid_lengths = min(num_finite, K). Work is proportional to each row's
+// valid_lengths = min(num_selectable, K), where -inf and NaN are never
+// selectable. Work is proportional to each row's
 // live window (seq_lens bounds every scan), not the static score width.
 //
 // One thread block owns one row: four 8-bit radix rounds over order-
@@ -47,8 +48,11 @@ __device__ __forceinline__ uint32_t sortable_key(float s) {
 }
 
 __device__ __forceinline__ bool is_selectable(float s) {
-  // -inf marks masked/unwritten slots; NaN must never be selected.
-  return isfinite(s);
+  // -inf marks masked/unwritten slots and NaN is poison — neither is ever
+  // selected. +inf (not producible by the scorer) stays selectable as the
+  // maximal score, matching the torch reference selector and the Triton
+  // suite so all implementations agree on every input.
+  return !isnan(s) && s != -INFINITY;
 }
 
 // Exclusive block-wide prefix sum over one int per thread (Hillis-Steele in

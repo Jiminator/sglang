@@ -161,8 +161,9 @@ def ds_topk_sequence_order(
     each row's live window ([0, seq_lens[i])), written into caller-owned
     buffers: ``out_indices`` int32 [bs, K] gets the selected logical positions
     in ascending order with -1 padding; ``out_lengths`` int32 [bs] gets
-    min(num_finite, K). Non-finite scores (-inf masked slots, NaN) are never
-    selected. Bit-deterministic run-to-run and across ranks (boundary ties
+    min(num_selectable, K). -inf (masked slots) and NaN are never selected;
+    +inf (not producible by the scorer) ranks as the maximal score, matching
+    the reference selector. Bit-deterministic run-to-run and across ranks (boundary ties
     admit lowest positions first). Single kernel launch, no scratch,
     CUDA-graph capturable.
     Args:
