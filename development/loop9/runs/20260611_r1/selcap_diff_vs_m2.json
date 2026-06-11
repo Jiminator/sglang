@@ -1,0 +1,201 @@
+{
+  "a": "/sgl-workspace/sglang/development/loop9/runs/20260610_m2/selcap/pass0",
+  "b": "/sgl-workspace/sglang/development/loop9/runs/20260611_r1/selcap/pass0",
+  "total_layer_rows": 2496,
+  "layer_rows_differing": 0,
+  "fraction_differing": 0.0,
+  "per_step": [
+    {
+      "step_a": 7,
+      "step_b": 7,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 8,
+      "step_b": 8,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 9,
+      "step_b": 9,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 10,
+      "step_b": 10,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 11,
+      "step_b": 11,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 12,
+      "step_b": 12,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 13,
+      "step_b": 13,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 14,
+      "step_b": 14,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 15,
+      "step_b": 15,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 16,
+      "step_b": 16,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 17,
+      "step_b": 17,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 18,
+      "step_b": 18,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 19,
+      "step_b": 19,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 20,
+      "step_b": 20,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 21,
+      "step_b": 21,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 22,
+      "step_b": 22,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 23,
+      "step_b": 23,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 24,
+      "step_b": 24,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 25,
+      "step_b": 25,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 26,
+      "step_b": 26,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 27,
+      "step_b": 27,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 28,
+      "step_b": 28,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 29,
+      "step_b": 29,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 30,
+      "step_b": 30,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 31,
+      "step_b": 31,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 32,
+      "step_b": 32,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 33,
+      "step_b": 33,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 34,
+      "step_b": 34,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 35,
+      "step_b": 35,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 36,
+      "step_b": 36,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 37,
+      "step_b": 37,
+      "rows": 78,
+      "rows_differing": 0
+    },
+    {
+      "step_a": 38,
+      "step_b": 38,
+      "rows": 78,
+      "rows_differing": 0
+    }
+  ]
+}

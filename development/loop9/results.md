@@ -65,6 +65,27 @@ serializing top-k: the pull kernel absorbs cross-rank arrival skew in-kernel (wa
 Net total still −72,471 µs vs M1. The structural fix for the whole reduce bucket remains
 live-width reduction (follow-on).
 
+### Round-1 column — logical-score gate closed (20260611, runs/20260611_r1/)
+
+| Bucket | M2+M3 (prev) | R1: persistent-worker logical score |
+|---|---|---|
+| `_logical_score_kernel` | 43,180 | **36,908 — AC-1.3 GATE MET (≤40,000)** |
+| new radix selection kernels (in "other") | ≈36.3k | ≈36.3k (unchanged; hist 19,527) |
+| torch top-k/sort lines | 0 | 0 (residual 20,524 = shared non-DS sorts) |
+| NCCL ring score reduce | 0 | 0; custom-AR bf16 two-shot 93,480 |
+| **Total decode GPU-kernel µs** | 512,687 | **480,989** |
+| ratio vs frozen Case-2 (342,857) | 1.495× | **1.403×** |
+| aggregate decode tok/s | 646.79 | **654.28** |
+| recall gate (≤0.5pp) | PASS 64.706 | **PASS 64.706** (identical — change is selection-bit-identical) |
+| cross-rank bit-identity (hard) | PASS | **PASS**; selcap diff vs M2 served: **0/2496 rows** |
+
+The change: `_logical_score_kernel` restructured to a persistent-worker grid (static
+(bs, ≤128) programs; each strides device-side over its LIVE blocks) + dead `-inf` stores
+skipped on the radix path (the seq-bounded selector never reads past seq_len; the legacy
+torch fallback and the recall-oracle/anchor paths keep them — regression-pinned). The −31.7k
+total also carries shared-kernel boot variance (trtllm fusion −16.4k, fp8-quant −6.5k); the
+attributable per-bucket win is the logical-score −6,272. All four per-bucket gates now MET.
+
 † small pre-existing non-DS usage of the kernel in the baseline trace.
 
 M1 verdict (AC-1.1 + AC-2): the f32 ring line is eliminated at the DS reduce site and replaced by
