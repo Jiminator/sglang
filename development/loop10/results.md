@@ -62,6 +62,15 @@ truth for task state): `development/loop10/queue.md`.
 - Measured fact: the static selector width on this build is **202,756** (`req_to_token.shape[1]`),
   not the 202,752 quoted in the plan — immaterial (width is read from code, never hardcoded).
 
+### Round-1 evidence repair (Codex round-0 blockers, `runs/20260611_r0_repair/`)
+
+- Recall gate PASS: overall recall@2048 **64.706%** vs frozen baseline 64.696% (+0.01pp,
+  bar ±0.5pp) — `recall_gate.json`.
+- Case-2 DS-off regression PASS: **340,621 µs vs frozen floor 342,857 (0.99×)**; per-bucket
+  deltas within tens of µs except −2.4k all-reduce routing jitter — inside the loop-9 DEC-1
+  noise band — `case2_cmp_vs_frozen_floor.txt`. The round-0 tagging change now carries all three
+  losslessness teeth plus the DSA regression.
+
 - **task3 analyze artifact** `reviews/task3_width_bucketing_dossier.md` (round 0): the binding
   M1 design — tuple graph key `(bs, width)` gated to DS-on decode by
   `_use_ds_selector_width_keys`; config-borne `selector_width_buckets` (Patch 1 plumbs with an
@@ -72,8 +81,27 @@ truth for task state): `development/loop10/queue.md`.
   measured in task5); DS-off invariant test suite designed; 11-entry risk register tied to the
   frozen gate observables.
 
+### task4 BANKED (round 1, KEEP) — M1 Patch 1
+
+- Code (commit `6c92240b9`): `(bs, selector_width)` graph-variant keys for DS-on decode only
+  (`use_ds_selector_width_keys` gate; PDMux/spec/dllm/encoder untouched), config-borne
+  `selector_width_buckets` (empty → full width only), DSA decode metadata keyed by the variant
+  via the `_ds_graph_variant_key` channel, `last_replay_graph_key` stamps the full key, real-row
+  width dispatch helper. 19 new CPU tests; DS unit file 371 pass.
+- Gates (evidence `runs/20260611_task4_gates/`, commit `65627ea74`): bs-1 selcap 0 SHA
+  mismatches + 0/2,496 rows; op-point 0 SHA mismatches + 0/27,144 rows; the ONLY identity change
+  is the declared `graph_key` int→tuple; recall 64.706% (+0.01pp); Case-1 481,253 µs vs R1
+  480,989 (1.00×, all buckets flat — zero-behavior proven in perf); Case-2 DS-off 341,037 µs vs
+  the frozen 342,857 floor (0.99×, within noise) with all 52 graphs captured through the
+  re-keyed runner.
+- **Gate-baseline advance**: task5's exact gates diff against `runs/20260611_task4_gates/`
+  digests (bs-1 + op-point), with `selector_width` (202756→5120 at the op point) and `graph_key`
+  as the declared identity changes; indices/lengths SHAs must remain bit-identical.
+
 ### Open items / next
 
-- task4 keying/metadata-lifetime patch (M1 Patch 1 per dossier §6) — unblocked; next round.
-- task5 compact patch (M1 Patch 2) — after task4 banks.
-- Conditional/queued: task7–task10 per `queue.md`.
+- task5 compact patch (M1 Patch 2 per dossier §6) — next round's mainline: real per-width
+  DSGraphState buffers (W=5120 + full fallback, whole ladder), real-row dispatch already landed,
+  pinned two-shot via `override_algo=TWO_SHOT_PULL` (NOT `override_shot(2)` — task2 caveat),
+  weak-contiguity assertion, boundary tests, capture-memory/boot-time measurement.
+- task6 M1 gate run; then task7/task8; task9 conditional; task10 close-out per `queue.md`.
