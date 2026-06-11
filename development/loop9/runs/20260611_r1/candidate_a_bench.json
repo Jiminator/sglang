@@ -1,0 +1,18 @@
+{
+  "correctness": {
+    "random_mixed": true,
+    "tie_plateau": true,
+    "neg_inf_underfull": true,
+    "bf16_quantized": true,
+    "tie_determinism_10_runs": true
+  },
+  "bench_us_per_call": {
+    "candidate_a_eager": 1530.1,
+    "candidate_b_triton_captured": 52.6,
+    "candidate_b_triton_eager": 194.3
+  },
+  "notes": [
+    "candidate A allocates full-width intermediates per call (repair is torch-composed) and is not allocation-free graph-capturable as written; eager number is its honest cost."
+  ],
+  "verdict": "exact and deterministic, but the full-width repair costs back the seq-aware kernel's win; candidate B (shipped radix suite) wins the head-to-head."
+}
