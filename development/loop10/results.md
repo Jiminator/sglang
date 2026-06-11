@@ -4,7 +4,7 @@ Rewrite-over-append: this file holds ONE authoritative current-state section, re
 state changes. History lives in git. Plan: `development/loop10/plan.md`. Queue (single source of
 truth for task state): `development/loop10/queue.md`.
 
-## Current state (round 3 — M1+M2 BANKED, task9 dropped condition-false)
+## Current state (round 5 — loop complete pending close-out re-verification; AC-1.2 NOT MET with a corrected measured-frontier record)
 
 ### The number
 
@@ -21,7 +21,7 @@ truth for task state): `development/loop10/queue.md`.
 | Bucket | R1 µs | now µs | hard bar | stretch | status |
 |---|---|---|---|---|---|
 | DS transport: `all_reduce_two_shot_kernel<bf16,8u>` 14,137 + `direct_copy` 2,206 + `bfloat16_copy` 1,280 | ~108–111k | **17,623** | ≤60k | ≤45k | **hard + stretch MET** (AR kernel boot-variance 14.1k↔35.4k across gate boots — skew absorption; within bars at every observed boot) |
-| `_logical_score_kernel` | 36,908 | **22,887** | ≤20k | ≤15k | **NOT MET — measured DRAM-roofline infeasibility (see finding below); disposition escalated** |
+| `_logical_score_kernel` | 36,908 | **22,887** | ≤20k | ≤15k | **NOT MET — owner-adjudicated; corrected measured-frontier record in DEC-L10-2 below** |
 | DS radix top-k (`_radix_hist` 18,501 + `_block_count` 1,338 + `_emit` 2,546 + `_block_prefix` 886) | ≈36,300 | **≈23,271** | ≤28k | ≤24k | **hard + stretch MET** → task9 DROPPED condition-false |
 | shared non-DS topk/sort | 20,524 | ~20.5k | n/a | n/a | control, flat |
 | TOTAL | 480,989 | **361,824** | ≤420k | ≤395k | **both MET** |
@@ -93,18 +93,9 @@ this REALIZES the loop-9 M4 audit's recoverable headroom. Boot capture window �
   hard gate (zero identity changes); recall 64.706%; Case-1 total 385,276 µs (hard + stretch
   still met; the two-shot reduce shows boot-to-boot skew variance 24.4k↔35.4k, both within
   bars — per-bucket attribution primary).
-- **AC-1.2 measured-infeasibility finding**: the bucket landed at **22,869 µs** (−211; R1 was
-  36,908). The kernel is DRAM-roofline-bound: 29 rows × 4,608 positions × 512 B of signature
-  gathers ≈ 68.5 MB/call → ~21 µs/call isolated floor; captured-replay sweep
-  (`task11_logical_score_bench.py` + `runs/20260611_task11/task11_bench.json`) measures 23.3
-  µs/call isolated at the tb=512 optimum (24.6 at tb=256; fewer-worker and larger-block variants
-  worse) vs the bar's 25.6 µs/call with ~6 µs/call of real-context interference on top. The
-  remaining levers are barred: int8 signatures (halves bytes) violates the frozen recipe's
-  `signature_dtype: fp16`; approximate/hierarchical scoring violates the no-added-lossiness
-  contract. **AC-1.2 hard (≤20k) is NOT MET and is assessed infeasible in the exact regime at
-  the frozen op point**; stretch (≤15k) likewise. Disposition: documented for close-out
-  adjudication — an immutable-AC re-scope requires explicit owner authorization (it is NOT
-  silently relaxed here).
+- AC-1.2 remained above the bar after this landing (22,869 → 22,887 across boots). The
+  authoritative AC-1.2 record — including the round-5 retraction of the round-4 "lower bound"
+  framing and the corrected one-process measured frontier — is DEC-L10-2 below.
 
 ### task8 DROPPED (round 3, measured cause — Codex analyze `reviews/task8_transport_verdict.md`)
 
@@ -136,29 +127,40 @@ per queue protocol with the measured cause; no redesign performed.
 `runs/20260611_task7/` digests (bs-1 + op-point). Chain: m0_freeze → task4 → task6r2 → task11
 → task7, every hop either zero-diff-proven or declared (DEC-L10-1).
 
-### DEC-L10-2 (round 4): AC-1.2 owner adjudication and the measured exhaustion of the full ladder
+### DEC-L10-2 (rounds 4–5): AC-1.2 owner adjudication and the corrected measured-frontier record
 
 The owner ruled (AskUserQuestion, round 4): **"Keep the bar; keep trying exact only; once
-that's exhausted, authorize int8 signatures."** Both rungs were then closed by direct
-measurement (`task11_roofline_probe.py`, `runs/20260611_task11/roofline_probe.json`):
+that's exhausted, authorize int8 signatures."**
 
-1. **Exact regime EXHAUSTED**: a stripped kernel performing ONLY the irreducible signature
-   gather (the lower bound on every exact implementation) replays at **25.47 µs/call**
-   (random-slot) / **25.15** (best-case page-64-contiguous) vs the **19.64 µs/call isolated
-   budget** (= 25.64 bar − the measured ~6 µs/call in-context interference). The landed
-   optimum kernel (23.3 µs/call isolated) already sits at this floor with its scoring math
-   included.
-2. **The authorized int8 fallback CANNOT meet the bar either**: int8 gather floor 26.14
-   (random) / 23.68 (page-contiguous best case) — the gather is TRANSACTION-limited, not
-   byte-limited (halving bytes halves effective bandwidth; scales add a third scattered
-   access). Best-case projected real bucket ≈ 21.5–22k vs the 20k bar. int8 is therefore NOT
-   landed: it would add quantization-lossiness risk (value-affecting recipe change, recall
-   gates, re-freeze) for a measured miss. This is a decline-with-evidence of the conditional
-   authorization, stated for owner/review override.
+**Round-5 correction (Codex round-4 review)**: the round-4 "stripped lower bound" proof was
+INVALID — its 25.47 µs/call exceeded the production kernel's own isolated 23.58 (cross-process
+clock states; a "bound" slower than a real implementation is no bound). It is retracted. The
+corrected, one-process, interleaved-replay evidence (`task11_exact_floor_harness.py`,
+artifacts `runs/20260611_task11/exact_floor_random.json` / `exact_floor_page64.json`;
+`task11_headsplit_prototype.py`, artifact `headsplit_proto.json`):
 
-**AC-1.2 final disposition: NOT MET — measured-infeasible at the frozen op point under every
-available lever including the owner-authorized fallback.** The bucket closed 36,908 → 22,887
-(−38%); the residual is the physics of 68.5 MB/call of scattered signature gathers.
+1. **The landed kernel IS the measured optimum of its family.** Production tb=512 measures
+   20.74 (random) / 19.94 (page64) µs/call isolated — at the 19.64 µs/call isolated budget.
+   Every measured structural variant is SLOWER: tb=256 (+5%), tb=1024 (+70%), fewer workers
+   (+70%), one-block-per-program grid (+24%), stripped-same-structure with the math DELETED
+   (+75% — the compute-memory interleave is a local optimum, so no stripped-gather bound
+   exists), head-split hs2/hs4 via bitwise-exact atomic_max (+17%/+57% — duplicated per-split
+   indirection loads outweigh parallelism gains).
+2. **The real-profile miss is cold-cache gather bandwidth, not kernel structure**: binding
+   bucket 22,887 µs = 29.34 µs/call vs the bar's 25.64; the kernel achieves ~2.33 TB/s
+   effective on 68.5 MB/call of scattered signature gathers in-context, where the bar implies
+   ≥2.67 TB/s; isolated replay overstates achievable bandwidth via cross-replay L2 reuse.
+3. **The authorized int8 fallback measured non-viable** (round 4, `roofline_probe.json` —
+   retained as a NOTES artifact; its per-layout numbers are reproducible via
+   `task11_roofline_probe.py --layout {random,page64}`): the gather is transaction-limited,
+   not byte-limited (int8 floors 26.14/23.68 ≈ fp16's); best-case projected real bucket
+   ~21.5–22k vs the 20k bar. int8 NOT landed — decline-with-evidence of the conditional
+   authorization, flagged for override.
+
+**AC-1.2 disposition: NOT MET.** The bar is not formally "proven impossible" — the corrected
+record is a measured frontier, not a mathematical bound — but every implementable exact lever
+in the measured family is exhausted, the landed kernel sits at the isolated budget, and the
+residual is cold-cache bandwidth physics. The bucket closed 36,908 → 22,887 (−38%).
 
 ### task8 measurement contract SATISFIED (round 4)
 

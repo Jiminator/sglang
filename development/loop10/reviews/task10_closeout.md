@@ -63,3 +63,19 @@ Produced lessons: `BL-20260611-collective-buffer-resize-flips-transport-algo`, `
 ## FINDINGS
 
 No blocking close-out findings. The only unmet acceptance item is the explicitly adjudicated AC-1.2 hard bar; it is documented as NOT MET, not silently relaxed.
+
+---
+
+## ROUND-5 AMENDMENT: AC-1.2 / AC-5
+
+Verified in-repo. The corrected record supports the close-out’s AC-1.2 disposition: **NOT MET, owner-adjudicated, bar kept**. It supports exhaustion only as a **measured frontier**, not as a mathematical lower bound. The invalid round-4 stripped-bound claim is retracted in `results.md` / `DEC-L10-2`.
+
+The valid frontier is: landed tb=512 at 20.74 / 19.94 µs isolated, stripped same-structure slower with `bound_valid=false`, tb=256/tb=1024/fewer-worker/head-split variants all slower, and int8 fallback non-viable at 26.14 / 23.68 µs because the gather is transaction-limited. The real-profile miss remains cold-cache scattered-gather bandwidth: 29.34 vs 25.64 µs/call, ~2.33 TB/s achieved on ~68.5 MB/call vs ≥2.67 TB/s implied by the bar.
+
+I consider the owner’s exact rung **exhausted in practice** on this evidence. I cannot name a concrete implementable exact-regime candidate outside this measured family that should become follow-on work.
+
+The round-4 provenance blocker is resolved: the per-layout exact-floor artifacts are produced by committed one-process harness code, and the older `roofline_probe.json` is now only a notes/int8 artifact with a reproducible `--layout` provenance path.
+
+AC-5 is restored by this amendment and `DEC-L10-2`: terminal claims now rest on valid evidence, the retraction is explicit, and the close-out record supersedes the stale original AC-1.2 wording.
+
+**Amended final verdict:** close-out stands; AC-1.2 is **NOT MET and not re-scoped**, exact rung exhausted in practice by measured frontier, int8 fallback declined with evidence, all other close-out acceptance claims remain valid.
