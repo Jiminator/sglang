@@ -4,7 +4,7 @@ Rewrite-over-append: this file holds ONE authoritative current-state section, re
 state changes. History lives in git. Plan: `development/loop10/plan.md`. Queue (single source of
 truth for task state): `development/loop10/queue.md`.
 
-## Current state (round 7 — all implementable work exhausted; ORIGINAL AC-1.2 formally NOT MET; owner re-scope DEC-L10-3 recorded as characterization; loop NON-TERMINAL under the review's original-AC stop rule, pending the owner's stop-condition decision)
+## Current state (round 7 — TERMINAL: the owner explicitly changed the stop condition (DEC-L10-4) to accept the DEC-L10-3 characterization; all other bars met at hard AND stretch)
 
 ### The number
 
@@ -21,7 +21,7 @@ truth for task state): `development/loop10/queue.md`.
 | Bucket | R1 µs | now µs | hard bar | stretch | status |
 |---|---|---|---|---|---|
 | DS transport: `all_reduce_two_shot_kernel<bf16,8u>` 14,137 + `direct_copy` 2,206 + `bfloat16_copy` 1,280 | ~108–111k | **17,623** | ≤60k | ≤45k | **hard + stretch MET** (AR kernel boot-variance 14.1k↔35.4k across gate boots — skew absorption; within bars at every observed boot) |
-| `_logical_score_kernel` | 36,908 | **22,887** | ≤20k | ≤15k | **NOT MET under the original bar**; owner characterization re-scope recorded (DEC-L10-3) — distinct from original-plan completion; the bar sits below the landed kernel's measured cold-cache floor (frontier in DEC-L10-2/3) |
+| `_logical_score_kernel` | 36,908 | **22,887** | ≤20k | ≤15k | **Original bar NOT MET; terminal by owner rulings DEC-L10-3 (characterization re-scope) + DEC-L10-4 (explicit stop-condition change)** — the bar sits below the landed kernel's measured cold-cache floor (frontier in DEC-L10-2/3) |
 | DS radix top-k (`_radix_hist` 18,501 + `_block_count` 1,338 + `_emit` 2,546 + `_block_prefix` 886) | ≈36,300 | **≈23,271** | ≤28k | ≤24k | **hard + stretch MET** → task9 DROPPED condition-false |
 | shared non-DS topk/sort | 20,524 | ~20.5k | n/a | n/a | control, flat |
 | TOTAL | 480,989 | **361,824** | ≤420k | ≤395k | **both MET** |
@@ -157,10 +157,11 @@ artifacts `runs/20260611_task11/exact_floor_random.json` / `exact_floor_page64.j
    ~21.5–22k vs the 20k bar. int8 NOT landed — decline-with-evidence of the conditional
    authorization, flagged for override.
 
-**AC-1.2 disposition: NOT MET.** The bar is not formally "proven impossible" — the corrected
-record is a measured frontier, not a mathematical bound — but every implementable exact lever
-in the measured family is exhausted, the landed kernel sits at the isolated budget, and the
-residual is cold-cache bandwidth physics. The bucket closed 36,908 → 22,887 (−38%).
+**AC-1.2 numeric outcome: the original bar was NOT MET** (22,887 vs ≤20,000). The record is a
+measured frontier, not a mathematical bound; every implementable exact lever in the measured
+family is exhausted, the landed kernel sits at the isolated budget, and the residual is
+cold-cache bandwidth physics. The bucket closed 36,908 → 22,887 (−38%). Terminal disposition:
+DEC-L10-3 + DEC-L10-4 below.
 
 ### task8 measurement contract SATISFIED (round 4)
 
@@ -186,22 +187,30 @@ reproduces the binding in-context bucket (29.34) almost exactly — the AC-1.2 r
 landed kernel's cold-cache floor, and that floor exceeds the bar (25.64 µs/call).
 
 With the frontier complete (8 measured levers, all worse than the landed kernel), the owner
-ruled (AskUserQuestion, round 6): **AC-1.2 is re-scoped to a characterized finding.** This is
-recorded as the owner's PROJECT-LEVEL disposition. **It does not satisfy the original plan's
-hard bar** (22,887 > 20,000), and the loop's review stop rule recognizes only original-AC
-attainment: the loop therefore remains formally NON-TERMINAL until the owner either changes
-the stop condition / ends the loop, or directs further rounds (no implementable exact
-candidate remains — reviewer-confirmed). No threshold was silently relaxed at any point.
+ruled (AskUserQuestion, round 6): **AC-1.2 is re-scoped to a characterized finding** — the
+owner's project-level disposition. It does not change the numeric fact that the original hard
+bar was not met (22,887 > 20,000); terminality under the review's original-AC stop rule was
+resolved separately by DEC-L10-4 below. No threshold was silently relaxed at any point: the
+bar survived two owner rulings and was re-scoped only after the reviewer-named final lever
+was measured.
 
-### CLOSE-OUT artifact state (rounds 4–7)
+### DEC-L10-4 (round 7): the owner's EXPLICIT stop-condition change — the loop is terminal
 
-`reviews/task10_closeout.md` holds the original close-out (round 4) plus three amendments
-(round 5: retraction-based correction; round 6: the owner re-scope verdict; round 7: the
-stop-rule precedence note). Authoritative reading: the AC tally stands for AC-1 total /
-AC-1.1 / AC-1.3 (hard+stretch MET, binding artifacts cited), AC-2/3/4 MET, AC-5 maintained by
-the amendment chain; **original AC-1.2 is NOT MET** and carries the owner characterization
-(DEC-L10-3). The round-6 amendment's "terminal verdict" expresses the owner's project-level
-close and does NOT terminate the loop under the review's original-AC stop rule; task10 and
-task11 remain formally active until the owner's stop-condition decision.
+Per the round-6 review's prescribed resolution ("obtain a user-level change to the stop
+condition that explicitly accepts DEC-L10-3 as terminal despite the original hard bar miss"),
+the owner ruled (AskUserQuestion, round 7): **the loop's stop condition is changed to accept
+DEC-L10-3 as terminal.** With that user-level ruling on record, the loop's completion
+criterion is: AC-1 total / AC-1.1 / AC-1.3 met at hard AND stretch (they are), AC-2/3/4/5 met
+(they are), and AC-1.2 dispositioned by DEC-L10-3 under DEC-L10-4's stop-condition change
+(it is). The close-out (`reviews/task10_closeout.md`) was regenerated in round 7 as ONE
+coherent terminal document reflecting this state.
+
+### CLOSE-OUT artifact state (round 7 — regenerated)
+
+`reviews/task10_closeout.md` was REGENERATED in round 7 as one coherent terminal document
+(replacing the round-4 original + amendment layers, which produced contradictory readings;
+the superseded layered version remains in git history). Its single AC tally: AC-1 total /
+AC-1.1 / AC-1.3 MET at hard AND stretch with binding artifacts; AC-1.2 original bar NOT MET,
+terminal via DEC-L10-3 + DEC-L10-4; AC-2/3/4/5 MET. task10 and task11 are terminal.
 
 **Loop headline: 480,989 → 361,824 µs — 1.403× → 1.055× vs the frozen DSA floor.**
