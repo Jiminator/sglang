@@ -1,191 +1,234 @@
-# DS-vs-DSA one-batch decode profiling — results (GLM-5.1-FP8, 8×H200)
+# DS-vs-DSA decode profiling + serving ladder — results (GLM-5.1-FP8, 8×H200)
 
-Characterization for Loop-8 (`development/profiling/plan.md`). **Not a gate run** — AC-4 is
-closed (R12). The point is to attribute *where* the known DS-on decode cost goes.
+**Re-measured 2026-06-12 on HEAD `ce914e5b9`** (branch `dev/double-sparsity-standalone`,
+after the Loop-10 kernel work landed: width-bucketed DS selector CUDA graphs, compact W=5120
+selection-capture, bf16-authoritative radix top-k with copy-back removal, and the pinned bf16
+two-shot score reduce). This supersedes the original Loop-8 characterization (frozen run
+`runs/20260609/`, HEAD ~`10e642c2f`); both runs share the identical op-point so the numbers
+are directly comparable. New run: `runs/20260612/`.
 
-Three server configs, each captured twice (nsys system trace + torch per-rank trace),
-one batch each, run sequentially (one TP=8 server at a time):
+**Two things changed vs the Loop-8 baseline, and the doc now leads with both:**
 
-| Case | Mode | `mem_fraction_static` | batch | What |
-|------|------|------|------|------|
-| **1 — DS** | Double Sparsity ON | 0.7 | 29 | DS KV-pool-capped steady-state batch |
-| **2 — DSA@same** | DSA-native (DS OFF) | 0.7 | 29 | apples-to-apples vs Case 1 (only DS flags differ) |
-| **3 — DSA@best** | DSA-native (DS OFF) | 0.8 | 64 | best DSA config (full batch) |
+1. **Serving** — DS-on per-request decode throughput jumped **~1.7×** and now **clears the
+   30 tok/s decode-SLO floor at conc 16/32/64**, where Loop-8 DS failed it badly.
+2. **Kernel attribution** — the DS index/scoring/transport tax that dominated Loop-8 decode
+   **collapsed**: same-batch DS-vs-DSA decode GPU-kernel time went from **1.84× to 1.05×**.
 
-**Op-point invariants (verified in every `serve.log`):** `disable_custom_all_reduce=False`
-(custom all-reduce ON), `enable_double_sparsity=True` (Case 1) / `False` (Cases 2,3),
-`mem_fraction_static` 0.7/0.7/0.8, `page_size=64`, `kv_cache_dtype=fp8_e4m3`,
-`dsa_{prefill,decode}_backend=flashmla_kv`, `disable_radix_cache=True`,
-`disable_overlap_schedule=True`, `disable_piecewise_cuda_graph=True`, CUDA graph ON,
-`enable_flashinfer_allreduce_fusion=True`, `random_seed=20260607`.
-`PYTORCH_CUDA_ALLOC_CONF` kept unset (expandable_segments would break custom-all-reduce
-IPC at GLM TP=8 graph capture — BL-20260608). Case 1 boots and **admits the full bs 29**
-(no KV-pool admission failure).
+> **Scope caveat.** The serving sweep here is a **directional** read (1 trial, 60s warmup,
+> 180s window, conc 16/32/64), **not** the locked AC-11 publication sweep (3 trials × 600s).
+> Single-trial TTFT and aggregate-throughput numbers carry real run-to-run variance; the
+> per-request decode-TPS p50 is the stable metric. The single-batch profiling below is
+> `bench_one_batch_server` (one batch, never steady-state) — kernel attribution only, not SLO.
 
-> **Single-batch caveat (from the benchmarking guide).** `bench_one_batch_server` sends ONE
-> batch — the server is never in steady state and its latency metrics are biased. These runs
-> are used for **kernel-level attribution only**, NOT as SLO numbers. The authoritative
-> throughput is the locked `bench_serving` sweep in
-> `development/loop8/runs/20260608_ac4/slo2_ac11_report.txt` (DS decode-TPS ~17–23, DSA ~26–42).
+Op-point (every `serve.log`, both runs): TP=8, `page_size=64`, `kv_cache_dtype=fp8_e4m3`,
+`dsa_{prefill,decode}_backend=flashmla_kv`, `disable_radix_cache=True` (both columns radix-off,
+apples-to-apples), `disable_overlap_schedule`, `disable_piecewise_cuda_graph`, CUDA graph ON,
+custom all-reduce ON, `enable_flashinfer_allreduce_fusion=True`, `random_seed=20260607`,
+`PYTORCH_CUDA_ALLOC_CONF` unset (expandable_segments breaks custom-all-reduce IPC at GLM TP=8 —
+BL-20260608). DS config: `top_k=2048`, fp16 signatures, `scorer_norm=off`, `head_agg=max`.
 
 ---
 
 ## 0. Headline
 
-Two **separable, multiplicative** penalties make served DS-on far slower than DSA-native, and
-**DS is stuck paying both**:
+**The DS index/scoring tax is largely paid off; the remaining DS deficit is the structural
+KV-pool batch cap, not the selector.**
 
-1. **DS index/scoring tax ≈ 1.9×** — at the *identical* op-point (bs 29, mem 0.7, custom-AR ON),
-   DS-on decode does **1.84× the GPU-kernel work per step** that DSA-native does (torch decode,
-   TP-0: 632,239 µs vs 342,857 µs over the same 10-step window). DS is **not** "DSA plus an
-   index" — it **replaces DSA's compact fused fp8 indexer (~17k µs/window) with a much heavier
-   stack**: a DS-only f32 ring all-reduce (+124.9k µs), a generic PyTorch top-k/sort stack
-   (+138.6k µs), and `_logical_score_kernel` (+63.1k µs).
-2. **Batch-efficiency ≈ 1.78×** — DSA at bs 64 does only **1.23× the GPU work for 2.2× the
-   tokens** of bs 29 (i.e. ~1.8× more GPU-efficient per token). DS-on **cannot** use this: its
-   per-rank TokenLabelTable shrinks the KV pool and **caps the decode batch at ~29**, so it is
-   locked out of the efficient large batch DSA reaches at mem 0.8.
+- **Single-batch per-step (same batch, bs30, mem 0.7):** DS-on decode does **1.05×** the
+  GPU-kernel work of DSA-native (361,786 vs 343,820 µs / 10-step window, TP-0) — down from the
+  Loop-8 **1.84×** (632,239 vs 342,857). The DS-specific index/score/transport kernels now total
+  **~74.5k µs** and replace DSA's **18.4k µs** fused indexer; net same-batch overhead is
+  **+17,966 µs**, and the Loop-8 dominators are gone: the DS-only **f32 ring all-reduce
+  (+124.9k µs) and the generic torch top-k stack (+138.6k µs)** were replaced by a **bf16
+  two-shot reduce (11.3k)** and a **fused radix top-k (29.0k DS-only)**.
+- **Batch efficiency (DSA bs30 → bs64):** unchanged at **1.72×** — DS is still KV-pool-capped
+  at **bs30** (max_total_num_tokens 142,208 / 4608) while DSA reaches **bs64** (410,560 / 4608),
+  so DSA decode is ~1.72× more GPU-efficient per token at its full batch.
+- **Best-vs-best per-token GPU cost:** DS bs30 (12,060 µs/tok) vs DSA bs64 (6,667 µs/tok) =
+  **1.81×**, decomposing as **1.05× (index tax) × 1.72× (batch efficiency)** — down from the
+  Loop-8 **3.4× = 1.9× × 1.78×**. The index factor collapsed; the batch factor did not.
 
-Net single-batch aggregate decode throughput: **DS bs29 459 tok/s → DSA bs29 876 → DSA bs64
-1555 tok/s = 3.4× best-vs-best**, decomposing as ≈1.9× (index tax) × ≈1.78× (batch). The core
-sparse-MLA decode attention is ~31k µs at bs 29 in **both** Case 1 and Case 2 — confirming the
-clean apples-to-apples diff: the gap is DS's index/scoring + its synchronization, not attention
-math.
+The core sparse-MLA decode attention is ~42k µs at bs30 in **both** DS and DSA (42,653 vs
+42,148) — the clean apples-to-apples confirmation that the gap is DS's index/scoring +
+synchronization, not attention math.
 
 ---
 
-## 1. Per-case decode-step GPU-kernel breakdown (torch, TP-0, decode stage)
+## 1. Serving ladder — DS vs DSA (directional, current HEAD)
 
-`--profile-by-stage` decode trace, rank TP-0, 10 decode steps (kernel-time µs and % of that
-rank's decode GPU-kernel time). Categories from `compare_decode.py`. "DS-*" rows are DS-only
-kernels; "DSA-*" rows are DSA-native's fused-indexer kernels that DS replaces.
+`bench_serving`, gsp 4096-ISL / 512-OSL / ~55% prefix (radix-off, so no reuse), 1 trial,
+60s warmup, 180s window. Per-request decode throughput = `output_tokens / (e2e − ttft)`;
+SLO floor = 30 tok/s p50. Three configs:
 
-| Category | Case 1 DS bs29 µs | % | Case 2 DSA bs29 µs | % | Case 3 DSA bs64 µs | % |
-|---|---|---|---|---|---|---|
-| all-reduce (NCCL f32 + trtllm-fusion) | 163,790 | 25.9 | 39,815 | 11.6 | 48,748 | 11.5 |
-| topk/sort stack (mbtopk/radixSort/sbtopk/scan) | 159,166 | 25.2 | 20,564 | 6.0 | 20,808 | 4.9 |
-| MoE (`fused_moe_kernel`) | 91,880 | 14.5 | 118,590 | 34.6 | 161,779 | 38.3 |
-| **DS:logical-score** (`_logical_score_kernel`) | 63,107 | 10.0 | 0 | 0.0 | 0 | 0.0 |
-| attention — sparse-MLA decode | 41,921 | 6.6 | 40,521 | 11.8 | 61,889 | 14.7 |
-| norm/rope/elementwise | 41,895 | 6.6 | 20,278 | 5.9 | 16,621 | 3.9 |
-| GEMM/proj (deep_gemm fp8 + nvjet) | 34,596 | 5.5 | 49,335 | 14.4 | 49,577 | 11.7 |
-| fp8-quant for index logits (`per_token_group_quant`) | 27,818 | 4.4 | 30,617 | 8.9 | 33,170 | 7.9 |
-| **DSA:topk-transform** (`topk_transform_decode`) | 0 | 0.0 | 7,685 | 2.2 | 8,288 | 2.0 |
-| **DSA:mqa-logits** (`sm90_fp8_paged_mqa_logits`) | 29 | 0.0 | 6,875 | 2.0 | 11,600 | 2.7 |
-| hadamard/signature | 0 | 0.0 | 2,641 | 0.8 | 3,537 | 0.8 |
-| memcpy/set + other | 8,038 | 1.3 | 5,936 | 1.7 | 6,218 | 1.5 |
-| **Total decode GPU-kernel µs / 10-step window** | **632,239** | 100 | **342,857** | 100 | **422,236** | 100 |
+- **DS @0.7 (bs30)** — DS-on, KV-pool naturally caps the decode batch at 30.
+- **DSA @0.7 (bs30-cap)** — DSA-native at the *same* mem 0.7, batch forced to 30 via
+  `--max-running-requests 30`. **This is the apples-to-apples column**: only DS-enablement differs.
+- **DSA @0.8 (bs64)** — DSA at its full batch (KV pool reaches bs64). DSA's real deployment best.
 
-**nsys cross-check (`cuda_gpu_kern_sum`, separate parser/run; coarse categories):** Case 1
-(OSL 512, decode-dominated) = DS-index/scoring 34.2% / all-reduce 29.7% / MoE 15.0% / GEMM 8.7% /
-MLA-attn 5.3% — corroborates the torch decode split (the nsys "DS-index/scoring" bucket merges
-logical-score + top-k stack + fp8-quant). **Cases 2 & 3 nsys use OSL 64, so their whole-capture
-rollups are prefill-weighted** (the 29×/64×4096-token prefill dominates a 64-step window —
-e.g. Case 2 nsys shows MLA-attn 40.9%) and are **not** a decode-% cross-check; for Cases 2/3 the
-torch DECODE trace above is authoritative and nsys serves the timeline/serialization check (§2).
-Per-case nsys kern_sum CSVs are committed (`*/nsys/kern_sum.csv`).
+| conc | config | decode-TPS p50 | agg tok/s | achieved conc | TTFT med/p99 (s) |
+|---|---|---:|---:|---:|---:|
+| 16 | DS @0.7 (bs30) | **39.4** ✅ | 494 | 16.0 | 3.6 / 3.7 |
+| 16 | DSA @0.7 (bs30-cap) | 40.9 | 418 | 16.0 | 7.1 / 7.1 |
+| 16 | DSA @0.8 (bs64, best) | 38.7 | 404 | 16.0 | 7.1 / 7.2 |
+| 32 | DS @0.7 (bs30) | **33.0** ✅ | 574 | 26.0 | 6.4 / 28.4 |
+| 32 | DSA @0.7 (bs30-cap) | 31.9 | 464 | 27.2 | 12.8 / 41.6 |
+| 32 | DSA @0.8 (bs64, best) | 31.5 | 541 | 32.0 | 14.2 / 14.2 |
+| 64 | DS @0.7 (bs30) | **33.3** ✅ | 577 | 39.4 | 23.9 / 45.2 |
+| 64 | DSA @0.7 (bs30-cap) | 32.0 | 465 | 41.4 | 34.8 / 60.2 |
+| 64 | DSA @0.8 (bs64, best) | 25.1 | 676 | 64.0 | 28.1 / 28.1 |
 
-## 2. Headline answer — Case 1 vs Case 2 (clean DS overhead, same bs 29 / mem 0.7)
+**Before/after — DS decode-TPS p50 (same op-point):** Loop-8 DS was **23.1 / 17.2 / 17.2**
+(conc 16/32/64), all **below** the 30 floor. Current HEAD DS is **39.4 / 33.0 / 33.3**, all
+**above** it — a 1.7× lift that tracks the 1.75× single-batch kernel-time improvement
+(632,239 → 361,786 µs).
 
-Clean DS overhead = Case1 − Case2 decode GPU-kernel time = **632,239 − 342,857 = +289,382 µs**
-(DS = **1.84×** DSA). DS-specific kernel groups (positive deltas; `cmp_case1_vs_case2.txt`):
+**How to read it honestly:**
+- **Matched batch (DS bs30 vs DSA bs30-cap) — the clean comparison.** At the same batch the two
+  are **within ~4% on decode-TPS** (essentially tied; the sign flips by concurrency within
+  single-trial noise). The cleanest point is **conc 16**, where both fully admit bs16 with no
+  queueing: **DSA 40.9 vs DS 39.4 → DSA 3.7% faster**, matching the **1.05× per-step kernel ratio**
+  (§3) to the decimal. So DS's per-request decode cost is now ~5% above DSA at matched batch — the
+  index tax is fully visible and *small* (was ~2× pre-Loop-10). DSA's apparent conc-64 "loss" in
+  the old framing (25.1) was **only** its larger batch: cap DSA to bs30 and it recovers to 32.0.
+- **The TTFT tail is the batch cap, not DS.** When DSA is *also* bs30-capped, its **p99 TTFT
+  blows up too** — in fact worse than DS (41.6 / 60.2 s vs DS 28.4 / 45.2 s at conc 32/64). Both
+  are admission/queue-bound once the running batch is capped at 30; DSA @bs64 keeps a tight tail
+  (median ≈ p99) only because it admits the full batch. So the tail belongs to the small KV-pool
+  batch cap, not to the DS selector. (The DS-vs-DSA-bs30-cap TTFT/aggregate gaps also reflect
+  *how* each cap is imposed — DS by natural KV admission, DSA by the cruder `max-running-requests`
+  throttle — so decode-TPS, a steady-state per-step metric, is the cleanest matched-batch number;
+  treat the matched-batch TTFT/aggregate as noisier.)
+- **DSA's real advantage is the batch it can run.** DSA @0.8 reaches bs64 and wins **aggregate**
+  at high concurrency (676 vs DS 577 tok/s at conc 64) with a tight TTFT tail — the batch-
+  efficiency win (§4) that DS cannot access while KV-pool-capped at bs30. This is the structural
+  deficit that remains after the index tax was paid down; closing it needs a smaller per-rank
+  TokenLabelTable, not selector tuning. (DS-on's served default remains OFF; DSA is the SLO
+  default — unchanged.)
 
-| DS-specific kernel group | Δ µs (Case1 − Case2) | note |
-|---|---|---|
-| `ncclDevKernel_AllReduce_Sum_f32_RING` | **+124,873** | DS-only; 780 calls = 1/layer/step. DSA issues none. |
-| top-k / sort stack (mbtopk + radixSort + sbtopk<long> + scan_by_key + searchsorted) | **+138,602** | DS uses generic PyTorch top-k over `top_k=2048` candidates |
-| `_logical_score_kernel` | **+63,107** | DS channel-score compute |
-| (DS index/scoring subtotal) | **≈ +326,582** | |
+---
 
-What DSA spends *instead* (and DS does not): `sm90_fp8_paged_mqa_logits` (6,875 µs) +
-`topk_transform_decode_kernel` (7,685 µs) + `fast_hadamard_transform` (2,641 µs) ≈ **17.2k µs** —
-a tightly-fused fp8 indexer, ~19× cheaper than DS's logical-score + torch-topk + extra-all-reduce
-path.
+## 2. Per-case decode-step GPU-kernel breakdown (torch, TP-0, decode)
 
-**Serialization (nsys / call-structure):** every DS-specific kernel fires **once per layer per
-step** (780 calls over the 10-step window = 78 layers × 10) — `_logical_score_kernel`, the top-k
-stack, and the f32 all-reduce are all in the per-layer decode critical path. Decode is a single
-fixed CUDA-graph node sequence (no separate stream), so these **serialize** with attention/MoE
-rather than overlapping them: the DS index/scoring is added latency on the critical path, not
-hidden work. The f32 ring all-reduce in particular is a per-layer cross-TP sync that DSA's fused
-indexer avoids entirely.
+`--profile-by-stage` decode trace, rank TP-0, 10 decode steps over the 780-call window
+(78 layers × 10). Classifier corrected to attribute the DS radix stack (`_radix_hist/_radix_scan/
+_emit/_block_count/_block_prefix`) and split the shared output sampler (`gatherTopK`+`bitonicSort`,
+present in all cases) from the DS-only kernels. Full grounding: `runs/20260612/breakdown.md`.
 
-Independent confirmation that these are DS-specific: the **Case 2 and Case 3 nsys kern_sums
-contain zero** `_logical_score_kernel`, `mbtopk`, `radixSortKVInPlace`, or
-`AllReduce_Sum_f32_RING` kernels — they exist only in the DS (Case 1) capture.
+| category | Case1 DS bs30 µs | % | Case2 DSA bs30 µs | % | Case3 DSA bs64 µs | % |
+|---|---:|---:|---:|---:|---:|---:|
+| MoE (`fused_moe_kernel` + align/sum) | 95,182 | 26.3 | 123,804 | 36.0 | 167,091 | 39.2 |
+| attention — sparse-MLA decode | 42,653 | 11.8 | 42,148 | 12.3 | 64,031 | 15.0 |
+| all-reduce (total) | 45,061 | 12.5 | 35,038 | 10.2 | 44,311 | 10.4 |
+| &nbsp;&nbsp;↳ DS-only bf16 two-shot reduce | 11,341 | 3.1 | 1,016 | 0.3 | 1,803 | 0.4 |
+| &nbsp;&nbsp;↳ trtllm-fusion oneshot lamport | 33,258 | 9.2 | 33,558 | 9.8 | 41,784 | 9.8 |
+| **DS:logical-score** (`_logical_score_kernel`) | 23,537 | 6.5 | 0 | 0.0 | 0 | 0.0 |
+| DS radix top-k (total) | 49,513 | 13.7 | 20,582 | 6.0 | 20,790 | 4.9 |
+| &nbsp;&nbsp;↳ **DS-only radix stack** | 29,010 | 8.0 | 0 | 0.0 | 0 | 0.0 |
+| &nbsp;&nbsp;↳ shared output sampler | 20,503 | 5.7 | 20,582 | 6.0 | 20,790 | 4.9 |
+| **DS index plumbing** (logical→physical, gathers) | 11,742 | 3.2 | 0 | 0.0 | 0 | 0.0 |
+| **DSA fused indexer** (mqa-logits+topk-transform+hadamard) | 29 | 0.0 | 18,430 | 5.4 | 24,661 | 5.8 |
+| fp8-quant for index logits | 28,031 | 7.7 | 30,389 | 8.8 | 33,647 | 7.9 |
+| GEMM/proj (deep_gemm fp8 + nvjet) | 32,422 | 9.0 | 47,621 | 13.9 | 49,551 | 11.6 |
+| norm/rope/elementwise | 33,511 | 9.3 | 25,701 | 7.5 | 22,472 | 5.3 |
+| memcpy/set + other | 105 | 0.0 | 106 | 0.0 | 104 | 0.0 |
+| **Total decode GPU-kernel µs / 10-step window** | **361,786** | 100 | **343,820** | 100 | **426,658** | 100 |
 
-The shared kernels measure close (MLA-attn 41.9k vs 40.5k; trtllm-fusion all-reduce 35.9k vs
-33.8k; fp8-quant 24.1k vs 25.4k). The one notable shared-kernel difference — MoE 91.9k (DS) vs
-118.6k (DSA), same 1,500 calls — is **run-to-run clock/contention variance** (two separate
-single-batch boots, identical MoE work), not a DS effect; it is why the *net* total delta (289k)
-sits below the DS-specific-additions subtotal (327k). The DS tax itself (extra f32 all-reduce +
-top-k stack + logical-score) is unambiguous and DSA-absent.
+(Indented `↳` rows are sub-totals of the row above, not additive categories. The Case-1 DSA
+fused-indexer "29 µs" is a scheduler metadata stub; the real DSA indexer kernels are absent under DS.)
 
-## 3. Case 2 vs Case 3 — DSA batch-efficiency (bs 29 vs bs 64)
+**nsys cross-check (`runs/20260612/case1_ds/nsys/kern_sum.csv`, OSL 64):** the whole-capture
+rollup is **prefill-weighted** (bs30 × 4096-token prefill dominates a 64-step window), so its top
+kernel is the **prefill** `ncclDevKernel_AllReduce_Sum_bf16_RING_LL` (31%) — a prefill transport
+signal, **not** a decode-% cross-check (use the torch DECODE trace above for that). What it *does*
+confirm: there is **no `…_Sum_f32_RING`** kernel anywhere — the Loop-8 DS-decode f32 ring
+all-reduce is gone, and DS decode transport is the custom **bf16** path (two-shot + trtllm fusion).
 
-> Separates "DS is slow" from "small batch is inefficient". Case 1's bs 29 is **forced** by the
-> DS KV pool, not chosen; Case 3 is DSA at its full bs 64 (mem 0.8).
+## 3. Clean DS overhead — Case1 vs Case2 (same bs30 / mem 0.7)
 
-DSA decode GPU-kernel time: bs 29 = 342,857 µs vs bs 64 = 422,236 µs → **1.23× the work for 2.2×
-the tokens** (`cmp_case2_vs_case3.txt`). Per-token decode GPU cost: **11,823 µs/tok (bs29) →
-6,597 µs/tok (bs64) = 0.56×**, i.e. bs 64 is ~1.8× more GPU-efficient per token. The growth is
-concentrated in the batch-scaling kernels — MoE +43.2k µs (115.6k→158.8k) and sparse-MLA-attn
-+23.0k µs (30.3k→53.4k) — while the indexer (top-k stack +0.2k, mqa-logits +4.7k), all-reduce
-(+8.9k), and fp8-quant (+2.6k) grow only marginally; the deep_gemm tiles shift from 32-wide to
-64-wide variants. Net: nearly all per-token gain comes from amortizing fixed per-step overheads
-over a 2.2× larger batch.
+Net decode GPU-kernel delta = **361,786 − 343,820 = +17,966 µs → DS = 1.05× DSA** (Loop-8:
++289,382 µs / 1.84×). Reading it by what each side actually runs:
 
-**Consequence for DS:** DSA can run bs 64 (1555 tok/s aggregate single-batch); DS-on is KV-pool-
-capped at bs 29 (459 tok/s). So the DS deficit is the **product** of the per-step index tax
-(≈1.9×, §2) and the lost batch efficiency (≈1.78×) — DS pays for being slow per step *and* for
-being unable to use the efficient large batch.
+| DS-specific kernel group (DSA runs none) | Δ µs | note |
+|---|---:|---|
+| `_logical_score_kernel` | **+23,537** | DS channel-score compute (1×780; Loop-8: 63,107) |
+| DS-only radix top-k stack | **+28,931** | `_radix_hist`(4×780)/`_radix_scan`(4×780)/`_emit`/`_block_count`/`_block_prefix` — replaces Loop-8's +138.6k torch top-k stack |
+| DS index plumbing | **+11,742** | logical→physical + scatter/gather + index_fill/copy + bf16/f16 selection copies (all 1–2×780) |
+| DS-pinned **bf16 two-shot** all-reduce | **+10,325** | 11,341 µs / 800 calls vs DSA's 1,016 / 20 — replaces Loop-8's +124.9k f32 ring |
+| (DS-specific subtotal) | **≈ +74,535** | |
 
-## 4. Bench `--show-report` single-batch latency (NOT steady-state — cross-reference only)
+What DSA spends *instead* (and DS does not): the fused indexer
+`sm90_fp8_paged_mqa_logits` (6,963) + `topk_transform_decode` (7,678) + `fast_hadamard_transform`
+(2,635) + `fused_store_indexer_cache` (1,126) = **18,430 µs**.
 
-ISL 4096 / OSL 512 (torch runs), greedy. **Biased single-batch numbers** — do not equate with the
-locked SLO sweep; cross-reference only.
+So DS's selection machinery is **~4× the cost of DSA's fused indexer in isolation** (74.5k vs
+18.4k), but that is now a small slice of the decode step (was the dominant cost). The **net**
+collapses to +17,966 µs because this capture's Case-2 happened to carry more MoE (+28.6k) and
+GEMM (+15.2k) — per-boot `fused_moe_kernel` timing variance plus DSA's extra projection GEMMs,
+**not** a DS saving. Treat the same-batch DS tax as bounded by **[+18k net, +56k variance-robust]**
+(the +56k = +74.5k DS-specific − 18.4k DSA indexer, holding shared kernels equal). Either bound is
+a **5–16× reduction** of the Loop-8 +289k tax.
 
-| Case | batch | latency (s) | output tok/s | ITL (ms) | last TTFT (s) | per-req decode tok/s |
-|---|---|---|---|---|---|---|
-| 1 — DS bs29 | 29 | 40.24 | 459.21 | 63.15 | 7.91 | 15.8 |
-| 2 — DSA bs29 | 29 | 29.33 | 875.92 | 33.11 | 12.38 | 30.2 |
-| 3 — DSA bs64 | 64 | 48.18 | 1555.16 | 41.15 | 27.11 | 24.3 |
+**Serialization (unchanged structure):** every DS-only kernel still fires once (or a small fixed
+multiple) per layer per step — `_logical_score_kernel`, the radix stack, the plumbing, and the
+bf16 two-shot reduce are all 780-aligned, on the per-layer decode critical path inside the single
+CUDA-graph node sequence (no separate stream), so they serialize with attention/MoE rather than
+overlapping. The work is smaller now, but it is still added latency, not hidden.
 
-Per-request decode tok/s tracks the locked SLO-sweep regime (DS ~17, DSA ~26–42), confirming
-these biased single-batch runs reproduce the right relative behavior even though absolute numbers
-are not SLO-grade. bs 64 has higher *aggregate* (1555) but lower *per-request* (24.3 vs 30.2)
-throughput than bs 29 — the expected larger-batch trade. (The second, slower row in each torch
-`bench.log` is the profiler-instrumented pass; ignore for latency.)
+## 4. Case2 vs Case3 — DSA batch-efficiency (bs30 vs bs64)
 
-## 5. Artifacts
+> Separates "DS is slow" from "small batch is inefficient". Case1's bs30 is **forced** by the DS
+> KV pool (142,208 tok / 4608), not chosen; Case3 is DSA at its full bs64 (410,560 / 4608).
 
-All under `development/profiling/runs/20260609/`. Raw multi-GB traces (`*.nsys-rep`, `*.sqlite`,
-`*.trace.json.gz`) are **git-ignored** (paths listed below; regenerable). Committed: summaries,
-`result.jsonl`, nsys `kern_sum.csv`, serve/bench/driver logs, `server_args.json`, comparison
-tables, and the run/parse scripts (`_env.sh`, `run_case.sh`, `summarize_torch.py`,
-`summarize_nsys.py`, `compare_decode.py`).
+DSA decode GPU-kernel time: bs30 = 343,820 µs vs bs64 = 426,658 µs → **1.24× the work for 2.13×
+the tokens**. Per-token: **11,461 µs/tok (bs30) → 6,667 µs/tok (bs64) = 0.58×**, i.e. bs64 is
+**1.72×** more GPU-efficient per token. Growth concentrates in the batch-scaling kernels — MoE
++43.3k (123.8k→167.1k) and sparse-MLA-attn +21.9k (42.1k→64.0k) — while the indexer, all-reduce,
+and fp8-quant grow marginally; deep_gemm tiles shift 32-wide → 64-wide.
 
-| Run | torch trace (raw, uncommitted) | nsys rep (raw, uncommitted) | committed summaries |
-|---|---|---|---|
-| Case 1 (DS) | `case1_ds/torch/trace/<ts>/*-TP-N-{DECODE,EXTEND}.trace.json.gz` | `case1_ds/nsys/trace.nsys-rep` (775M, OSL 512) | `case1_ds/{torch,nsys}/decode_summary.txt`, `case1_ds/nsys/kern_sum.csv` |
-| Case 2 (DSA@0.7) | `case2_dsa07/torch/trace/<ts>/*.trace.json.gz` | `case2_dsa07/nsys/trace.nsys-rep` (216M, OSL 64) | `case2_dsa07/{torch,nsys}/decode_summary.txt`, kern_sum.csv |
-| Case 3 (DSA@0.8 bs64) | `case3_dsa08/torch/trace/<ts>/*.trace.json.gz` | `case3_dsa08/nsys/trace.nsys-rep` (OSL 64) | `case3_dsa08/{torch,nsys}/decode_summary.txt`, kern_sum.csv |
-| diffs | — | — | `cmp_case1_vs_case2.txt`, `cmp_case2_vs_case3.txt` |
+**Consequence for DS:** DS-on is KV-pool-capped at bs30 and cannot reach DSA's efficient bs64.
+With the index tax now ~paid off, **this batch cap is the dominant remaining structural reason**
+served DS aggregate throughput trails DSA at high concurrency (§1). Lifting it needs a smaller
+per-rank TokenLabelTable footprint (or a larger KV pool), not more selector tuning.
 
-## 6. Method notes / deviations
+## 5. Bench `--show-report` single-batch latency (NOT steady-state — cross-reference only)
 
-- **nsys `--output-len`:** torch runs use the plan's OSL 512 (authoritative latency + clean
-  10-step decode trace). **nsys runs use OSL 64** — the per-decode-step kernel mix is stationary,
-  so 64 steps give identical per-kernel attribution while keeping the trace finalizable in
-  seconds (Case 1's OSL-512 nsys rep was 775 MB / ~4 min to serialize; OSL-64 ≈ 216 MB / seconds).
-  Trade-off: the OSL-64 nsys whole-capture rollup is prefill-weighted (§1), so decode-% comes from
-  the torch DECODE traces and nsys is used for timeline/serialization + f32-all-reduce confirmation.
-- nsys captured server-side: `nsys profile --trace cuda,nvtx,cublas --cuda-graph-trace node
-  --trace-fork-before-exec true --delay D --duration 900 python -m sglang.launch_server …`, bench
-  gated to start only after collection is live, then `nsys stop --session=…` to finalize.
-  `--cuda-graph-trace node` is load-bearing: decode is CUDA-graph-replayed, so without it the
-  replay collapses to one opaque node.
-- torch: server launched with `SGLANG_TORCH_PROFILER_DIR`; client `--profile --profile-by-stage
-  --profile-activities CPU GPU --profile-steps 10`. CUDA graph kept ON (real op-point) — accepted
-  trade-off: no Python-source mapping inside graph regions. The `with_stack` PyTorch-profiler bug
-  did not trigger; no fallback needed.
+ISL 4096 / OSL 512, greedy, biased single-batch (do not equate with the §1 SLO sweep).
+
+| Case | batch | latency (s) | output tok/s | ITL (ms) |
+|---|---:|---:|---:|---:|
+| 1 — DS bs30 | 30 | 22.82 | 919.0 | 32.6 |
+| 2 — DSA bs30 | 30 | 29.78 | 903.0 | 33.2 |
+| 3 — DSA bs64 | 64 | 47.38 | 1604.1 | 39.9 |
+
+At the same bs30 the decode-token cost (ITL 32.6 vs 33.2 ms) is **within single-batch noise** of
+DSA — consistent with the 1.05× same-batch kernel ratio (§3). bs64 has 1.78× the aggregate
+single-batch output (1604 vs 919) but higher ITL (39.9 ms) — the larger-batch trade. The
+authoritative throughput is the §1 `bench_serving` ladder, not these biased single-batch numbers.
+
+## 6. Artifacts
+
+New run under `runs/20260612/`. Raw multi-GB traces (`*.nsys-rep`, `*.sqlite`,
+`*.trace.json.gz`) are regenerable and git-ignored; committed: per-case `serve.log`/`bench.log`/
+`result.jsonl`, the directional `serving/*.jsonl` + `.meta.json` sidecars, `case1_ds/nsys/kern_sum.csv`,
+the per-case torch `decode_summary.txt`, `cmp_case1_vs_case2.txt`, `breakdown.md`, the stage
+drivers (`_env.sh`, `stage{1..4}_*.sh`), and the parsers (`summarize_torch.py`, `summarize_nsys.py`,
+`compare_decode.py`). The Loop-8 frozen run `runs/20260609/` is retained unchanged as the "before".
+
+## 7. Method notes / deviations
+
+- **Common max batch** is derived analytically from each server's `max_total_num_tokens` /
+  (4096+512), not by a destructive OOM probe: DS @0.7 → bs30, DSA @0.8 → bs64 (capped). DS gained
+  one batch slot vs Loop-8 (bs29→bs30) from the Loop-10 memory work (shared per-width DSGraphState
+  + compact buffers freed a little KV pool).
+- **nsys OSL 64** (vs torch OSL 512): the per-decode-step kernel mix is stationary, so 64 steps
+  give identical per-kernel decode attribution while keeping the trace finalizable in seconds.
+  The trade is that the OSL-64 nsys whole-capture rollup is prefill-weighted (§2), so decode-% is
+  read from the torch DECODE traces and nsys serves the timeline/serialization + transport-kind
+  confirmation only.
+- **Directional sweep, not AC-11:** 1 trial / 180s window / 60s warmup. The `benchmark_compare.py`
+  `--ac11` mode (3 trials, 600s window, gates) would refuse these; the legacy single-trial mode
+  is the right reader. For publication-grade DS-vs-DSA SLO numbers, re-run the locked sweep.
+- **Classifier fix:** the copied `summarize_torch.py` had no rule for the Loop-10 radix kernels
+  (`_radix_hist`/`_radix_scan`/`_emit`/…), dumping ~29k µs into "other"; `breakdown.md` uses a
+  corrected classifier (`other` < 15 µs in every case) and splits the shared output sampler from
+  the DS-only radix stack so the +28,931 µs DS delta is honest.

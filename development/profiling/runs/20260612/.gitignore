@@ -1,0 +1,6 @@
+# Raw / large / regenerable profiler artifacts — keep out of git (paths noted in results.md).
+# Small artifacts (summaries, result.jsonl, kern_sum.csv, logs, scripts) ARE committed.
+*.nsys-rep
+*.sqlite
+*.qdstrm
+*.trace.json.gz

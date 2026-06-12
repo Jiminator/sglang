@@ -1,0 +1,18 @@
+# Directional serving ladder — DS vs DSA (HEAD ce914e5b9, 1 trial, 60s warmup/180s window, radix-off)
+# Three configs: DS@0.7 bs30 (natural KV cap) | DSA@0.7 bs30-cap (--max-running-requests 30, apples-to-apples) | DSA@0.8 bs64 (DSA best)
+config                 conc decTPS_p50 agg_tok/s ach_conc ttft_mean ttft_med ttft_p99 tpot_p99  done
+DS@0.7 bs30              16      39.40     494.1    16.00      3.25     3.60     3.70    31.07   192
+DS@0.7 bs30              32      33.00     574.5    25.99      7.32     6.39    28.35    42.07   256
+DS@0.7 bs30              64      33.34     577.0    39.42     19.12    23.88    45.15    40.26   256
+
+DSA@0.7 bs30-cap         16      40.90     418.1    16.00      6.43     7.11     7.14    35.68   192
+DSA@0.7 bs30-cap         32      31.89     464.4    27.21     13.28    12.79    41.62    53.28   192
+DSA@0.7 bs30-cap         64      32.04     465.5    41.41     28.99    34.84    60.17    51.42   192
+
+DSA@0.8 bs64             16      38.72     403.8    16.00      6.49     7.14     7.16    37.18   192
+DSA@0.8 bs64             32      31.53     541.1    31.99     12.46    14.15    14.16    57.51   192
+DSA@0.8 bs64             64      25.08     676.3    63.98     25.06    28.12    28.14    88.67   256
+
+TTFT in seconds. Apples-to-apples = DS@0.7 bs30 vs DSA@0.7 bs30-cap (same batch, only DS-enablement differs):
+decode-TPS within ~4% (conc16 cleanest: DSA 40.9 vs DS 39.4 = +3.7%, matches 1.05x per-step kernel ratio).
+p99 TTFT tail belongs to the bs30 cap, not DS: DSA bs30-cap tail (41.6/60.2) is worse than DS (28.4/45.2).
