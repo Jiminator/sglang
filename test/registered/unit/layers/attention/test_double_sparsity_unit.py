@@ -11894,5 +11894,101 @@ class TestCompactSelectorWidthAllocation(unittest.TestCase):
         self.assertEqual(gs_full.max_seq_len, 202756)
 
 
+class TestDSIndexerCacheGate(unittest.TestCase):
+    """task3: the DS-mode indexer index-k sidecar gate on DSATokenToKVPool, and the
+    matching cell-size drop in the configurator. The gate is DS-only; DSA-native and
+    HiSparse keep the buffer."""
+
+    def _pool(self, gate: bool):
+        from sglang.srt.mem_cache.memory_pool import DSATokenToKVPool
+
+        return DSATokenToKVPool(
+            size=256,
+            page_size=64,
+            kv_lora_rank=512,
+            dtype=torch.float8_e4m3fn,
+            qk_rope_head_dim=64,
+            layer_num=2,
+            device="cpu",
+            index_head_dim=128,
+            enable_memory_saver=False,
+            kv_cache_dim=656,
+            start_layer=0,
+            end_layer=2,
+            gate_index_k_cache=gate,
+        )
+
+    def test_gated_pool_skips_index_k_allocation(self):
+        p = self._pool(gate=True)
+        self.assertTrue(p.gate_index_k_cache)
+        self.assertIsNone(p.index_k_with_scale_buffer)
+
+    def test_ungated_pool_allocates_index_k(self):
+        p = self._pool(gate=False)
+        self.assertFalse(p.gate_index_k_cache)
+        self.assertIsNotNone(p.index_k_with_scale_buffer)
+        self.assertEqual(len(p.index_k_with_scale_buffer), 2)
+
+    def test_gated_data_accessors_fail_loudly(self):
+        p = self._pool(gate=True)
+        idx = torch.zeros(1, dtype=torch.int64)
+        for call in (
+            lambda: p.get_index_k_with_scale_buffer(0),
+            lambda: p.get_index_k_continuous(0, 1, idx),
+            lambda: p.get_index_k_scale_continuous(0, 1, idx),
+            lambda: p.set_index_k_scale_buffer(0, idx, idx, idx),
+        ):
+            with self.assertRaises(RuntimeError):
+                call()
+
+    def test_gated_management_methods_are_none_safe(self):
+        p = self._pool(gate=True)
+        # size accounting omits the (absent) index-k sidecar; no crash.
+        self.assertGreater(p.get_kv_size_bytes(), 0)
+        # state transfer reports no index-k buffers.
+        self.assertEqual(p.get_state_buf_infos(), ([], [], []))
+        # offload round-trip carries index_k=None and restores without touching it.
+        idx = torch.arange(0, 128, dtype=torch.int64)
+        cpu = p.get_cpu_copy(idx)
+        self.assertIn("index_k", cpu)
+        self.assertIsNone(cpu["index_k"])
+        p.load_cpu_copy(cpu, idx)  # must not raise
+
+    def _cell_size(self, *, ds_on: bool, hisparse: bool = False):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from sglang.srt.model_executor import pool_configurator as pc
+
+        cfg = pc.DefaultPoolConfigurator.__new__(pc.DefaultPoolConfigurator)
+        mr = SimpleNamespace(
+            model_config=SimpleNamespace(
+                kv_lora_rank=512, qk_rope_head_dim=64, hf_config=object()
+            ),
+            kv_cache_dtype=torch.float8_e4m3fn,
+            use_mla_backend=True,
+            server_args=SimpleNamespace(enable_double_sparsity=ds_on),
+            enable_hisparse=hisparse,
+        )
+        with mock.patch.object(pc, "get_attention_tp_size", return_value=1), \
+            mock.patch.object(pc, "is_deepseek_dsa", return_value=True), \
+            mock.patch.object(pc, "get_dsa_index_head_dim", return_value=128), \
+            mock.patch.object(pc, "is_float4_e2m1fn_x2", return_value=False):
+            return cfg._compute_cell_size(mr, num_layers=2)
+
+    def test_cell_size_drops_indexer_term_when_ds_gated(self):
+        # The indexer term is 128 + 128//128*4 = 132 bytes/token/layer (uint8),
+        # so for 2 layers the DS-gated cell is 264 bytes smaller than DSA-native.
+        ds = self._cell_size(ds_on=True)
+        dsa = self._cell_size(ds_on=False)
+        self.assertEqual(dsa - ds, 132 * 2)
+
+    def test_cell_size_keeps_indexer_term_for_hisparse(self):
+        # HiSparse keeps the index-k buffer, so even with DS on the term stays.
+        hi = self._cell_size(ds_on=True, hisparse=True)
+        dsa = self._cell_size(ds_on=False)
+        self.assertEqual(hi, dsa)
+
+
 if __name__ == "__main__":
     unittest.main()

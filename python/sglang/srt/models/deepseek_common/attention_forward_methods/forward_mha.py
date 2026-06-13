@@ -161,14 +161,22 @@ class DeepseekMHAForwardMixin:
                     q = self.q_b_proj(q_lora)[0].view(
                         -1, self.num_local_heads, self.qk_head_dim
                     )
-                _ = self.indexer(
-                    x=hidden_states,
-                    q_lora=q_lora,
-                    positions=positions,
-                    forward_batch=forward_batch,
-                    layer_id=self.layer_id,
-                    return_indices=False,
-                )
+                # The indexer call here only STORES quantized keys into the index-k
+                # cache (return_indices=False, result discarded); the native DSA
+                # decode indexer later reads them for its top-k. Under Double Sparsity
+                # the decode selection comes from query-signature scoring (the indexer
+                # is skipped — see deepseek_v2.py `_select_topk_indices`), so this
+                # prefill store is dead work and its index-k sidecar is gated off in
+                # the pool. Skip the store under DS to match the gated buffer.
+                if not self.use_double_sparsity:
+                    _ = self.indexer(
+                        x=hidden_states,
+                        q_lora=q_lora,
+                        positions=positions,
+                        forward_batch=forward_batch,
+                        layer_id=self.layer_id,
+                        return_indices=False,
+                    )
             elif _use_aiter_gfx95 and self.q_b_proj.weight.dtype == torch.uint8:
                 # MXFP4: fused RMSNorm + quant
                 q, _, _, _ = fused_rms_mxfp4_quant(

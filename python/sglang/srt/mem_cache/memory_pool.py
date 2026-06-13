@@ -2005,6 +2005,7 @@ class DSATokenToKVPool(MLATokenToKVPool):
         start_layer: Optional[int] = None,
         end_layer: Optional[int] = None,
         index_buf_size: Optional[int] = None,
+        gate_index_k_cache: bool = False,
     ):
 
         override_dim = (
@@ -2033,6 +2034,17 @@ class DSATokenToKVPool(MLATokenToKVPool):
         # num head == 1 and head dim == 128 for index_k in DSA
         assert index_head_dim == 128
 
+        # Double Sparsity gates the native DSA indexer index-k sidecar off: DS
+        # replaces the indexer's top-k selection with its own query-signature
+        # scoring, so the indexer module is never invoked (deepseek_v2.py returns
+        # the DS selection before the `self.indexer(...)` call) and this per-token
+        # cache is never written or read under DS. Skipping the allocation frees
+        # ~10.3 KB/token across all layers, which the configurator's cell-size math
+        # turns into admitted tokens. The data accessors fail loudly if anything
+        # reaches them while gated (a DS path that read index-k would be a bug);
+        # the pool-management methods (clear/offload/state/size) skip it gracefully.
+        self.gate_index_k_cache = gate_index_k_cache
+
         if _is_hip:
             if aiter_can_use_preshuffle_paged_mqa():
                 assert (
@@ -2044,38 +2056,53 @@ class DSATokenToKVPool(MLATokenToKVPool):
                 ), f"HIP legacy DSA path requires page_size == 1, got {self.page_size}"
         else:
             assert self.page_size == 64
-        with (
-            torch.cuda.use_mem_pool(self.custom_mem_pool)
-            if self.custom_mem_pool
-            else nullcontext()
-        ):
-            self.index_k_with_scale_buffer = [
-                torch.zeros(
-                    # Layout:
-                    #     ref: test_attention.py :: kv_cache_cast_to_fp8
-                    #     shape: (num_pages, page_size 64 * head_dim 128 + page_size 64 * fp32_nbytes 4)
-                    #     data: for page i,
-                    #         * buf[i, :page_size * head_dim] for fp8 data
-                    #         * buf[i, page_size * head_dim:].view(float32) for scale
-                    (
-                        (index_buf_size + page_size + 1) // self.page_size,
-                        self.page_size
-                        * (
-                            index_head_dim + index_head_dim // self.quant_block_size * 4
+        if self.gate_index_k_cache:
+            self.index_k_with_scale_buffer = None
+        else:
+            with (
+                torch.cuda.use_mem_pool(self.custom_mem_pool)
+                if self.custom_mem_pool
+                else nullcontext()
+            ):
+                self.index_k_with_scale_buffer = [
+                    torch.zeros(
+                        # Layout:
+                        #     ref: test_attention.py :: kv_cache_cast_to_fp8
+                        #     shape: (num_pages, page_size 64 * head_dim 128 + page_size 64 * fp32_nbytes 4)
+                        #     data: for page i,
+                        #         * buf[i, :page_size * head_dim] for fp8 data
+                        #         * buf[i, page_size * head_dim:].view(float32) for scale
+                        (
+                            (index_buf_size + page_size + 1) // self.page_size,
+                            self.page_size
+                            * (
+                                index_head_dim
+                                + index_head_dim // self.quant_block_size * 4
+                            ),
                         ),
-                    ),
-                    dtype=self.index_k_with_scale_buffer_dtype,
-                    device=device,
-                )
-                for _ in range(layer_num)
-            ]
+                        dtype=self.index_k_with_scale_buffer_dtype,
+                        device=device,
+                    )
+                    for _ in range(layer_num)
+                ]
         self._finalize_allocation_log(size)
+
+    def _assert_index_k_cache_present(self) -> None:
+        if self.gate_index_k_cache:
+            raise RuntimeError(
+                "DSATokenToKVPool index-k cache is gated off (Double Sparsity): the "
+                "native DSA indexer is not invoked under DS, so its index-k sidecar "
+                "is not allocated. Reaching this accessor means a DS code path tried "
+                "to read/write index-k — that is a bug (DS selection must come from "
+                "query-signature scoring, not the indexer)."
+            )
 
     def _clear_buffers(self):
         del self.kv_buffer
         del self.index_k_with_scale_buffer
 
     def get_index_k_with_scale_buffer(self, layer_id: int) -> torch.Tensor:
+        self._assert_index_k_cache_present()
         if self.layer_transfer_counter is not None:
             self.layer_transfer_counter.wait_until(layer_id - self.start_layer)
         return self.index_k_with_scale_buffer[layer_id - self.start_layer]
@@ -2086,6 +2113,7 @@ class DSATokenToKVPool(MLATokenToKVPool):
         seq_len: int,
         page_indices: torch.Tensor,
     ):
+        self._assert_index_k_cache_present()
         if self.layer_transfer_counter is not None:
             self.layer_transfer_counter.wait_until(layer_id - self.start_layer)
         buf = self.index_k_with_scale_buffer[layer_id - self.start_layer]
@@ -2099,6 +2127,7 @@ class DSATokenToKVPool(MLATokenToKVPool):
         seq_len: int,
         page_indices: torch.Tensor,
     ):
+        self._assert_index_k_cache_present()
         if self.layer_transfer_counter is not None:
             self.layer_transfer_counter.wait_until(layer_id - self.start_layer)
         buf = self.index_k_with_scale_buffer[layer_id - self.start_layer]
@@ -2125,6 +2154,7 @@ class DSATokenToKVPool(MLATokenToKVPool):
                  k_fp8: (seq_len, index_head_dim), uint8
                  k_scale: (seq_len, 4), uint8
         """
+        self._assert_index_k_cache_present()
         if self.layer_transfer_counter is not None:
             self.layer_transfer_counter.wait_until(layer_id - self.start_layer)
         buf = self.index_k_with_scale_buffer[layer_id - self.start_layer]
@@ -2144,6 +2174,7 @@ class DSATokenToKVPool(MLATokenToKVPool):
         index_k: torch.Tensor,
         index_k_scale: torch.Tensor,
     ) -> None:
+        self._assert_index_k_cache_present()
         buf = self.index_k_with_scale_buffer[layer_id - self.start_layer]
         index_buf_accessor.SetKAndS.execute(
             pool=self, buf=buf, loc=loc, index_k=index_k, index_k_scale=index_k_scale
@@ -2156,6 +2187,9 @@ class DSATokenToKVPool(MLATokenToKVPool):
         # resume restores kv_buffer but leaves foreign index/scale in place and
         # DSA attention reads garbage at those token positions.
         kv_cache_cpu = super().get_cpu_copy(indices)
+        # Gated under DS: no index-k sidecar to offload (the indexer never wrote it).
+        if self.gate_index_k_cache:
+            return {"kv": kv_cache_cpu, "index_k": None}
 
         page_indices = indices[:: self.page_size] // self.page_size
         torch.cuda.synchronize()
@@ -2176,6 +2210,9 @@ class DSATokenToKVPool(MLATokenToKVPool):
 
     def load_cpu_copy(self, kv_cache_cpu_dict, indices):
         super().load_cpu_copy(kv_cache_cpu_dict["kv"], indices)
+        # Gated under DS: nothing to restore (get_cpu_copy stored index_k=None).
+        if self.gate_index_k_cache:
+            return
 
         page_indices = indices[:: self.page_size] // self.page_size
         index_k_cpu = kv_cache_cpu_dict["index_k"]
@@ -2194,6 +2231,9 @@ class DSATokenToKVPool(MLATokenToKVPool):
         torch.cuda.synchronize()
 
     def get_state_buf_infos(self):
+        # Gated under DS: no index-k sidecar, so no extra state buffers to transfer.
+        if self.gate_index_k_cache:
+            return [], [], []
         data_ptrs = [
             self.index_k_with_scale_buffer[i].data_ptr() for i in range(self.layer_num)
         ]
@@ -2207,6 +2247,9 @@ class DSATokenToKVPool(MLATokenToKVPool):
 
     def get_kv_size_bytes(self):
         kv_size_bytes = super().get_kv_size_bytes()
+        # Gated under DS: the index-k sidecar is not allocated.
+        if self.gate_index_k_cache:
+            return kv_size_bytes
         for index_k_cache in self.index_k_with_scale_buffer:
             kv_size_bytes += get_tensor_size_bytes(index_k_cache)
         return kv_size_bytes

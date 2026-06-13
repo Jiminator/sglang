@@ -1,15 +1,23 @@
 # Loop 11 Results — Authoritative Current State
 
 > Maintained rewrite-over-append: this document always reflects the loop's current state.
-> Last regenerated: Round 4, 2026-06-13. HEAD at round start: `eefbf6986`.
+> Last regenerated: Round 5, 2026-06-13. HEAD at round start: `eefbf6986`.
 
 ## 1. Current state summary
 
-- **M0 COMPLETE (Rounds 0–4).** task0 (memory accounting + the full 12-config unbounded capacity
-  grid + the full bounded right-sized ceiling matrix, every bounded config closed with a measured
-  highest-pass AND first-fail), task1 (frozen radix-ON DSA @0.8 baseline), task2 (DS-Offload
-  rejection memo) all done with durable, tracked evidence. No AC *verdicts* — M0 is ground truth.
-  M1 may now start.
+- **M0 COMPLETE (Rounds 0–4); M1 IN PROGRESS (Round 5).** task0/task1/task2 done with durable
+  evidence (no AC verdicts — M0 is ground truth). **task3 (DS-mode indexer-cache gate) LANDED R5**
+  as a designed pool capability — the first M1 capacity lever (§8).
+- **R5 — task3 indexer-cache gate (production code, DS-only, default byte-compatible).** The DSA
+  indexer index-k sidecar (~10.3 KB/token) is gated off under DS: `DSATokenToKVPool` skips the
+  allocation, the configurator drops the matching cell-size term, the prefill indexer-store is
+  skipped, and data accessors fail loudly if any DS path touches index-k. **AC-1.1 capacity
+  payoff:** DS @0.7 gated = 174,848 tokens vs ungated 142,208 (+23%, matching task0's indexer-off
+  probe), graph capture OK, coherent smoke. **AC-7:** DSA @0.8 = 410,560 unchanged + radix-ON DSA
+  coherent — DSA-native byte-untouched (gate is DS-only). The fail-loud guard caught a real prefill
+  index-k store the static audit missed; the gate now skips that dead store under DS too. Details
+  + the ds@0.8 graph_capture_oom (expected fp16/default-envelope ceiling — task4 closes it):
+  `runs/20260613_m0/task3_indexer_gate_validation.md`.
 - **R4 closed the last open bounded ceiling** (Codex R3): bounded `tf/on/rs` passed the R3 grid-top
   0.95, so R4 probed 0.96 → graph_capture_oom — first-fail captured, ceiling closed. All six
   bounded configs now have a real highest-pass + first-fail (§5.1).
@@ -253,3 +261,29 @@ were re-validated on the feature-only tree (probe hacks reverted). Driver
   the clear `RuntimeError: DS selector width fail-closed: live sequence length 9002 exceeds the
   largest captured selector width 4608 …` (`probe_logs/failclosed_response.txt`) — a too-long
   sequence is rejected, never silently routed to full-width or eager.
+
+## 8. M1 task3: DS-mode indexer-cache gate — LANDED (R5)
+
+First M1 capacity lever, the designed replacement for the R0 `SGLANG_DS_PROBE_SKIP_INDEXER`
+preview. Production code (DS-only, default byte-compatible):
+- `DSATokenToKVPool(gate_index_k_cache=…)`: under DS, skips the index-k sidecar allocation
+  (`index_k_with_scale_buffer = None`); the five data accessors fail loudly; clear/offload/state/
+  size methods are None-safe.
+- `pool_configurator._compute_cell_size`: drops the indexer term (132 B/token/layer) iff
+  `enable_double_sparsity and not enable_hisparse` — in lockstep with the pool, so freed bytes
+  become admitted tokens.
+- `forward_mha.py`: skips the dead prefill `self.indexer(...)` index-k store under DS (caught by
+  the fail-loud guard — the static audit had missed this store path).
+- Wired in `model_runner_kv_cache_mixin` (non-hisparse DS path only). Unit tests:
+  `TestDSIndexerCacheGate` (6).
+
+**Evidence** (`runs/20260613_m0/task3_indexer_gate_validation.md`, `r5v2_*_evidence.txt`):
+AC-1.1 DS @0.7 gated = 174,848 tokens (+23% vs ungated 142,208; matches task0), capture OK,
+coherent smoke. AC-7 DSA @0.8 = 410,560 unchanged + radix-ON coherent. The gate is a contributing
+lever; DS @0.8 fp16/default-envelope still graph_capture_oom's (task0 ceiling 0.75) — the
+sustainable served 0.8 config is task4 (int8 + table-aware sizing + right-sized envelope, where
+task0 measured int8/off/rs = bs109 / 11.5 GB ready).
+
+Next: **task4** — int8 served config + table-aware pool sizing (deduct table bytes before KV
+sizing) at the task0-selected fraction/envelope + int8 quality/overlap gate + directional ladder;
+closes M1.
