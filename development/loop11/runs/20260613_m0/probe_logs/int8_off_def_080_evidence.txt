@@ -1,0 +1,33 @@
+# Durable evidence extract for probe int8_off_def_080
+# config: variant=int8 indexer=off envelope=def mem_fraction=0.80
+# Source serve.log is gitignored (repo policy *.log); this extract is the tracked proof. Loop11 R1.
+
+## served args (from ServerArgs)
+  mem_fraction_static = 0.8
+  max_running_requests = 2048
+  cuda_graph_max_bs = 512
+  context_length = 202752
+  enable_double_sparsity = True
+  signature_dtype = int8
+
+## launch line + probe env (R1 fill)
+  SGLANG_DS_PROBE_SKIP_INDEXER=1 python -m sglang.launch_server --model-path /cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db --tp-size 8 --kv-cache-dtype fp8_e4m3 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --disable-radix-cache --random-seed 20260607 --trust-remote-code --host 127.0.0.1 --port 30000 --mem-fraction-static 0.80 --enable-double-sparsity --double-sparsity-config {"top_k": 2048, "page_size": 64, "channel_mask_path": "/models/glm51-fp8-channel-mask-s256.safetensors", "device_buffer_size": 4096, "signature_dtype": "int8", "scorer_norm": "off", "scorer_norm_hybrid_threshold": 8192, "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "recall_oracle": false, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0}
+
+## TP0 boot-stage memory lines (durable proof set)
+  [2026-06-13 02:56:54 TP0] Load weight end. elapsed=65.97 s, type=GlmMoeDsaForCausalLM, quant=fp8, fmt=e4m3, avail mem=48.76 GB, mem usage=89.24 GB.
+  [2026-06-13 02:56:56 TP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 504640, KV size: 24.05 GB
+  [2026-06-13 02:56:56 TP0] Memory pool end. avail mem=23.14 GB
+  [2026-06-13 02:56:56 TP3] token_label_table: 9.97 GB/rank  L=78 T=504704 H=8 D=32 page=64 dtype=torch.int8 scales=float16
+  [2026-06-13 02:56:59 TP0] Capture cuda graph begin. This can take up to several minutes. avail mem=10.75 GB
+  [2026-06-13 02:58:53 TP0] Capture cuda graph end. Time elapsed: 114.38 s. mem usage=4.91 GB. avail mem=5.84 GB.
+  [2026-06-13 02:58:58 TP0] max_total_num_tokens=504640, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=2048, context_len=202752, available_gpu_mem=5.84 GB
+
+## derived
+  max_total_num_tokens = 504640
+  bs_cap (floor(cap/4608)) = 109
+  table_GB = 9.97
+  kv_pool_GB = 24.05
+  ready_GB (available_gpu_mem at server-ready) = 5.84
+  capture_ok = True
+  server_ready = True
+  status = OK

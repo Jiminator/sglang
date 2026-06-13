@@ -1,15 +1,29 @@
 # Loop 11 Results — Authoritative Current State
 
 > Maintained rewrite-over-append: this document always reflects the loop's current state.
-> Last regenerated: Round 0, 2026-06-13. HEAD at round start: `6714a5663`.
+> Last regenerated: Round 1, 2026-06-13. HEAD at round start: `ee60c0df4`.
 
 ## 1. Current state summary
 
-- **M0 in flight (Round 0).** task1 (frozen radix-ON DSA baseline) DONE; task2 (DS-Offload
-  rejection memo) DONE; task0 (memory accounting + probe matrix) RUNNING — table below updates
-  when the matrix completes.
-- No production code changes landed yet. Probe-only env hooks (dev-only, reverted before the
-  round-0 commit) are recorded in `runs/20260613_m0/probe_hacks.patch`.
+- **M0 COMPLETE (Rounds 0–1).** task0 (memory accounting + the full 12-config capacity matrix),
+  task1 (frozen radix-ON DSA @0.8 baseline), task2 (DS-Offload rejection memo) all done with
+  durable, tracked evidence. No AC *verdicts* — M0 is ground truth that feeds M1+.
+- **R1 closed the R0 review gaps:** task0 was completed to the plan's contract (the full
+  `{fp16,int8,table-free} × {indexer on/off} × {default, right-sized}` cross-product with a
+  per-config mem_fraction sweep to the boot ceiling); per-probe evidence extracts were
+  regenerated durably (the R0 `head -50` truncation that dropped the capture-end/headroom proof
+  lines is fixed); queue/results/tracker reconciled.
+- **No production code landed** (M0 is measurement-only). Probe-only env hooks
+  (`SGLANG_DS_PROBE_TABLE_TOKENS`, `SGLANG_DS_PROBE_SKIP_INDEXER`) are dev-only, archived as
+  `runs/20260613_m0/probe_hacks.patch`, and reverted before each commit — the designed indexer
+  gate is task3/M1.
+- **Scope notes (R1 Plan Evolution):** (a) the boot-probe matrix measures the
+  **boot/capture/smoke ceiling** per config — an *upper bound* on the servable fraction, not the
+  sustained-stable served fraction (that comes from the task4/M2 ladders under real load);
+  (b) the measured envelope axis is `{default, right-sized=(--max-running-requests 64
+  --cuda-graph-max-bs 64)}`; the R0 `rs16k` rows added `--context-length 16384` (a different
+  lever) and are retained only as a labeled supplementary set; (c) **bounded selector-width (q2)
+  is UNMEASURED** — it needs the q2 code feature, not a config knob, and stays queued.
 
 ## 2. FROZEN: radix-ON DSA @0.8 directional baseline (task1) — the loop's comparison column
 
@@ -84,77 +98,83 @@ draft's 2.97 GB which was the 0.7/142k pool); fp16 DS = 1.25 GB (p03, not sustai
   frees 15.27 GB at the 0.8 op-point, not 5.29 — a materially stronger payoff than the draft's
   fixed-5.29-GB framing implied.
 
-## 5. task0: max-stable-fraction / capacity probe matrix — COMPLETE
+## 5. task0: capacity matrix + boot-ceiling sweep — COMPLETE (full 12-config grid)
 
-Driver `runs/20260613_m0/stage_task0_probes.sh`; rows `runs/20260613_m0/probes.tsv`; per-probe
-boot fields `runs/20260613_m0/probe_logs/`. Each probe = boot + capacity readout + graph-capture
-success + short serve smoke. Probe-only env hooks (`SGLANG_DS_PROBE_TABLE_TOKENS=8192` table-free
-mock → ~0.30 GB residual mock table, stays visible in the table_GB column so the rows are honest;
-`SGLANG_DS_PROBE_SKIP_INDEXER=1` sidecar-gate preview) per `runs/20260613_m0/probe_hacks.patch` —
-**reverted before this round's commit; zero production code changed this round.**
+The full `{fp16, int8, table-free mock} × {indexer on/off} × {default, right-sized}` cross-product,
+each swept in mem_fraction (0.75→0.95) to its **boot/capture/smoke ceiling** (highest pass +
+first fail). Drivers: `runs/20260613_m0/stage_task0_probes.sh` (R0 anchor rows) +
+`stage_task0_fill.sh` (R1 sweep). Unified rows: `task0_matrix.tsv` (51 probes); per-config
+summary: `task0_ceilings.md`; **durable per-probe evidence**: `probe_logs/<name>_evidence.txt`
+(server args + KV alloc + table bytes + capture begin/end + `max_total_num_tokens` +
+`available_gpu_mem` + smoke — the R0 `head -50` truncation is fixed; the gitignored `.log`s are
+no longer the only proof). Probe-only env hooks (`SGLANG_DS_PROBE_TABLE_TOKENS=8192` → ~0.30 GB
+mock table, kept visible; `SGLANG_DS_PROBE_SKIP_INDEXER=1` sidecar-gate preview) per
+`probe_hacks.patch` — **reverted before commit; zero production code changed.**
 
 `ready_GB` = `available_gpu_mem` at server-ready (post weights + KV pool + table + DS graph
-capture), the headroom that sustains concurrent 4096-ISL decode. **It — not the token readout —
-is the real discriminator.**
+capture). **It — not the token readout — is the real discriminator**, but at the ceiling it is
+boot-only headroom (see caveat). Boot ceiling per config (table-free `*` = 0.30 GB mock, true
+table-free frees 0.30 more):
 
-| probe | frac | variant | idx | env | tokens | bs_cap | table GB | ready GB | capture/smoke |
-|---|---:|---|---|---|---:|---:|---:|---:|---|
-| p01 | 0.70 | fp16 | on  | default | 142,208 | 30  | 5.29 | **26.63** | yes / OK |
-| p14 | 0.70 | fp16 | off | default | 174,848 | 37  | 6.51 | 25.27 | yes / OK |
-| p02 | 0.75 | fp16 | on  | default | 276,416 | 59  | 10.28 | 13.87 | yes / OK |
-| p04 | 0.75 | fp16 | on  | rs      | 276,416 | 59  | 10.28 | 19.33 | yes / OK |
-| p06 | 0.75 | int8 | on  | default | 276,416 | 59  | 5.46 | 18.45 | yes / OK |
-| p03 | 0.80 | fp16 | on  | default | 410,560 | 89  | 15.27 | **1.25** | yes / OK (boot-only) |
-| p05 | 0.80 | fp16 | on  | rs16k   | 410,560 | 89  | 15.27 | 6.94 | yes / OK |
-| p07 | 0.80 | int8 | on  | default | 410,560 | 89  | 8.11 | 8.17 | yes / OK |
-| p08 | 0.80 | int8 | on  | rs      | 410,560 | 89  | 8.11 | 13.81 | yes / OK |
-| p09 | 0.80 | int8 | on  | rs16k   | 410,560 | 89  | 8.11 | 14.04 | yes / OK |
-| p10 | 0.80 | int8 | off | rs16k   | 504,640 | 109 | 9.97 | 11.71 | yes / OK |
-| p11 | 0.80 | tablefree | on  | default | 410,560 | 89  | 0.30* | 16.26 | yes / OK |
-| p12 | 0.80 | tablefree | off | rs      | 504,640 | 109 | 0.30* | 21.25 | yes / OK |
-| p13 | 0.85 | tablefree | off | rs16k   | 669,568 | 145 | 0.30* | 13.55 | yes / OK |
+| variant | idx | env | highest PASS (frac / bs_cap / ready GB) | first FAIL | bs≥64 cleared at |
+|---|---|---|---|---|---|
+| fp16 | on  | default | 0.80 / bs89  / **1.25** | 0.85 | 0.80 |
+| fp16 | on  | rs      | 0.80 / bs89  / 6.71 | 0.85 | 0.80 |
+| fp16 | off | default | 0.75 / bs73  / 11.21 | 0.80 | 0.75 |
+| fp16 | off | rs      | 0.80 / bs109 / 2.75 | 0.85 | 0.75 |
+| int8 | on  | default | 0.80 / bs89  / 8.17 | 0.85 | 0.80 |
+| int8 | on  | rs      | 0.85 / bs118 / 3.38 | 0.90 | 0.80 |
+| int8 | off | default | 0.80 / bs109 / 5.84 | 0.85 | 0.75 |
+| int8 | off | rs      | 0.85 / bs145 / 1.05 | 0.90 | 0.75 |
+| tf*  | on  | default | 0.90 / bs147 / 0.87 | 0.95 | 0.80 |
+| tf*  | on  | rs      | 0.90 / bs147 / 6.32 | 0.95 | 0.80 |
+| tf*  | off | default | 0.85 / bs145 / 7.87 | 0.90 | 0.75 |
+| tf*  | off | rs      | 0.90 / bs181 / 5.41 | 0.95 | 0.75 |
 
-`*` mock residual (true table-free = 0; these rows are ~0.30 GB pessimistic).
 DSA reference (frozen case3): @0.8 = 410,560 tokens / bs89 / **18.50 GB** ready.
+Supplementary (separate axis, not in the grid): the R0 `rs16k` rows (`--context-length 16384`) in
+`task0_matrix.tsv` — context-length sensitivity, not bounded selector width.
 
-**What the matrix establishes (all four are robust to the smoke-vs-sustained caveat below):**
+**What the matrix establishes:**
 
-1. **Token capacity / bs_cap is a function of (mem_fraction, indexer-gate) ONLY — table dtype
-   does not move it.** Every @0.8 config reads ~410,560 tokens / bs89 (indexer-on) or ~504,640 /
-   bs109 (indexer-off), regardless of fp16/int8/table-free. The pool is sized from
-   `available_bytes // cell_size` *before* the table is allocated from leftover; the table dtype
-   changes the leftover (headroom), not the pool. So **AC-1.1's bs≥64 floor and AC-1.2's
-   ≥390k-tokens @0.8 readout are mechanically cleared by the mem-fraction alone** — the binding
-   question is sustainability (headroom), not the token number.
-2. **Headroom is what the table/indexer-gate/envelope levers actually buy, and it explains the
-   draft's "DS stuck at 0.7" exactly:** fp16 @0.8 (p03) has **1.25 GB** ready — it boots,
-   captures graphs, and answers a 1-request smoke, but cannot sustain the 4096-ISL workload
-   (the established gen-OOM). Each lever adds headroom at the same 0.8/bs89 capacity:
-   fp16 1.25 → int8 8.17 (p07) → table-free 16.26 (p11); the envelope adds ~5–6 GB on top
-   (int8+rs 13.81, p08).
-3. **task3 indexer-gate works end to end** (+23% tokens, two independent measurements) and adds
-   headroom — verified in the live boot path, not just on paper.
-4. **Endgame preview — table-free + indexer-gate strictly dominates DSA's memory op-point:**
-   p12 (table-free / indexer-off / rs @0.8) = **504,640 tokens / bs109 / 21.25 GB ready** vs
-   DSA@0.8's 410,560 / bs89 / 18.50 GB. More tokens, deeper headroom. p13 pushes to bs145 @0.85
-   with 13.55 GB still in hand. This is the absorbed-latent (task6) + indexer-gate (task3) target
-   laid bare.
+1. **Token capacity / bs_cap is a function of (mem_fraction, indexer-gate) ONLY — table dtype does
+   not move it.** At any fraction, fp16/int8/table-free read identical tokens; only the
+   indexer-gate shifts it (+23%). The pool is sized from `available_bytes // cell_size` *before*
+   the table is taken from leftover, so the table dtype changes the *leftover* (headroom), not the
+   pool. **Every config clears AC-1.1's bs≥64 floor** — indexer-off configs already at 0.75
+   (bs73), indexer-on at 0.80 (bs89). AC-1.2's ≥390k-tokens @0.8 readout is likewise mechanical.
+   The binding question is sustainability (headroom), not the token count.
+2. **Headroom is what the table / indexer-gate / envelope levers buy, and it pins the draft's "DS
+   stuck at 0.7" exactly:** at the same 0.80/bs89, fp16/on/def has **1.25 GB** ready (boots but
+   gen-OOMs under load — the established finding); int8 lifts it to 8.17; table-free to 16.26; the
+   right-sized envelope adds ~5–6 GB more. The boot *ceiling* climbs with the levers: fp16 0.80 →
+   int8 0.80–0.85 → table-free 0.90.
+3. **task3 indexer-gate works end to end** (+23% tokens at fixed fraction, two independent
+   measurements) — but a subtlety the sweep exposed: gating the indexer at a *high* fraction can
+   OOM (fp16/off/def fails at 0.80 where fp16/on/def boots), because the freed bytes feed a bigger
+   pool *and* a pool-sized table. The gate's real benefit is **more tokens at a sustainable
+   fraction** (every indexer-off config clears bs≥64 at 0.75) — which is exactly why task3 must
+   land with task4's **table-aware sizing** (deduct the table before sizing the pool).
+4. **Endgame — table-free + indexer-gate strictly dominates DSA's memory op-point:** tf/off/rs
+   reaches **bs181 @0.90 / 5.41 GB ready**, and at 0.80 = bs109 / **21.25 GB ready** vs DSA@0.8's
+   bs89 / 18.50 GB — more tokens *and* deeper headroom. The table stays 0.30 GB (mock) across the
+   whole sweep: with the table gone, the pool grows unpenalized. This is the absorbed-latent
+   (task6) + indexer-gate (task3) target, measured.
 
-**Honesty caveat (binding on every "OK" above).** These are **boot + graph-capture + a single
-24-token smoke**, NOT sustained-load proofs. The only GLM-5.1 config with a *sustained* 4096-ISL
-anchor is fp16 @0.7 = 26.63 GB ready (the 20260612 served config). The `ready_GB` column
-*predicts* sustainability (and predicts fp16@0.8's 1.25 GB cannot serve), but the served fraction
-per config is confirmed only on the milestone ladders — **task4** for the int8 served config,
-the **M2 gate** for table-free. No probe row is presented as a serving verdict.
+**Honesty caveat (binding on every PASS above).** These are **boot + graph-capture + a single
+24-token smoke**, NOT sustained-load proofs — the boot ceiling is an *upper bound* on the
+servable fraction. The only GLM-5.1 config with a *sustained* 4096-ISL anchor is fp16 @0.7 =
+26.63 GB ready (the 20260612 served config); fp16's boot ceiling is 0.80 at 1.25 GB, so the
+sustained-stable fraction sits a full step below the boot ceiling (it needs ~15–25 GB of decode-
+activation headroom the smoke never exercises). The sustained served fraction per config is
+established only on the milestone ladders — **task4** (int8) and the **M2 gate** (table-free).
 
-**Sequencing read-out for M1 (DEC-3 = full M1 first):** the int8 served-fallback config (task4)
-plus the indexer-gate (task3) plus the right-sized envelope land in the 11–14 GB-ready band at
-0.8 / bs89–109 (p08/p09/p10) — roughly half the fp16@0.7 anchor's headroom but at ~3× the pool.
-To clear AC-1.1's bs≥64 floor, int8 needs **0.8** (bs89): int8 @0.75 reads bs59 (p06), under the
-floor, so the floor on int8 comes from the fraction or the indexer-gate (int8+gate would lift a
-0.75 pool to ~bs73), not from int8 alone. The richest-headroom config that still clears bs≥64 is
-int8 @0.8 + envelope (p08/p09, 13.8–14.0 GB ready, bs89). task4's sustained ladder picks the
-served fraction; the matrix supplies the fallback rungs.
+**Sequencing read-out for M1 (DEC-3 = full M1 first):** the M1 served config is int8 + indexer-gate
++ right-sized envelope (= the int8/off/rs row): boot ceiling 0.85/bs145, with **0.80 = bs109 /
+11.49 GB ready** as the comfortable rung (the 0.85 rung's 1.05 GB is boot-only). That ~11.5 GB at
+3.5× the fp16@0.7 pool is the task4-ladder candidate; task4 confirms the sustained fraction.
+Because indexer-off clears bs≥64 at 0.75 already, M1 has fraction headroom to trade for stability.
+The endgame (table-free, M2) serves the DSA op-point (0.80/bs89) with 21 GB to spare.
 
 ## 6. Queue state
 

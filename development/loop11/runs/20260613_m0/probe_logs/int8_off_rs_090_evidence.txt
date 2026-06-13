@@ -1,0 +1,33 @@
+# Durable evidence extract for probe int8_off_rs_090
+# config: variant=int8 indexer=off envelope=rs mem_fraction=0.90
+# Source serve.log is gitignored (repo policy *.log); this extract is the tracked proof. Loop11 R1.
+
+## served args (from ServerArgs)
+  mem_fraction_static = 0.9
+  max_running_requests = 64
+  cuda_graph_max_bs = 64
+  context_length = None
+  enable_double_sparsity = True
+  signature_dtype = int8
+
+## launch line + probe env (R1 fill)
+  SGLANG_DS_PROBE_SKIP_INDEXER=1 python -m sglang.launch_server --model-path /cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db --tp-size 8 --kv-cache-dtype fp8_e4m3 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --disable-radix-cache --random-seed 20260607 --trust-remote-code --host 127.0.0.1 --port 30000 --mem-fraction-static 0.90 --enable-double-sparsity --double-sparsity-config {"top_k": 2048, "page_size": 64, "channel_mask_path": "/models/glm51-fp8-channel-mask-s256.safetensors", "device_buffer_size": 4096, "signature_dtype": "int8", "scorer_norm": "off", "scorer_norm_hybrid_threshold": 8192, "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "recall_oracle": false, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0} --max-running-requests 64 --cuda-graph-max-bs 64
+
+## TP0 boot-stage memory lines (durable proof set)
+  [2026-06-13 03:19:31 TP0] Load weight end. elapsed=55.82 s, type=GlmMoeDsaForCausalLM, quant=fp8, fmt=e4m3, avail mem=48.76 GB, mem usage=89.24 GB.
+  [2026-06-13 03:19:36 TP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 834432, KV size: 39.77 GB
+  [2026-06-13 03:19:36 TP0] Memory pool end. avail mem=8.80 GB
+  None
+  None
+  None
+  None
+
+## derived
+  max_total_num_tokens = None
+  bs_cap (floor(cap/4608)) = 0
+  table_GB = None
+  kv_pool_GB = 39.77
+  ready_GB (available_gpu_mem at server-ready) = None
+  capture_ok = False
+  server_ready = False
+  status = BOOT_FAIL

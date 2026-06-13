@@ -73,7 +73,10 @@ probe() {
     table_gb=$(grep -aoE "token_label_table: [0-9.]+ GB/rank" "$slog" | head -1 | grep -oE "[0-9.]+" | head -1 || true)
     [[ -z "$table_gb" ]] && table_gb="-"
   fi
-  grep -aE "KV Cache is allocated|max_total_num_tokens|token_label_table|Capture cuda graph|avail mem|mem usage|Memory pool end|max_running_requests|context_len" "$slog" | head -50 > "$HERE/probe_logs/${name}_fields.txt" || true
+  # Extract only the proof lines (TP0 + the table line) — NO head cap, so the capture-end and
+  # available_gpu_mem proof lines can never be truncated (R0 used `head -50` which, across 8 ranks,
+  # cut them; fixed R1 — see build_task0_matrix.py for the canonical durable extractor).
+  grep -aE "TP0\] (Load weight end|KV Cache is allocated|Memory pool end|Capture cuda graph (begin|end)|max_total_num_tokens)|token_label_table:" "$slog" > "$HERE/probe_logs/${name}_fields.txt" || true
   echo -e "${name}\t${frac}\t${variant}\t${indexer}\t${envelope}\t${status}\t${cap}\t${bs}\t${table_gb}\t${gcap}\t${smk}\t${note}" >> "$TSV"
   echo ">>> $name => status=$status cap=$cap bs=$bs table_gb=$table_gb graph=$gcap smoke=$smk note=$note"
   teardown

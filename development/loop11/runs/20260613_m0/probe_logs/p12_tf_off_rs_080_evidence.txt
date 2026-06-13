@@ -1,0 +1,30 @@
+# Durable evidence extract for probe p12_tf_off_rs_080
+# config: variant=tf indexer=off envelope=rs mem_fraction=0.80
+# Source serve.log is gitignored (repo policy *.log); this extract is the tracked proof. Loop11 R1.
+
+## served args (from ServerArgs)
+  mem_fraction_static = 0.8
+  max_running_requests = 64
+  cuda_graph_max_bs = 64
+  context_length = 202752
+  enable_double_sparsity = True
+  signature_dtype = fp16
+
+## TP0 boot-stage memory lines (durable proof set)
+  [2026-06-13 01:05:49 TP0] Load weight end. elapsed=56.88 s, type=GlmMoeDsaForCausalLM, quant=fp8, fmt=e4m3, avail mem=48.76 GB, mem usage=89.24 GB.
+  [2026-06-13 01:05:53 TP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 504640, KV size: 24.05 GB
+  [2026-06-13 01:05:53 TP0] Memory pool end. avail mem=24.64 GB
+  [2026-06-13 01:05:53 TP3] token_label_table: 0.30 GB/rank  L=78 T=8192 H=8 D=32 page=64 dtype=torch.float16 scales=fp16
+  [2026-06-13 01:05:54 TP0] Capture cuda graph begin. This can take up to several minutes. avail mem=21.95 GB
+  [2026-06-13 01:06:34 TP0] Capture cuda graph end. Time elapsed: 39.60 s. mem usage=0.70 GB. avail mem=21.25 GB.
+  [2026-06-13 01:06:39 TP0] max_total_num_tokens=504640, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=64, context_len=202752, available_gpu_mem=21.25 GB
+
+## derived
+  max_total_num_tokens = 504640
+  bs_cap (floor(cap/4608)) = 109
+  table_GB = 0.3
+  kv_pool_GB = 24.05
+  ready_GB (available_gpu_mem at server-ready) = 21.25
+  capture_ok = True
+  server_ready = True
+  status = OK

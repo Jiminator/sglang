@@ -1,0 +1,37 @@
+probe	fraction	variant	indexer	envelope	status	max_total_num_tokens	bs_cap_4608	table_GB	ready_GB	graph_capture	smoke	note
+fp16_on_def_085	0.85	fp16	on	def	BOOT_FAIL	0	0	-	-	-	-	cuda_oom
+fp16_on_rs_080	0.80	fp16	on	rs	OK	410560	89	15.27	6.71	yes	OK:Paris. The city is located on the River 	-
+fp16_on_rs_085	0.85	fp16	on	rs	BOOT_FAIL	0	0	-	-	-	-	cuda_oom
+fp16_off_def_075	0.75	fp16	off	def	OK	339712	73	12.64	11.21	yes	OK:Paris. The city is located on the River 	-
+fp16_off_def_080	0.80	fp16	off	def	BOOT_FAIL	0	0	-	-	-	-	graph_capture_oom
+fp16_off_rs_075	0.75	fp16	off	rs	OK	339712	73	12.64	16.66	yes	OK:Paris. The city is located on the River 	-
+fp16_off_rs_080	0.80	fp16	off	rs	OK	504640	109	18.77	2.75	yes	OK:Paris. The city is located on the River 	-
+fp16_off_rs_085	0.85	fp16	off	rs	BOOT_FAIL	0	0	-	-	-	-	cuda_oom
+int8_on_def_085	0.85	int8	on	def	BOOT_FAIL	0	0	-	-	-	-	graph_capture_oom
+int8_on_rs_075	0.75	int8	on	rs	OK	276416	59	5.46	24.09	yes	OK:Paris. The city is located on the River 	-
+int8_on_rs_085	0.85	int8	on	rs	OK	544704	118	10.76	3.38	yes	OK:Paris. The city is located on the River 	-
+int8_on_rs_090	0.90	int8	on	rs	BOOT_FAIL	0	0	-	-	-	-	cuda_oom
+int8_off_def_075	0.75	int8	off	def	OK	339712	73	6.71	16.88	yes	OK:Paris. The city is located on the River 	-
+int8_off_def_080	0.80	int8	off	def	OK	504640	109	9.97	5.84	yes	OK:Paris. The city is located on the River 	-
+int8_off_def_085	0.85	int8	off	def	BOOT_FAIL	0	0	-	-	-	-	graph_capture_oom
+int8_off_rs_075	0.75	int8	off	rs	OK	339712	73	6.71	22.53	yes	OK:Paris. The city is located on the River 	-
+int8_off_rs_080	0.80	int8	off	rs	OK	504640	109	9.97	11.49	yes	OK:Paris. The city is located on the River 	-
+int8_off_rs_085	0.85	int8	off	rs	OK	669568	145	13.23	1.05	yes	OK:Paris. The city is located on the River 	-
+int8_off_rs_090	0.90	int8	off	rs	BOOT_FAIL	0	0	-	-	-	-	cuda_oom
+tf_on_def_075	0.75	tf	on	def	OK	276416	59	0.30	23.87	yes	OK:Paris. The city is located on the River 	-
+tf_on_def_085	0.85	tf	on	def	OK	544704	118	0.30	8.48	yes	OK:Paris. The city is located on the River 	-
+tf_on_def_090	0.90	tf	on	def	OK	678848	147	0.30	0.87	yes	OK:Paris. The city is located on the River 	-
+tf_on_def_095	0.95	tf	on	def	BOOT_FAIL	0	0	-	-	-	-	cuda_oom
+tf_on_rs_075	0.75	tf	on	rs	OK	276416	59	0.30	29.33	yes	OK:Paris. The city is located on the River 	-
+tf_on_rs_080	0.80	tf	on	rs	OK	410560	89	0.30	21.71	yes	OK:Paris. The city is located on the River 	-
+tf_on_rs_085	0.85	tf	on	rs	OK	544704	118	0.30	13.94	yes	OK:Paris. The city is located on the River 	-
+tf_on_rs_090	0.90	tf	on	rs	OK	678848	147	0.30	6.32	yes	OK:Paris. The city is located on the River 	-
+tf_on_rs_095	0.95	tf	on	rs	BOOT_FAIL	0	0	-	-	-	-	graph_capture_oom
+tf_off_def_075	0.75	tf	off	def	OK	339712	73	0.30	23.57	yes	OK:Paris. The city is located on the River 	-
+tf_off_def_080	0.80	tf	off	def	OK	504640	109	0.30	15.80	yes	OK:Paris. The city is located on the River 	-
+tf_off_def_085	0.85	tf	off	def	OK	669568	145	0.30	7.87	yes	OK:Paris. The city is located on the River 	-
+tf_off_def_090	0.90	tf	off	def	BOOT_FAIL	0	0	-	-	-	-	graph_capture_oom
+tf_off_rs_075	0.75	tf	off	rs	OK	339712	73	0.30	29.02	yes	OK:Paris. The city is located on the River 	-
+tf_off_rs_085	0.85	tf	off	rs	OK	669568	145	0.30	13.33	yes	OK:Paris. The city is located on the River 	-
+tf_off_rs_090	0.90	tf	off	rs	OK	834432	181	0.30	5.41	yes	OK:Paris. The city is located on the River 	-
+tf_off_rs_095	0.95	tf	off	rs	BOOT_FAIL	0	0	-	-	-	-	graph_capture_oom
