@@ -89,7 +89,7 @@ def parse_log(path):
 def load_driver_fields():
     """Merge smoke + note (+ policy) per probe from the tracked driver TSVs, by header name."""
     fields = {}
-    for fn in ("probes.tsv", "probes_fill.tsv", "probes_bounded.tsv"):
+    for fn in ("probes.tsv", "probes_fill.tsv", "probes_bounded.tsv", "probes_bounded_fill.tsv"):
         path = os.path.join(HERE, fn)
         if not os.path.exists(path):
             continue
@@ -242,6 +242,36 @@ def main():
                 (r["frac"] for r in rs if r["status"] == "OK" and r["bs"] >= 64), "—"
             )
             out.write(f"| {variant} | {idx} | {env} | {hp} | {ff} | {cleared} |\n")
+
+        # Canonical BOUNDED right-sized ceiling table (fail_closed [4608], rs envelope) —
+        # the bounded analog of the unbounded grid above, per the plan's right-sized axis.
+        bconfigs = {}
+        for r in rows:
+            if r["kind"] == "bounded" and r["policy"] == "fail_closed":
+                bconfigs.setdefault((r["variant"], r["idx"]), []).append(r)
+        out.write(
+            "\n## bounded right-sized ceilings (fail_closed [4608], rs envelope)\n\n"
+            "Same boot/capture/smoke ceiling, with the bounded selector-width feature "
+            "(no full-width DS graph). Compare ready GB to the `rs` rows above (the unbounded "
+            "control); the bounded gain is ~0.3 GB — see task0_bounded_compare.md.\n\n"
+            "| variant | indexer | envelope | highest PASS (frac/bs/ready GB) | "
+            "first FAIL (frac/reason) | bs>=64 cleared at |\n"
+            "|---|---|---|---|---|---|\n"
+        )
+        for key in sorted(bconfigs):
+            variant, idx = key
+            rs = sorted(bconfigs[key], key=lambda r: r["f3"])
+            passes = [r for r in rs if r["status"] == "OK"]
+            fails = [r for r in rs if r["status"] != "OK"]
+            hp = (
+                f"{passes[-1]['frac']} / bs{passes[-1]['bs']} / {passes[-1]['ready_gb']}"
+                if passes else "—"
+            )
+            ff = f"{fails[0]['frac']} ({fails[0]['note']})" if fails else "≥grid-top"
+            cleared = next(
+                (r["frac"] for r in rs if r["status"] == "OK" and r["bs"] >= 64), "—"
+            )
+            out.write(f"| {variant} | {idx} | rs(bounded) | {hp} | {ff} | {cleared} |\n")
 
     # Bounded vs unbounded right-sized comparison (R2): match each bounded probe to the
     # unbounded grid row at the same (variant, indexer, rs, fraction) and report the ready delta.

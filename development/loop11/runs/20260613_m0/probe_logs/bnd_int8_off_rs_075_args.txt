@@ -1,0 +1,2 @@
+SGLANG_DS_PROBE_SKIP_INDEXER=1 DS_CONFIG={"top_k": 2048, "page_size": 64, "channel_mask_path": "/models/glm51-fp8-channel-mask-s256.safetensors", "device_buffer_size": 4096, "signature_dtype": "int8", "scorer_norm": "off", "scorer_norm_hybrid_threshold": 8192, "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "recall_oracle": false, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "selector_width_buckets": [4608], "selector_width_overflow_policy": "fail_closed"}
+[2026-06-13 06:51:37 TP0] DS selector-width graph variants (fail_closed): [4608]

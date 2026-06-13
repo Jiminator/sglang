@@ -16,3 +16,16 @@ Boot ceiling = highest mem_fraction that boots + captures graphs + answers the s
 | tf | off | rs | 0.90 / bs181 / 5.41 | 0.95 (graph_capture_oom) | 0.75 |
 | tf | on | def | 0.90 / bs147 / 0.87 | 0.95 (cuda_oom) | 0.80 |
 | tf | on | rs | 0.90 / bs147 / 6.32 | 0.95 (graph_capture_oom) | 0.80 |
+
+## bounded right-sized ceilings (fail_closed [4608], rs envelope)
+
+Same boot/capture/smoke ceiling, with the bounded selector-width feature (no full-width DS graph). Compare ready GB to the `rs` rows above (the unbounded control); the bounded gain is ~0.3 GB — see task0_bounded_compare.md.
+
+| variant | indexer | envelope | highest PASS (frac/bs/ready GB) | first FAIL (frac/reason) | bs>=64 cleared at |
+|---|---|---|---|---|---|
+| fp16 | off | rs(bounded) | 0.80 / bs109 / 3.06 | 0.85 (cuda_oom) | 0.75 |
+| fp16 | on | rs(bounded) | 0.80 / bs89 / 7.02 | 0.85 (cuda_oom) | 0.80 |
+| int8 | off | rs(bounded) | 0.85 / bs145 / 1.39 | 0.90 (cuda_oom) | 0.75 |
+| int8 | on | rs(bounded) | 0.85 / bs118 / 3.72 | 0.90 (cuda_oom) | 0.80 |
+| tf | off | rs(bounded) | 0.90 / bs181 / 5.72 | 0.95 (other:Failed to CUDA calloc 10485760 bytes) | 0.75 |
+| tf | on | rs(bounded) | 0.95 / bs176 / 1.14 | ≥grid-top | 0.80 |
