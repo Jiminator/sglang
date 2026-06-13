@@ -1,0 +1,36 @@
+# Durable evidence extract for probe ctl_int8_off_rs_080
+# config: variant=int8 indexer=off envelope=rs mem_fraction=0.80 kind=bounded width_policy=full_fallback
+# Source serve.log is gitignored (repo policy *.log); this extract is the tracked proof. Loop11 task0 (R0-R2).
+
+## served args (from ServerArgs)
+  mem_fraction_static = 0.8
+  max_running_requests = 64
+  cuda_graph_max_bs = 64
+  context_length = 202752
+  enable_double_sparsity = True
+  signature_dtype = int8
+  DS selector-width graph variants (full_fallback): [4608, 202756]
+
+## launch line + probe env
+  SGLANG_DS_PROBE_SKIP_INDEXER=1 DS_CONFIG={"top_k": 2048, "page_size": 64, "channel_mask_path": "/models/glm51-fp8-channel-mask-s256.safetensors", "device_buffer_size": 4096, "signature_dtype": "int8", "scorer_norm": "off", "scorer_norm_hybrid_threshold": 8192, "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "recall_oracle": false, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "selector_width_buckets": [4608], "selector_width_overflow_policy": "full_fallback"}
+  [2026-06-13 05:47:31 TP0] DS selector-width graph variants (full_fallback): [4608, 202756]
+
+## TP0 boot-stage memory lines (durable proof set)
+  [2026-06-13 05:47:25 TP0] Load weight end. elapsed=57.44 s, type=GlmMoeDsaForCausalLM, quant=fp8, fmt=e4m3, avail mem=48.76 GB, mem usage=89.24 GB.
+  [2026-06-13 05:47:30 TP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 504640, KV size: 24.05 GB
+  [2026-06-13 05:47:30 TP0] Memory pool end. avail mem=24.64 GB
+  [2026-06-13 05:47:30 TP6] token_label_table: 9.97 GB/rank  L=78 T=504704 H=8 D=32 page=64 dtype=torch.int8 scales=float16
+  [2026-06-13 05:47:31 TP0] Capture cuda graph begin. This can take up to several minutes. avail mem=12.25 GB
+  [2026-06-13 05:48:12 TP0] Capture cuda graph end. Time elapsed: 40.59 s. mem usage=0.76 GB. avail mem=11.49 GB.
+  [2026-06-13 05:48:16 TP0] max_total_num_tokens=504640, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=64, context_len=202752, available_gpu_mem=11.49 GB
+
+## derived + outcome
+  max_total_num_tokens = 504640
+  bs_cap (floor(cap/4608)) = 109
+  table_GB = 9.97
+  kv_pool_GB = 24.05
+  ready_GB (available_gpu_mem at server-ready) = 11.49
+  graph_capture = yes
+  smoke = OK:Paris. The city is located on the River 
+  note (first-fail reason if BOOT_FAIL) = -
+  status = OK

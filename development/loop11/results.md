@@ -1,29 +1,36 @@
 # Loop 11 Results — Authoritative Current State
 
 > Maintained rewrite-over-append: this document always reflects the loop's current state.
-> Last regenerated: Round 1, 2026-06-13. HEAD at round start: `ee60c0df4`.
+> Last regenerated: Round 2, 2026-06-13. HEAD at round start: `aae4a3f90`.
 
 ## 1. Current state summary
 
-- **M0 COMPLETE (Rounds 0–1).** task0 (memory accounting + the full 12-config capacity matrix),
-  task1 (frozen radix-ON DSA @0.8 baseline), task2 (DS-Offload rejection memo) all done with
-  durable, tracked evidence. No AC *verdicts* — M0 is ground truth that feeds M1+.
-- **R1 closed the R0 review gaps:** task0 was completed to the plan's contract (the full
-  `{fp16,int8,table-free} × {indexer on/off} × {default, right-sized}` cross-product with a
-  per-config mem_fraction sweep to the boot ceiling); per-probe evidence extracts were
-  regenerated durably (the R0 `head -50` truncation that dropped the capture-end/headroom proof
-  lines is fixed); queue/results/tracker reconciled.
-- **No production code landed** (M0 is measurement-only). Probe-only env hooks
-  (`SGLANG_DS_PROBE_TABLE_TOKENS`, `SGLANG_DS_PROBE_SKIP_INDEXER`) are dev-only, archived as
-  `runs/20260613_m0/probe_hacks.patch`, and reverted before each commit — the designed indexer
-  gate is task3/M1.
-- **Scope notes (R1 Plan Evolution):** (a) the boot-probe matrix measures the
+- **M0 COMPLETE (Rounds 0–2).** task0 (memory accounting + the full 12-config capacity matrix +
+  the bounded-selector-width axis), task1 (frozen radix-ON DSA @0.8 baseline), task2 (DS-Offload
+  rejection memo) all done with durable, tracked evidence. No AC *verdicts* — M0 is ground truth.
+- **R2 closed the R1 review gaps + landed the loop's first production code.** The bounded
+  selector-width axis Codex required for task0 is now a real, committed DS feature
+  (`selector_width_overflow_policy`), measured, with the matrix distinguishing bounded from
+  unbounded right-sized (§5.1). The canonical matrix/extracts now carry `graph_capture` + `smoke`
+  + first-fail `note` (the R1 AC-8 evidence gap).
+- **Production code this round (DS-gated, default byte-compatible):** `selector_width_overflow_policy`
+  in the DS config (`full_fallback` default = today's `{compact, full}` ladder; opt-in
+  `fail_closed` captures only compact widths and raises a clear error on overflow). Files:
+  `double_sparsity/config.py`, `model_executor/cuda_graph_runner.py` (pure helpers
+  `compute_ds_selector_widths` / `ds_covering_width`), `dsa_backend.py`. Unit tests in
+  `test_double_sparsity_unit.py` (TestDSSelectorWidthLadder + config cases). **AC-7 verified**
+  (§7): DSA-native @0.8 unchanged + DS-default @0.7 reproduces the frozen anchor exactly.
+- The table-free / indexer-off MOCKS remain dev-only probe hooks
+  (`runs/20260613_m0/probe_hacks.patch`), reverted before every commit — the *designed* indexer
+  gate is task3/M1. The bounded-width feature is NOT a mock; it is committed.
+- **Scope notes (Plan Evolution R1+R2):** (a) the boot-probe matrix measures the
   **boot/capture/smoke ceiling** per config — an *upper bound* on the servable fraction, not the
-  sustained-stable served fraction (that comes from the task4/M2 ladders under real load);
-  (b) the measured envelope axis is `{default, right-sized=(--max-running-requests 64
-  --cuda-graph-max-bs 64)}`; the R0 `rs16k` rows added `--context-length 16384` (a different
-  lever) and are retained only as a labeled supplementary set; (c) **bounded selector-width (q2)
-  is UNMEASURED** — it needs the q2 code feature, not a config knob, and stays queued.
+  sustained-stable served fraction (task4/M2 ladders confirm under real load); (b) envelope axis
+  = `{default, right-sized=(--max-running-requests 64 --cuda-graph-max-bs 64)}`; `rs16k`
+  (`--context-length 16384`) is a labeled supplementary set; (c) bounded selector-width is now
+  measured (§5.1) — at the right-sized envelope it reclaims only ~0.3 GB (its headroom value is
+  largely subsumed by the envelope's bs64 cap; its real value is the fail-closed served-width
+  contract).
 
 ## 2. FROZEN: radix-ON DSA @0.8 directional baseline (task1) — the loop's comparison column
 
@@ -176,7 +183,56 @@ established only on the milestone ladders — **task4** (int8) and the **M2 gate
 Because indexer-off clears bs≥64 at 0.75 already, M1 has fraction headroom to trade for stability.
 The endgame (table-free, M2) serves the DSA op-point (0.80/bs89) with 21 GB to spare.
 
+## 5.1. task0: bounded selector-width (R2 feature + measurement)
+
+The bounded-selector-width axis the plan names in the task0 right-sized envelope is a real DS
+feature, landed this round: `selector_width_overflow_policy` (`full_fallback` default =
+byte-compatible `{compact, full}` ladder; `fail_closed` captures ONLY the compact buckets, no
+full 202752-width DS scratch, and raises on overflow). Driver `runs/20260613_m0/stage_task0_bounded.sh`;
+comparison `task0_bounded_compare.md`; per-probe evidence `probe_logs/bnd_*` + `ctl_*`.
+
+Bounded (`fail_closed`, `selector_width_buckets=[4608]`) vs the R1 unbounded right-sized row at the
+same point — `ready_GB` delta = the reclaimed full-width DS graph scratch:
+
+| config @frac | unbounded ready GB | bounded ready GB | delta | bs_cap |
+|---|---:|---:|---:|---:|
+| fp16/on/rs @0.80 | 6.71 | 7.02 | +0.31 | 89 |
+| int8/off/rs @0.80 | 11.49 | 11.83 | +0.34 | 109 |
+| int8/off/rs @0.85 | 1.05 | 1.39 | +0.34 | 145 |
+| tf/off/rs @0.80 | 21.25 | 21.56 | +0.31 | 109 |
+| tf/off/rs @0.85 | 13.33 | 13.64 | +0.31 | 145 |
+| tf/off/rs @0.90 | 5.41 | 5.72 | +0.31 | 181 |
+
+Clean attribution: the matched control `ctl_int8_off_rs_080` (`full_fallback`, buckets=[4608] →
+`{4608, full}`) reads **11.49 GB = the unbounded row exactly**; bounded (`{4608}`) reads 11.83 →
+the **+0.34 GB is precisely the dropped full-width DS scratch**.
+
+**Finding:** at the right-sized envelope the bounded lever reclaims only a uniform **~0.3 GB** and
+lifts no boot ceiling — because `cuda_graph_max_bs=64` already shrinks the full-width score plane
+(`[64, 202752]` ≈ 80–240 MB, not GB; the measured ~1.95 GB DS graph overhead was a bs512-default-
+envelope cost). So bounded selector-width is **largely subsumed by the envelope** as a headroom
+lever. Its durable value is the **fail-closed served-width contract**, not capacity — see §7.
+
 ## 6. Queue state
 
-See `development/loop11/queue.md` (kickoff-populated Round 0): task0–task9 mainline, q1–q8
-kickoff candidates (q7 parked on owner AC-6 ruling; q8 conditional), r1–r5 recorded rejections.
+See `development/loop11/queue.md`: task0–task9 mainline (task0–2 + the q2 bounded-width feature
+DONE), q1–q8 kickoff candidates (q2 now landed+measured; q7 parked on owner AC-6 ruling; q8
+conditional), r1–r5 recorded rejections.
+
+## 7. AC-7: shared-surface regression for the bounded-width feature (R2)
+
+The feature touches the shared `cuda_graph_runner.py`, so the DSA-native default and the DS default
+were re-validated on the feature-only tree (probe hacks reverted). Driver
+`runs/20260613_m0/stage_r2_regression.sh`; evidence `r2_dsa_off_080_evidence.txt`,
+`r2_ds_default_070_evidence.txt`.
+
+- **AC-7a DSA-native @0.8 (DS off):** boots, captures (8 ranks), `max_total_num_tokens=410560`
+  (matches frozen case3), coherent smoke → DSA-native byte-unchanged (the feature is DS-gated via
+  `use_ds_selector_width_keys`, so DSA never reaches it).
+- **AC-7b DS-on default (`full_fallback`) @0.7:** `max_total_num_tokens=142208` / bs30 / table
+  5.29 GB / coherent smoke — **reproduces the frozen p01 anchor exactly**, proving the default
+  policy is byte-compatible at runtime, not just in the unit test.
+- **Fail-closed guard, end-to-end:** a 9002-token prompt on a `fail_closed` `[4608]` server raised
+  the clear `RuntimeError: DS selector width fail-closed: live sequence length 9002 exceeds the
+  largest captured selector width 4608 …` (`probe_logs/failclosed_response.txt`) — a too-long
+  sequence is rejected, never silently routed to full-width or eager.

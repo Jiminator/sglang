@@ -1,6 +1,6 @@
 # Durable evidence extract for probe int8_off_def_085
-# config: variant=int8 indexer=off envelope=def mem_fraction=0.85
-# Source serve.log is gitignored (repo policy *.log); this extract is the tracked proof. Loop11 R1.
+# config: variant=int8 indexer=off envelope=def mem_fraction=0.85 kind=grid width_policy=-
+# Source serve.log is gitignored (repo policy *.log); this extract is the tracked proof. Loop11 task0 (R0-R2).
 
 ## served args (from ServerArgs)
   mem_fraction_static = 0.85
@@ -9,8 +9,9 @@
   context_length = None
   enable_double_sparsity = True
   signature_dtype = int8
+  DS selector-width graph variants: [5120, 202756]
 
-## launch line + probe env (R1 fill)
+## launch line + probe env
   SGLANG_DS_PROBE_SKIP_INDEXER=1 python -m sglang.launch_server --model-path /cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db --tp-size 8 --kv-cache-dtype fp8_e4m3 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --disable-radix-cache --random-seed 20260607 --trust-remote-code --host 127.0.0.1 --port 30000 --mem-fraction-static 0.85 --enable-double-sparsity --double-sparsity-config {"top_k": 2048, "page_size": 64, "channel_mask_path": "/models/glm51-fp8-channel-mask-s256.safetensors", "device_buffer_size": 4096, "signature_dtype": "int8", "scorer_norm": "off", "scorer_norm_hybrid_threshold": 8192, "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "recall_oracle": false, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0}
 
 ## TP0 boot-stage memory lines (durable proof set)
@@ -22,12 +23,13 @@
   None
   None
 
-## derived
+## derived + outcome
   max_total_num_tokens = None
   bs_cap (floor(cap/4608)) = 0
   table_GB = 13.23
   kv_pool_GB = 31.91
   ready_GB (available_gpu_mem at server-ready) = None
-  capture_ok = False
-  server_ready = False
+  graph_capture = -
+  smoke = -
+  note (first-fail reason if BOOT_FAIL) = graph_capture_oom
   status = BOOT_FAIL

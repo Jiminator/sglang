@@ -530,6 +530,53 @@ def use_ds_selector_width_keys(
     )
 
 
+DS_OVERFLOW_FULL_FALLBACK = "full_fallback"
+DS_OVERFLOW_FAIL_CLOSED = "fail_closed"
+
+
+def compute_ds_selector_widths(buckets, full_width: int, policy: str):
+    """The DS selector-width CUDA-graph capture ladder, ascending.
+
+    full_fallback (default): compact buckets below the full req_to_token width,
+      plus the full width itself as the overflow fallback (today's behavior).
+    fail_closed: compact buckets below the full width ONLY — no full-width graph,
+      so its per-batch DS scratch is never captured. A live sequence beyond the
+      largest compact width fails closed at replay (see ds_covering_width).
+      Requires >=1 compact bucket below the full width.
+    """
+    compact = sorted({int(w) for w in (buckets or []) if 0 < int(w) < full_width})
+    if policy == DS_OVERFLOW_FAIL_CLOSED:
+        if not compact:
+            raise ValueError(
+                "DS selector_width_overflow_policy='fail_closed' requires at least "
+                f"one selector_width_bucket below the full req_to_token width "
+                f"({full_width}); got buckets={list(buckets or [])}."
+            )
+        return compact
+    return sorted(set(compact) | {full_width})
+
+
+def ds_covering_width(widths, seq_len: int, policy: str) -> int:
+    """Smallest captured width >= seq_len (widths must be sorted ascending).
+
+    In full_fallback the full width is the ladder's last entry, so it always
+    covers. In fail_closed an overflow (seq_len beyond the largest captured
+    compact width) raises a clear error rather than silently routing to a
+    full-width graph or falling back to eager.
+    """
+    for w in widths:
+        if w >= seq_len:
+            return w
+    if policy == DS_OVERFLOW_FAIL_CLOSED:
+        raise RuntimeError(
+            "DS selector width fail-closed: live sequence length "
+            f"{seq_len} exceeds the largest captured selector width {widths[-1]}. "
+            "Raise selector_width_buckets to cover this length or switch "
+            "selector_width_overflow_policy to 'full_fallback'."
+        )
+    return widths[-1]
+
+
 # Reuse this memory pool across all cuda graph runners.
 global_graph_memory_pool = None
 
@@ -661,16 +708,22 @@ class CudaGraphRunner:
             self.attn_backend,
         )
         self.ds_selector_widths = None
+        self.ds_selector_width_overflow_policy = DS_OVERFLOW_FULL_FALLBACK
         if self.use_ds_selector_width_keys:
             full_width = int(self.attn_backend.req_to_token.shape[1])
             buckets = getattr(self.attn_backend, "ds_selector_width_buckets", None)
-            self.ds_selector_widths = sorted(
-                {int(w) for w in (buckets or []) if 0 < int(w) < full_width}
-                | {full_width}
+            self.ds_selector_width_overflow_policy = getattr(
+                self.attn_backend,
+                "ds_selector_width_overflow_policy",
+                DS_OVERFLOW_FULL_FALLBACK,
+            )
+            self.ds_selector_widths = compute_ds_selector_widths(
+                buckets, full_width, self.ds_selector_width_overflow_policy
             )
             log_info_on_rank0(
                 logger,
-                f"DS selector-width graph variants: {self.ds_selector_widths}",
+                f"DS selector-width graph variants "
+                f"({self.ds_selector_width_overflow_policy}): {self.ds_selector_widths}",
             )
 
         # Init PDMux if needed
@@ -771,10 +824,22 @@ class CudaGraphRunner:
         if self.enable_pdmux:
             graph_key = f"{get_current_stream_idx()}_{cuda_graph_bs}"
         elif self.use_ds_selector_width_keys:
-            # The full selector width is captured for every batch bucket, so
-            # existence of the full-width variant == existence of the bucket;
-            # overflow beyond compact widths can never force eager fallback.
-            graph_key = (cuda_graph_bs, self.ds_selector_widths[-1])
+            if self.ds_selector_width_overflow_policy == DS_OVERFLOW_FAIL_CLOSED:
+                # No full-width fallback graph: key on the smallest captured
+                # width covering the live rows; a sequence beyond the largest
+                # compact width fails closed (raises) here rather than silently
+                # routing to full-width or falling back to eager.
+                graph_key = (
+                    cuda_graph_bs,
+                    self._ds_selector_width_for_replay(
+                        forward_batch, forward_batch.batch_size
+                    ),
+                )
+            else:
+                # full_fallback: the full-width variant is captured for every
+                # batch bucket, so existence of the full-width variant ==
+                # existence of the bucket (today's behavior).
+                graph_key = (cuda_graph_bs, self.ds_selector_widths[-1])
 
         is_bs_supported = (
             graph_key in self.graphs
@@ -1245,17 +1310,20 @@ class CudaGraphRunner:
         Uses only the real rows of the host-visible seq_lens
         (`forward_batch.seq_lens_cpu[:raw_bs]`) — never padded buffer rows,
         whose fill values are not requests and would force a false
-        full-width route. The full req_to_token width is always the ladder's
-        last entry, so overflow beyond every compact width routes there.
+        full-width route. Under full_fallback the full req_to_token width is the
+        ladder's last entry, so overflow routes there; under fail_closed there is
+        no full-width entry and an overflow raises (see ds_covering_width).
         """
         widths = self.ds_selector_widths
-        if len(widths) == 1:
+        policy = getattr(
+            self, "ds_selector_width_overflow_policy", DS_OVERFLOW_FULL_FALLBACK
+        )
+        if len(widths) == 1 and policy != DS_OVERFLOW_FAIL_CLOSED:
+            # full_fallback single-width ladder (the full req_to_token width):
+            # it covers every live sequence, so no per-row max is needed.
             return widths[0]
         max_real_seq_len = int(forward_batch.seq_lens_cpu[:raw_bs].max().item())
-        for width in widths:
-            if width >= max_real_seq_len:
-                return width
-        return widths[-1]
+        return ds_covering_width(widths, max_real_seq_len, policy)
 
     def replay_prepare(
         self,

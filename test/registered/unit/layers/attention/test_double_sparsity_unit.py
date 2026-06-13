@@ -89,6 +89,104 @@ class TestDoubleSparsityConfigParser(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_double_sparsity_config(payload)
 
+    def test_selector_width_overflow_policy_default_is_full_fallback(self):
+        cfg = parse_double_sparsity_config(_valid_payload())
+        self.assertEqual(cfg.selector_width_overflow_policy, "full_fallback")
+
+    def test_selector_width_overflow_policy_fail_closed_parses(self):
+        payload = (
+            '{"channel_mask_path": "/tmp/cm.safetensors", '
+            '"selector_width_buckets": [4608], '
+            '"selector_width_overflow_policy": "fail_closed"}'
+        )
+        cfg = parse_double_sparsity_config(payload)
+        self.assertEqual(cfg.selector_width_overflow_policy, "fail_closed")
+        self.assertEqual(cfg.selector_width_buckets, [4608])
+
+    def test_fail_closed_requires_a_compact_bucket(self):
+        payload = (
+            '{"channel_mask_path": "/tmp/cm.safetensors", '
+            '"selector_width_buckets": [], '
+            '"selector_width_overflow_policy": "fail_closed"}'
+        )
+        with self.assertRaises(ValueError) as ctx:
+            parse_double_sparsity_config(payload)
+        self.assertIn("fail_closed", str(ctx.exception))
+
+    def test_invalid_overflow_policy_rejected(self):
+        payload = (
+            '{"channel_mask_path": "/tmp/cm.safetensors", '
+            '"selector_width_overflow_policy": "bogus"}'
+        )
+        with self.assertRaises(ValueError) as ctx:
+            parse_double_sparsity_config(payload)
+        self.assertIn("selector_width_overflow_policy", str(ctx.exception))
+
+
+class TestDSSelectorWidthLadder(unittest.TestCase):
+    """The pure selector-width ladder helpers used by the CUDA-graph runner."""
+
+    def _helpers(self):
+        from sglang.srt.model_executor.cuda_graph_runner import (
+            DS_OVERFLOW_FAIL_CLOSED,
+            DS_OVERFLOW_FULL_FALLBACK,
+            compute_ds_selector_widths,
+            ds_covering_width,
+        )
+
+        return (
+            compute_ds_selector_widths,
+            ds_covering_width,
+            DS_OVERFLOW_FULL_FALLBACK,
+            DS_OVERFLOW_FAIL_CLOSED,
+        )
+
+    def test_full_fallback_ladder_includes_full(self):
+        compute, _, full_fallback, _ = self._helpers()
+        # Default policy keeps today's behavior: compact buckets + the full width.
+        self.assertEqual(
+            compute([4608], 202752, full_fallback), [4608, 202752]
+        )
+        # Empty buckets -> full-width only (byte-compatible with the old code).
+        self.assertEqual(compute([], 202752, full_fallback), [202752])
+        # Buckets at/above full are dropped, full still present.
+        self.assertEqual(
+            compute([4608, 202752, 300000], 202752, full_fallback), [4608, 202752]
+        )
+
+    def test_fail_closed_ladder_excludes_full(self):
+        compute, _, _, fail_closed = self._helpers()
+        self.assertEqual(compute([4608], 202752, fail_closed), [4608])
+        self.assertEqual(
+            compute([4096, 4608], 202752, fail_closed), [4096, 4608]
+        )
+
+    def test_fail_closed_empty_buckets_raises(self):
+        compute, _, _, fail_closed = self._helpers()
+        with self.assertRaises(ValueError):
+            compute([], 202752, fail_closed)
+        # Buckets only at/above full collapse to empty -> also raises.
+        with self.assertRaises(ValueError):
+            compute([202752], 202752, fail_closed)
+
+    def test_covering_width_smallest_covering(self):
+        _, covering, full_fallback, _ = self._helpers()
+        self.assertEqual(covering([4096, 4608, 202752], 4000, full_fallback), 4096)
+        self.assertEqual(covering([4096, 4608, 202752], 4097, full_fallback), 4608)
+
+    def test_covering_width_full_fallback_overflow_routes_full(self):
+        _, covering, full_fallback, _ = self._helpers()
+        # Beyond every compact width -> the full width covers (no raise).
+        self.assertEqual(covering([4608, 202752], 100000, full_fallback), 202752)
+
+    def test_covering_width_fail_closed_overflow_raises(self):
+        _, covering, _, fail_closed = self._helpers()
+        # Within the largest compact width is fine.
+        self.assertEqual(covering([4096, 4608], 4608, fail_closed), 4608)
+        # Beyond it fails closed (clear error), never silently routes/eager.
+        with self.assertRaises(RuntimeError):
+            covering([4096, 4608], 4609, fail_closed)
+
 
 class TestDoubleSparsitySelectorABI(unittest.TestCase):
     def setUp(self):

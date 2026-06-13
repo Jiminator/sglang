@@ -1,0 +1,9 @@
+probe	fraction	variant	indexer	envelope	policy	buckets	status	max_total_num_tokens	bs_cap_4608	table_GB	ready_GB	graph_capture	smoke	note
+bnd_fp16_on_rs_080	0.80	fp16	on	rs	fail_closed	4608	OK	410560	89	15.27	7.02	yes	OK:Paris. The city is located on the River 	-
+bnd_fp16_on_rs_085	0.85	fp16	on	rs	fail_closed	4608	BOOT_FAIL	0	0	-	-	-	-	cuda_oom
+bnd_int8_off_rs_080	0.80	int8	off	rs	fail_closed	4608	OK	504640	109	9.97	11.83	yes	OK:Paris. The city is located on the River 	-
+bnd_int8_off_rs_085	0.85	int8	off	rs	fail_closed	4608	OK	669568	145	13.23	1.39	yes	OK:Paris. The city is located on the River 	-
+bnd_tf_off_rs_080	0.80	tf	off	rs	fail_closed	4608	OK	504640	109	0.30	21.56	yes	OK:Paris. The city is located on the River 	-
+bnd_tf_off_rs_085	0.85	tf	off	rs	fail_closed	4608	OK	669568	145	0.30	13.64	yes	OK:Paris. The city is located on the River 	-
+bnd_tf_off_rs_090	0.90	tf	off	rs	fail_closed	4608	OK	834432	181	0.30	5.72	yes	OK:Paris. The city is located on the River 	-
+ctl_int8_off_rs_080	0.80	int8	off	rs	full_fallback	4608	OK	504640	109	9.97	11.49	yes	OK:Paris. The city is located on the River 	-

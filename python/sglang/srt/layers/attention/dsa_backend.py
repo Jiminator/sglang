@@ -497,6 +497,11 @@ class DeepseekSparseAttnBackend(
         # (config-borne; empty = full width only). The CUDA-graph runner reads
         # this to build its selector-width ladder.
         self.ds_selector_width_buckets: list = []
+        # Overflow policy for the selector-width ladder (config-borne): the
+        # runner reads this to decide whether to also capture the full
+        # req_to_token width ("full_fallback", default) or fail closed beyond
+        # the largest compact bucket ("fail_closed").
+        self.ds_selector_width_overflow_policy: str = "full_fallback"
         # Per-variant decode-metadata key channel: the CUDA-graph runner stamps
         # this around capture/replay metadata init when DS selector-width
         # keying is active (mirrors the _replay_forward_batch channel). None
@@ -522,6 +527,11 @@ class DeepseekSparseAttnBackend(
                 )
                 self.ds_selector_width_buckets = list(
                     getattr(ds_cfg, "selector_width_buckets", []) or []
+                )
+                self.ds_selector_width_overflow_policy = str(
+                    getattr(
+                        ds_cfg, "selector_width_overflow_policy", "full_fallback"
+                    )
                 )
                 # ds_max_top_k sizes ds_topk_indices_out + ds_graph_state, so the
                 # selection/output buffers are lifted-width on the opt-in path.

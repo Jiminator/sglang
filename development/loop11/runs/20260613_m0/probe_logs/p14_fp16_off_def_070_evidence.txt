@@ -1,6 +1,6 @@
 # Durable evidence extract for probe p14_fp16_off_def_070
-# config: variant=fp16 indexer=off envelope=def mem_fraction=0.70
-# Source serve.log is gitignored (repo policy *.log); this extract is the tracked proof. Loop11 R1.
+# config: variant=fp16 indexer=off envelope=def mem_fraction=0.70 kind=grid width_policy=-
+# Source serve.log is gitignored (repo policy *.log); this extract is the tracked proof. Loop11 task0 (R0-R2).
 
 ## served args (from ServerArgs)
   mem_fraction_static = 0.7
@@ -9,6 +9,7 @@
   context_length = 202752
   enable_double_sparsity = True
   signature_dtype = fp16
+  DS selector-width graph variants: [5120, 202756]
 
 ## TP0 boot-stage memory lines (durable proof set)
   [2026-06-13 01:12:03 TP0] Load weight end. elapsed=57.25 s, type=GlmMoeDsaForCausalLM, quant=fp8, fmt=e4m3, avail mem=48.76 GB, mem usage=89.24 GB.
@@ -19,12 +20,13 @@
   [2026-06-13 01:14:00 TP0] Capture cuda graph end. Time elapsed: 109.65 s. mem usage=4.66 GB. avail mem=25.27 GB.
   [2026-06-13 01:14:04 TP0] max_total_num_tokens=174848, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=2048, context_len=202752, available_gpu_mem=25.27 GB
 
-## derived
+## derived + outcome
   max_total_num_tokens = 174848
   bs_cap (floor(cap/4608)) = 37
   table_GB = 6.51
   kv_pool_GB = 8.34
   ready_GB (available_gpu_mem at server-ready) = 25.27
-  capture_ok = True
-  server_ready = True
+  graph_capture = yes
+  smoke = OK:Paris. The city is located on the River 
+  note (first-fail reason if BOOT_FAIL) = -
   status = OK

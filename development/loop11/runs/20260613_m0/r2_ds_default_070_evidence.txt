@@ -1,0 +1,4 @@
+[2026-06-13 05:58:21 TP1] token_label_table: 5.29 GB/rank  L=78 T=142272 H=8 D=32 page=64 dtype=torch.float16 scales=fp16
+[2026-06-13 05:58:21 TP3] token_label_table: 5.29 GB/rank  L=78 T=142272 H=8 D=32 page=64 dtype=torch.float16 scales=fp16
+[2026-06-13 05:58:21 TP5] token_label_table: 5.29 GB/rank  L=78 T=142272 H=8 D=32 page=64 dtype=torch.float16 scales=fp16
+[2026-06-13 05:58:21 TP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 142208, KV size: 8.14 GB

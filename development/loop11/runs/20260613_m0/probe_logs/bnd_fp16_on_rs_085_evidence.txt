@@ -1,0 +1,34 @@
+# Durable evidence extract for probe bnd_fp16_on_rs_085
+# config: variant=fp16 indexer=on envelope=rs mem_fraction=0.85 kind=bounded width_policy=fail_closed
+# Source serve.log is gitignored (repo policy *.log); this extract is the tracked proof. Loop11 task0 (R0-R2).
+
+## served args (from ServerArgs)
+  mem_fraction_static = 0.85
+  max_running_requests = 64
+  cuda_graph_max_bs = 64
+  context_length = None
+  enable_double_sparsity = True
+  signature_dtype = fp16
+
+## launch line + probe env
+  DS_CONFIG={"top_k": 2048, "page_size": 64, "channel_mask_path": "/models/glm51-fp8-channel-mask-s256.safetensors", "device_buffer_size": 4096, "signature_dtype": "fp16", "scorer_norm": "off", "scorer_norm_hybrid_threshold": 8192, "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "recall_oracle": false, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "selector_width_buckets": [4608], "selector_width_overflow_policy": "fail_closed"}
+
+## TP0 boot-stage memory lines (durable proof set)
+  [2026-06-13 05:25:14 TP0] Load weight end. elapsed=57.55 s, type=GlmMoeDsaForCausalLM, quant=fp8, fmt=e4m3, avail mem=48.76 GB, mem usage=89.24 GB.
+  [2026-06-13 05:25:20 TP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 544704, KV size: 31.18 GB
+  [2026-06-13 05:25:20 TP0] Memory pool end. avail mem=17.33 GB
+  None
+  None
+  None
+  None
+
+## derived + outcome
+  max_total_num_tokens = None
+  bs_cap (floor(cap/4608)) = 0
+  table_GB = None
+  kv_pool_GB = 31.18
+  ready_GB (available_gpu_mem at server-ready) = None
+  graph_capture = -
+  smoke = -
+  note (first-fail reason if BOOT_FAIL) = cuda_oom
+  status = BOOT_FAIL

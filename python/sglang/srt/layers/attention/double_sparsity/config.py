@@ -41,6 +41,7 @@ _ALLOWED_FIELDS = {
     "recall_oracle",
     "selection_capture",
     "selector_width_buckets",
+    "selector_width_overflow_policy",
     "score_reduce_dtype",
     "enable_lifted_budget_decode",
     "lifted_budget_top_k",
@@ -76,6 +77,14 @@ _ALLOWED_FIELDS = {
 #   semantics; overflow routes to the full-width variant). Each width must be
 #   a positive int; widths at or above the full req_to_token width are
 #   dropped at the runner.
+# selector_width_overflow_policy: how the DS selector-width CUDA-graph ladder
+#   treats a live sequence longer than every compact bucket.
+#   "full_fallback" (default, byte-compatible): also capture the full
+#   req_to_token width as the overflow fallback (today's behavior). "fail_closed":
+#   capture ONLY the compact buckets (no full-width graph — reclaiming its
+#   per-batch DS scratch) and raise a clear error if a live sequence exceeds the
+#   largest captured compact width, declaring a bounded served-width operating
+#   point. Requires >=1 compact bucket below the full width.
 # score_reduce_dtype: transport dtype for the cross-TP score SUM-reduce.
 #   "bf16" (default): scores are cast fp32->bf16 into preallocated scratch,
 #   reduced (custom-all-reduce v2 when the byte size passes its eligibility
@@ -110,6 +119,8 @@ _DEFAULT_TOP_K = 2048           # matches DeepSeek-V3.2 index_topk (max tokens p
 # captured as the overflow fallback; widths >= the model's full width are
 # dropped at the runner, so small-context models degrade to full-width-only.
 _DEFAULT_SELECTOR_WIDTH_BUCKETS = (5120,)
+_ALLOWED_OVERFLOW_POLICY = ("full_fallback", "fail_closed")
+_DEFAULT_OVERFLOW_POLICY = "full_fallback"
 _DEFAULT_PAGE_SIZE = 64         # FlashMLA KV layout requirement
 _DEFAULT_DEVICE_BUFFER_SIZE = 4096  # score-scratch buffer cap in tokens
 _DEFAULT_SIGNATURE_DTYPE = "fp16"   # full-precision labels until the compact path is hardware-validated
@@ -133,6 +144,7 @@ class DoubleSparsityConfig:
     selector_width_buckets: List[int] = field(
         default_factory=lambda: list(_DEFAULT_SELECTOR_WIDTH_BUCKETS)
     )
+    selector_width_overflow_policy: str = _DEFAULT_OVERFLOW_POLICY
     score_reduce_dtype: str = "bf16"
     enable_lifted_budget_decode: bool = False
     lifted_budget_top_k: int = _DEFAULT_LIFTED_BUDGET_TOP_K
@@ -181,6 +193,22 @@ class DoubleSparsityConfig:
             raise ValueError(
                 f"Double Sparsity 'selector_width_buckets' must be a list of "
                 f"positive integers, got {self.selector_width_buckets!r}."
+            )
+        if self.selector_width_overflow_policy not in _ALLOWED_OVERFLOW_POLICY:
+            raise ValueError(
+                f"Double Sparsity 'selector_width_overflow_policy' must be one of "
+                f"{list(_ALLOWED_OVERFLOW_POLICY)}, got "
+                f"{self.selector_width_overflow_policy!r}."
+            )
+        if (
+            self.selector_width_overflow_policy == "fail_closed"
+            and not self.selector_width_buckets
+        ):
+            raise ValueError(
+                "Double Sparsity 'selector_width_overflow_policy'='fail_closed' "
+                "requires at least one 'selector_width_bucket' (a compact width to "
+                "capture); with no compact bucket there is no captured graph and "
+                "every sequence would fail closed."
             )
         if self.score_reduce_dtype not in ("fp32", "bf16"):
             raise ValueError(
@@ -346,6 +374,9 @@ def parse_double_sparsity_config(payload: str) -> DoubleSparsityConfig:
             data.get(
                 "selector_width_buckets", list(_DEFAULT_SELECTOR_WIDTH_BUCKETS)
             )
+        ),
+        selector_width_overflow_policy=str(
+            data.get("selector_width_overflow_policy", _DEFAULT_OVERFLOW_POLICY)
         ),
         score_reduce_dtype=str(data.get("score_reduce_dtype", "bf16")),
         enable_lifted_budget_decode=_coerce_bool(
