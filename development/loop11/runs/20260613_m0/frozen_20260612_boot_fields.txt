@@ -1,0 +1,28 @@
+# Durable extract of the frozen 20260612 boot-stage memory lines cited in results.md §4.
+# Source serve.logs are gitignored (repo policy: *.log); these grepped lines are the tracked evidence.
+# Generated 2026-06-13 (loop11 R0). Per-rank (TP0) unless noted.
+
+## case1_ds
+TP0] Load weight end. elapsed=57.12 s, type=GlmMoeDsaForCausalLM, quant=fp8, fmt=e4m3, avail mem=48.76 GB, mem usage=89.24 GB.
+TP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 142208, KV size: 8.14 GB
+TP0] Memory pool end. avail mem=38.99 GB
+TP0] token_label_table: 5.29 GB/rank  L=78 T=142272 H=8 D=32 page=64 dtype=torch.float16 scales=fp16
+TP0] Capture cuda graph begin. This can take up to several minutes. avail mem=31.31 GB
+TP0] Capture cuda graph end. Time elapsed: 109.28 s. mem usage=4.68 GB. avail mem=26.63 GB.
+TP0] max_total_num_tokens=142208, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=2048, context_len=202752, available_gpu_mem=26.12 GB
+
+## case2_dsa07
+TP0] Load weight end. elapsed=63.48 s, type=GlmMoeDsaForCausalLM, quant=fp8, fmt=e4m3, avail mem=48.76 GB, mem usage=89.24 GB.
+TP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 142208, KV size: 8.14 GB
+TP0] Memory pool end. avail mem=38.99 GB
+TP0] Capture cuda graph begin. This can take up to several minutes. avail mem=36.62 GB
+TP0] Capture cuda graph end. Time elapsed: 71.29 s. mem usage=2.73 GB. avail mem=33.89 GB.
+TP0] max_total_num_tokens=142208, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=2048, context_len=202752, available_gpu_mem=33.89 GB
+
+## case3_dsa08
+TP0] Load weight end. elapsed=56.22 s, type=GlmMoeDsaForCausalLM, quant=fp8, fmt=e4m3, avail mem=48.76 GB, mem usage=89.24 GB.
+TP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 410560, KV size: 23.51 GB
+TP0] Memory pool end. avail mem=23.60 GB
+TP0] Capture cuda graph begin. This can take up to several minutes. avail mem=21.23 GB
+TP0] Capture cuda graph end. Time elapsed: 71.14 s. mem usage=2.73 GB. avail mem=18.50 GB.
+TP0] max_total_num_tokens=410560, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=2048, context_len=202752, available_gpu_mem=18.50 GB

@@ -1,0 +1,5 @@
+device: NVIDIA H200
+buffer: 1 GiB pinned host memory, 20 iters each direction
+H2D_GBps: 55.5
+D2H_GBps: 55.1
+date_utc: 2026-06-13 (loop11 task2 measurement)

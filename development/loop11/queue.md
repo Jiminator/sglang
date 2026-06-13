@@ -1,7 +1,46 @@
 # Loop 11 Task Queue
 
-<!-- Deliberately empty at draft time. Populating this queue is the FIRST task of the loop,
-     after plan refinement completes and the loop kicks off — seed it from the final plan's
-     tasks plus kickoff ideas. See draft.md §"Open scope + the task queue" for entry format
-     (id, description, targeted quantity, expected effect, lossiness posture, compatibility
-     note, status) and lifecycle rules (no silent deletions; drops keep their measured cause). -->
+Single source of truth for what is planned, in flight, done, or dropped. Seeded at loop kickoff
+(Round 0, 2026-06-12) from `plan_v2.md` §Task Breakdown plus the kickoff candidates from the
+planning idea pass. Entry fields: id, description, targeted quantity, expected effect, lossiness
+posture, compatibility note, status. New mid-loop ideas APPEND here with a one-line compatibility
+note; dropped/superseded tasks stay listed with the measured or reasoned cause — no silent
+deletions. A task is completed only after its gates pass (quality teeth + relevant measurement).
+
+## Mainline tasks (from plan_v2.md)
+
+| id | description | targeted quantity | expected effect | lossiness | compatibility note | status |
+|----|-------------|-------------------|-----------------|-----------|--------------------|--------|
+| task0 | Componentized per-rank memory accounting + max-stable-fraction/capacity probe matrix {fp16, int8, table-free mock} × {indexer on/off} × {default vs right-sized envelope}; each probe = boot + capacity readout + graph-capture check + serve smoke | measured (config → max fraction → KV tokens → bs cap) table | ground truth for every capacity decision; may alone show int8@~0.75 lifts bs30→~45+ | exact (measurement) | none — first task | in_flight (R0) |
+| task1 | Freeze the radix-ON DSA @0.8 directional baseline ladder (conc 16/32/64, 1 trial, 180s) | the loop's AC-2/AC-3 comparison column | honest radix-ON bar for every later judgment | exact (measurement) | radix-off 20260612 ladder stays the radix-off reference; never re-run either | in_flight (R0) |
+| task2 | DS-Offload rejection memo with one measured PCIe number (document, don't build) | 1 memo + 1 measured GB/s | closes menu item E permanently | n/a | analyze-routed (ask-codex) | in_flight (R0) |
+| task3 | DS-mode indexer-cache gate: designed pool capability, guarded accessors fail loudly, cell-size/configurator accounting update, offload/disagg/radix state-path audit | ~10.3 KB/token freed (~17% of 61.5 KB/token pool cost) | more tokens per GB at every fraction | exact | shared-surface change → same-round AC-7 DSA regression; composes with everything | queued (M1) |
+| task4 | int8 served config + table-aware pool sizing (deduct table bytes before pool sizing) at task0-measured best fraction; ladder re-run closes M1 | table 5.29→2.97 GB; bs30→~45-69 (task0 to confirm) | served fallback config + earliest capacity floor (DEC-3) | value-affecting, already approved + overlap-gated | superseded by task6 when it lands (table deleted per DEC-2) | queued (M1) |
+| task5 | Absorbed-latent prototype kernel: score-only diagnostic, paged over req_to_token, in-kernel fp8 dequant; live-path selection-equivalence + oracle recall gates; validity-invariant analysis documented | score kernel ≤ ~23.5k µs/window budget | proves the table can disappear exactly | value-affecting (fp8-latent-sourced), declared; scorer_norm="off" only | depends task3+task4 (DEC-3 full M1 first) | queued (M2) |
+| task6 | Absorbed-latent integration: table-free selector ABI (latent binding), capture changes, config validation rejects cosine/hybrid, DELETE token_label_table.py + token_label_write.py (DEC-2), capacity payoff @0.8 | 5.29 GB/rank → 0; ~459k tokens @0.8 (with task3) | the structural fix; AC-1.2 | value-affecting, declared | supersedes task4's table config; new fixture kind needed for radix (task7) | queued (M2) |
+| task7 | Radix-on enablement + correctness: per-config fixture artifacts (NEW fixture kind + fail-closed schema for table-free), finalized against FINAL served selector mode + signature_dtype; cold/warm selection equivalence on served workload; recall under radix-on; eviction/partial-hit/page-boundary probes | radix-on serving authorized per served config | DS benefits from ~55% prefix reuse; honest vs radix-ON DSA bar | exactness fixtures + recall gates | depends task1; eased by task6 (equality largely by construction) but not blocked | queued (M3) |
+| task8 | Per-step tax re-validation at bs64: capture-ladder extension, top-k/score-kernel scaling re-check, same-batch DS-vs-DSA window at mem 0.8 | ratio ≤ ~1.10 at bs64; bs30 window ≤ ~380k µs | AC-4 guard — loop-10 win not traded for capacity | exact (measurement) | binds to final capacity config (falls back to M1 config if task6 slips) | queued (M4) |
+| task9 | Locked AC-11 sweep (3 trials × 600s, once) + close-out: results.md regenerated, queue final, evidence pre-flight | AC-2/AC-3 HARD verdicts | the loop's verdict venue | exact (measurement) | last; depends all prior | queued (M4) |
+
+## Kickoff candidates (planning idea pass; promoted on evidence, not part of milestone gates)
+
+| id | description | targeted quantity | expected effect | lossiness | compatibility note | status |
+|----|-------------|-------------------|-----------------|-----------|--------------------|--------|
+| q1 | Served-envelope right-sizing: max_running_requests≈64, cuda_graph_max_bs=64 (no captured bs > workload cap) | ReqToTokenPool ~1.55 GiB→~50 MiB; DS graph mem (4.68 GB) falls materially | headroom → higher stable fraction | exact (served-envelope change, recorded in served DS config; DSA baseline keeps production defaults) | task0 probe axis; composes with task3/4/6 | queued |
+| q2 | Bounded DS selector-width graph mode: stop auto-capturing the full-context-width DS graph variant; fail closed if live seq exceeds declared cap | full-width fp32 score scratch (hundreds of MiB at large capture bs) + capture variants | graph memory + capture time down | exact inside declared envelope; fail-closed beyond | task0 probe axis; do before q3 (buckets add variants) | queued |
+| q3 | Workload-bound selector width ladder (e.g. 4096/4352/4608 instead of 5120-only), replay picks smallest sufficient width | ~10% less selector work at cap; more during early decode | bs64 decode tax down | exact if width covers live seq; fail-closed otherwise | only after graph-memory controls (q1/q2) land | queued |
+| q4 | Fuse radix top-k emit with logical→physical gather (winners written as physical slots directly) | drops one kernel; selected-index plumbing ~11.7 ms/10-step at bs30 | per-step tax down | exact (same logical winners) | pull in if AC-4 runs tight at bs64 | queued |
+| q5 | bf16-primary score scratch where served path is bf16-authoritative (drop fp32 scratch plane + fp32→bf16 copy) | ~1-2 MB/layer/step traffic class + graph mem | per-step tax down | exact relative to current bf16-authoritative mode; must prove selection bit-identity | pull in if AC-4 runs tight | queued |
+| q6 | Fallback if absorbed-latent slips: trim table-path label-write projection (avoid projecting full [K_nope|V] to slice label channels) | per-step prefill/write cost | decode-tax reducer while table exists | exact only if quantized-linear semantics preserved | superseded by task6 | queued (fallback) |
+| q7 | PARKED value-affecting insurance: cross-step lazy top-k refresh (cost ÷ N, recent window force-included) and cross-layer selection sharing in small groups | score/reduce/topk cost ÷ N | per-step tax down | value-affecting + AC-6 mechanism question (selection reuse ⇒ not every (layer,step) re-scores) | REQUIRES owner AC-6 ruling BEFORE any work | parked |
+| q8 | Serving-side admission/scheduling levers (draft menu item 6) | TTFT tail | symptom-side relief | exact | conditional: justify with a measured queueing trace first; memory levers treat the cause | conditional |
+
+## Dropped / rejected (recorded so the loop does not rediscover them)
+
+| id | description | cause | status |
+|----|-------------|-------|--------|
+| r1 | DS-Offload (CPU-pinned KV + per-step gather) | PCIe arithmetic: ~92 MB/req/step; bs30 ≈ 2.8 GB/step ≈ ~55 ms at ~50 GB/s — double the 33 ms budget; labels read densely, cannot offload (task2 memo formalizes with measured number) | rejected (plan) |
+| r2 | Sparse score transport (per-rank local top-k union replacing dense cross-rank reduce) | exactness fails: top-k of SUMMED TP scores need not be in any rank's local top-k; exact union 8×2048=16384 > ~4608 live width — saves nothing | rejected (plan) |
+| r3 | Page-level two-stage prefilter | 4608/64=72 pages, k=2048 ⇒ even perfect prefilter keeps ≥32 pages (≤2.25× bound, looser in practice); revisit only at ≥16k contexts | rejected (plan) |
+| r4 | Written-bitmap compression | ~11 MB/rank — immaterial next to table + graph memory | rejected (plan) |
+| r5 | Lower/adaptive top-k | changes the recall@2048 contract and apples-to-apples DSA comparison (quality bar, not a tuning knob) | rejected (plan) |

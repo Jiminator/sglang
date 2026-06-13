@@ -1,0 +1,7 @@
+# FROZEN loop11 task1 baseline — radix-ON DSA @ mem 0.8 (1 trial, 60s warmup/180s window,
+# NUM_PROMPTS=64, gsp 4096-ISL/512-OSL ~55% prefix, seeds 16:213/32:431/64:31234).
+# Single recipe change vs runs/20260612 stage2: radix cache ON. NEVER RE-RUN.
+config                 conc decTPS_p50 agg_tok/s ach_conc ttft_mean ttft_med ttft_p99 tpot_p99  done
+DSA@0.8 radix-ON         16      38.95     597.6    16.00      0.59     0.56     0.87    26.22   256
+DSA@0.8 radix-ON         32      32.40     981.5    31.99      0.81     0.84     1.04    32.11   384
+DSA@0.8 radix-ON         64      25.23    1530.1    63.96      1.06     1.12     1.27    40.78   576

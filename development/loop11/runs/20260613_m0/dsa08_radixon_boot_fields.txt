@@ -1,0 +1,40 @@
+[2026-06-13 00:03:41 TP0] Init torch distributed ends. elapsed=3.79 s, mem usage=1.23 GB
+[2026-06-13 00:03:41 TP7] Init torch distributed ends. elapsed=3.79 s, mem usage=1.05 GB
+[2026-06-13 00:03:41 TP6] Init torch distributed ends. elapsed=3.87 s, mem usage=1.28 GB
+[2026-06-13 00:03:41 TP5] Init torch distributed ends. elapsed=3.86 s, mem usage=1.28 GB
+[2026-06-13 00:03:41 TP4] Init torch distributed ends. elapsed=4.47 s, mem usage=1.28 GB
+[2026-06-13 00:03:41 TP3] Init torch distributed ends. elapsed=3.79 s, mem usage=1.28 GB
+[2026-06-13 00:03:41 TP2] Init torch distributed ends. elapsed=4.54 s, mem usage=1.28 GB
+[2026-06-13 00:03:41 TP1] Init torch distributed ends. elapsed=3.78 s, mem usage=1.28 GB
+[2026-06-13 00:03:42 TP6] Load weight begin. avail mem=137.96 GB
+[2026-06-13 00:03:42 TP5] Load weight begin. avail mem=137.96 GB
+[2026-06-13 00:03:42 TP4] Load weight begin. avail mem=137.96 GB
+[2026-06-13 00:03:42 TP2] Load weight begin. avail mem=137.96 GB
+[2026-06-13 00:03:42 TP0] Load weight begin. avail mem=138.01 GB
+[2026-06-13 00:03:42 TP3] Load weight begin. avail mem=137.96 GB
+[2026-06-13 00:03:42 TP1] Load weight begin. avail mem=137.96 GB
+[2026-06-13 00:03:42 TP7] Load weight begin. avail mem=138.20 GB
+[2026-06-13 00:04:39 TP3] Load weight end. elapsed=57.02 s, type=GlmMoeDsaForCausalLM, quant=fp8, fmt=e4m3, avail mem=48.72 GB, mem usage=89.24 GB.
+[2026-06-13 00:04:40 TP2] Load weight end. elapsed=58.11 s, type=GlmMoeDsaForCausalLM, quant=fp8, fmt=e4m3, avail mem=48.72 GB, mem usage=89.24 GB.
+[2026-06-13 00:04:41 TP1] Load weight end. elapsed=58.42 s, type=GlmMoeDsaForCausalLM, quant=fp8, fmt=e4m3, avail mem=48.72 GB, mem usage=89.24 GB.
+[2026-06-13 00:04:41 TP0] Load weight end. elapsed=59.10 s, type=GlmMoeDsaForCausalLM, quant=fp8, fmt=e4m3, avail mem=48.76 GB, mem usage=89.24 GB.
+[2026-06-13 00:04:48 TP7] Load weight end. elapsed=65.85 s, type=GlmMoeDsaForCausalLM, quant=fp8, fmt=e4m3, avail mem=48.95 GB, mem usage=89.24 GB.
+[2026-06-13 00:04:50 TP5] Load weight end. elapsed=67.44 s, type=GlmMoeDsaForCausalLM, quant=fp8, fmt=e4m3, avail mem=48.72 GB, mem usage=89.24 GB.
+[2026-06-13 00:04:50 TP4] Load weight end. elapsed=67.44 s, type=GlmMoeDsaForCausalLM, quant=fp8, fmt=e4m3, avail mem=48.72 GB, mem usage=89.24 GB.
+[2026-06-13 00:04:50 TP6] Load weight end. elapsed=67.45 s, type=GlmMoeDsaForCausalLM, quant=fp8, fmt=e4m3, avail mem=48.72 GB, mem usage=89.24 GB.
+[2026-06-13 00:04:50 TP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 410560, KV size: 23.51 GB
+[2026-06-13 00:04:50 TP0] Memory pool end. avail mem=23.60 GB
+[2026-06-13 00:04:50 TP2] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 410560, KV size: 23.51 GB
+[2026-06-13 00:04:50 TP2] Memory pool end. avail mem=23.55 GB
+[2026-06-13 00:04:50 TP4] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 410560, KV size: 23.51 GB
+[2026-06-13 00:04:50 TP4] Memory pool end. avail mem=23.55 GB
+[2026-06-13 00:04:50 TP1] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 410560, KV size: 23.51 GB
+[2026-06-13 00:04:50 TP5] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 410560, KV size: 23.51 GB
+[2026-06-13 00:04:50 TP1] Memory pool end. avail mem=23.55 GB
+[2026-06-13 00:04:50 TP5] Memory pool end. avail mem=23.55 GB
+[2026-06-13 00:04:50 TP6] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 410560, KV size: 23.51 GB
+[2026-06-13 00:04:50 TP6] Memory pool end. avail mem=23.55 GB
+[2026-06-13 00:04:50 TP7] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 410560, KV size: 23.51 GB
+[2026-06-13 00:04:50 TP3] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 410560, KV size: 23.51 GB
+[2026-06-13 00:04:50 TP7] Memory pool end. avail mem=23.79 GB
+[2026-06-13 00:04:50 TP3] Memory pool end. avail mem=23.55 GB

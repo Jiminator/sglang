@@ -1,0 +1,15 @@
+probe	fraction	variant	indexer	envelope	status	max_total_num_tokens	bs_cap_4608	table_GB	graph_capture	smoke	note
+p01_fp16_on_def_070	0.7	fp16	on	default	OK	142208	30	5.29	yes	OK:Paris. The city is located on the River 	-
+p02_fp16_on_def_075	0.75	fp16	on	default	OK	276416	59	10.28	yes	OK:Paris. The city is located on the River 	-
+p03_fp16_on_def_080	0.8	fp16	on	default	OK	410560	89	15.27	yes	OK:Paris. The city is located on the River 	-
+p04_fp16_on_rs_075	0.75	fp16	on	rs	OK	276416	59	10.28	yes	OK:Paris. The city is located on the River 	-
+p05_fp16_on_rs16k_080	0.8	fp16	on	rs16k	OK	410560	89	15.27	yes	OK:Paris. The city is located on the River 	-
+p06_int8_on_def_075	0.75	int8	on	default	OK	276416	59	5.46	yes	OK:Paris. The city is located on the River 	-
+p07_int8_on_def_080	0.8	int8	on	default	OK	410560	89	8.11	yes	OK:Paris. The city is located on the River 	-
+p08_int8_on_rs_080	0.8	int8	on	rs	OK	410560	89	8.11	yes	OK:Paris. The city is located on the River 	-
+p09_int8_on_rs16k_080	0.8	int8	on	rs16k	OK	410560	89	8.11	yes	OK:Paris. The city is located on the River 	-
+p10_int8_off_rs16k_080	0.8	int8	off	rs16k	OK	504640	109	9.97	yes	OK:Paris. The city is located on the River 	-
+p11_tf_on_def_080	0.8	tablefree	on	default	OK	410560	89	0.30	yes	OK:Paris. The city is located on the River 	-
+p12_tf_off_rs_080	0.8	tablefree	off	rs	OK	504640	109	0.30	yes	OK:Paris. The city is located on the River 	-
+p13_tf_off_rs16k_085	0.85	tablefree	off	rs16k	OK	669568	145	0.30	yes	OK:Paris. The city is located on the River 	-
+p14_fp16_off_def_070	0.7	fp16	off	default	OK	174848	37	6.51	yes	OK:Paris. The city is located on the River 	-

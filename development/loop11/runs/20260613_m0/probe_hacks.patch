@@ -1,0 +1,75 @@
+diff --git a/python/sglang/srt/mem_cache/memory_pool.py b/python/sglang/srt/mem_cache/memory_pool.py
+index 0d520a5ba..da5e48e64 100644
+--- a/python/sglang/srt/mem_cache/memory_pool.py
++++ b/python/sglang/srt/mem_cache/memory_pool.py
+@@ -27,6 +27,7 @@ KVCache actually holds the physical kv cache.
+ import abc
+ import dataclasses
+ import logging
++import os
+ from contextlib import contextmanager, nullcontext
+ from dataclasses import dataclass, fields
+ from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
+@@ -2030,6 +2031,11 @@ class DSATokenToKVPool(MLATokenToKVPool):
+         self.index_head_dim = index_head_dim
+         if index_buf_size is None:
+             index_buf_size = size
++        # PROBE-ONLY (loop11 task0): shrink the index-k sidecar to ~2 pages to
++        # preview the DS-mode indexer-cache gate (DS never reads or writes it).
++        # Never set for served runs or DSA-native boots.
++        if os.environ.get("SGLANG_DS_PROBE_SKIP_INDEXER"):
++            index_buf_size = self.page_size
+         # num head == 1 and head dim == 128 for index_k in DSA
+         assert index_head_dim == 128
+ 
+diff --git a/python/sglang/srt/model_executor/pool_configurator.py b/python/sglang/srt/model_executor/pool_configurator.py
+index 5803e0bcf..4bdd6f1a4 100644
+--- a/python/sglang/srt/model_executor/pool_configurator.py
++++ b/python/sglang/srt/model_executor/pool_configurator.py
+@@ -14,6 +14,7 @@ Two entry points, same core computation:
+ from __future__ import annotations
+ 
+ import logging
++import os
+ from dataclasses import dataclass
+ from typing import TYPE_CHECKING, Optional
+ 
+@@ -150,7 +151,11 @@ class DefaultPoolConfigurator(MemoryPoolConfigurator):
+                 )
+ 
+             # Add indexer KV cache overhead for DSA models (DeepSeek V3.2)
+-            if is_deepseek_dsa(model_config.hf_config):
++            # PROBE-ONLY (loop11 task0): skip the indexer term to preview the
++            # DS-mode indexer-cache gate. Never set for served runs.
++            if is_deepseek_dsa(model_config.hf_config) and not os.environ.get(
++                "SGLANG_DS_PROBE_SKIP_INDEXER"
++            ):
+                 index_head_dim = get_dsa_index_head_dim(model_config.hf_config)
+                 indexer_size_per_token = (
+                     index_head_dim
+diff --git a/python/sglang/srt/models/deepseek_v2.py b/python/sglang/srt/models/deepseek_v2.py
+index 22ea3d1c0..f6b837f82 100644
+--- a/python/sglang/srt/models/deepseek_v2.py
++++ b/python/sglang/srt/models/deepseek_v2.py
+@@ -2004,6 +2004,11 @@ class DeepseekV2AttentionMLA(
+                     "from the real KV slot address space."
+                 )
+             max_tokens = kv_pool.size + kv_pool.page_size
++            # PROBE-ONLY (loop11 task0): mock a table-free boot by capping the
++            # table's token dimension. Never set for served runs.
++            _probe_table_cap = os.environ.get("SGLANG_DS_PROBE_TABLE_TOKENS")
++            if _probe_table_cap:
++                max_tokens = min(max_tokens, int(_probe_table_cap))
+             label_dim = int(local_mask.label_dim)
+             page_size = int(ds_parsed.page_size)
+             # fp16 is the default storage; the compact path stores int8
+@@ -2050,7 +2055,8 @@ class DeepseekV2AttentionMLA(
+                 from sglang.srt.layers.attention.double_sparsity.token_label_table import (
+                     validate_table_covers_kv_pool,
+                 )
+-                validate_table_covers_kv_pool(table, kv_pool.size, kv_pool.page_size)
++                if not os.environ.get("SGLANG_DS_PROBE_TABLE_TOKENS"):
++                    validate_table_covers_kv_pool(table, kv_pool.size, kv_pool.page_size)
+ 
+         # Pick the attn TP process group when world > 1; otherwise leave None.
+         # Also bind the coordinator's custom-all-reduce communicator so the
