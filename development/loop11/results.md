@@ -1,13 +1,24 @@
 # Loop 11 Results — Authoritative Current State
 
 > Maintained rewrite-over-append: this document always reflects the loop's current state.
-> Last regenerated: Round 5, 2026-06-13. HEAD at round start: `eefbf6986`.
+> Last regenerated: Round 6, 2026-06-13. HEAD at round start: `17ef97c54`.
 
 ## 1. Current state summary
 
-- **M0 COMPLETE (Rounds 0–4); M1 IN PROGRESS (Round 5).** task0/task1/task2 done with durable
-  evidence (no AC verdicts — M0 is ground truth). **task3 (DS-mode indexer-cache gate) LANDED R5**
+- **M0 COMPLETE (Rounds 0–4); M1 IN PROGRESS (Rounds 5–6).** task0/task1/task2 done with durable
+  evidence (no AC verdicts — M0 is ground truth). **task3 (DS-mode indexer-cache gate) COMPLETE R6**
   as a designed pool capability — the first M1 capacity lever (§8).
+- **R6 — task3 state-path closure (HiCache/hierarchical-radix sidecar gap).** R5's in-class gate was
+  incomplete: `HiRadixCache`/`UnifiedRadixCache` build a DSA indexer **host** sidecar
+  (`DSAIndexerPoolHost`) for any `DSATokenToKVPool`, and its `init_kv_buffer` iterates
+  `device_pool.index_k_with_scale_buffer` — `None` under the gate → crash at host-pool construction.
+  Closed two ways: (1) `validate_double_sparsity` rejects `--enable-double-sparsity` +
+  `--enable-hierarchical-cache` with a clear `ValueError` (HiCache is not a served config; DS
+  cached-prefix label semantics are task7-gated); (2) a defensive guard in `DSAIndexerPoolHost`
+  raises clearly when built against a gated pool. **AC-7:** DS+HiCache → clean validator error, NO
+  `NoneType` crash; DSA+HiCache boots, the indexer host sidecar still builds (8.45 GB/rank), capacity
+  410,560 unchanged, coherent smoke (guard skipped for the non-gated DSA pool). 4 new unit tests.
+  Evidence: `runs/20260613_m0/r6_*_evidence.txt`.
 - **R5 — task3 indexer-cache gate (production code, DS-only, default byte-compatible).** The DSA
   indexer index-k sidecar (~10.3 KB/token) is gated off under DS: `DSATokenToKVPool` skips the
   allocation, the configurator drops the matching cell-size term, the prefill indexer-store is
@@ -262,7 +273,7 @@ were re-validated on the feature-only tree (probe hacks reverted). Driver
   largest captured selector width 4608 …` (`probe_logs/failclosed_response.txt`) — a too-long
   sequence is rejected, never silently routed to full-width or eager.
 
-## 8. M1 task3: DS-mode indexer-cache gate — LANDED (R5)
+## 8. M1 task3: DS-mode indexer-cache gate — COMPLETE (R5 in-class gate + R6 state-path closure)
 
 First M1 capacity lever, the designed replacement for the R0 `SGLANG_DS_PROBE_SKIP_INDEXER`
 preview. Production code (DS-only, default byte-compatible):
@@ -283,6 +294,25 @@ coherent smoke. AC-7 DSA @0.8 = 410,560 unchanged + radix-ON coherent. The gate 
 lever; DS @0.8 fp16/default-envelope still graph_capture_oom's (task0 ceiling 0.75) — the
 sustainable served 0.8 config is task4 (int8 + table-aware sizing + right-sized envelope, where
 task0 measured int8/off/rs = bs109 / 11.5 GB ready).
+
+**R6 — state-path closure (the "offload/disagg/radix state-path audit" task3 owes).** R5's in-class
+gate did not cover the hierarchical-cache host sidecar: `HiRadixCache`/`UnifiedRadixCache` build a
+DSA indexer host pool (`DSAIndexerPoolHost`) for any `DSATokenToKVPool`, and its `init_kv_buffer`
+iterates `device_pool.index_k_with_scale_buffer` — `None` under the gate → crash before any
+fail-loud accessor fires. Closed fail-closed (HiCache is not a served config; DS radix/cached-prefix
+label semantics are task7-gated, not proven):
+- `double_sparsity/validator.py::validate_double_sparsity`: rejects `--enable-double-sparsity` +
+  `--enable-hierarchical-cache` with a clear `ValueError` (DS-only early-return → cannot affect DSA).
+- `DSAIndexerPoolHost.__init__`: defensive guard raises a clear `RuntimeError` when the device pool
+  is gated, before `init_kv_buffer` — defense-in-depth so programmatic construction can't crash.
+- Unit coverage (4 new): validator rejects DS+HiCache and allows DSA+HiCache; the host guard fires
+  for a gated pool and is skipped for a non-gated (DSA) pool.
+
+**R6 AC-7** (`runs/20260613_m0/r6_*_evidence.txt`, `stage_r6_task3_hicache.sh`): DS+HiCache launch →
+clean fail-closed `ValueError`, no `NoneType` crash. DSA+HiCache boot → indexer host sidecar still
+builds (8.45 GB/rank, `layer_first`), `max_total_num_tokens=410,560` unchanged, capture OK, coherent
+smoke ("Paris…") — the guard is correctly skipped for the non-gated DSA pool. The served DSA default
+(no HiCache) never constructs `DSAIndexerPoolHost` and is untouched by this round's diff.
 
 Next: **task4** — int8 served config + table-aware pool sizing (deduct table bytes before KV
 sizing) at the task0-selected fraction/envelope + int8 quality/overlap gate + directional ladder;

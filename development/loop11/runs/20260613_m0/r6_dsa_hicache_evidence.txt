@@ -1,0 +1,9 @@
+probe=dsa_hicache status=OK
+max_total_num_tokens=410560
+smoke=OK:Paris. Distance from London to Paris is 343 km, while direct
+indexer_host_sidecar_built=yes
+[2026-06-13 22:36:39 TP2] Allocating 8.45 GB host memory for DSA indexer (layout=layer_first).
+[2026-06-13 22:36:39 TP1] Allocating 8.45 GB host memory for DSA indexer (layout=layer_first).
+[2026-06-13 22:35:08 TP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 410560, KV size: 23.51 GB
+[2026-06-13 22:36:21 TP0] Capture cuda graph end. Time elapsed: 71.52 s. mem usage=2.73 GB. avail mem=18.50 GB.
+[2026-06-13 22:36:26 TP0] max_total_num_tokens=410560, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=2048, context_len=202752, available_gpu_mem=18.50 GB

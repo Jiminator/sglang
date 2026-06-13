@@ -261,6 +261,7 @@ class TestValidator(unittest.TestCase):
         defaults = dict(
             enable_double_sparsity=False,
             enable_hisparse=False,
+            enable_hierarchical_cache=False,
             disaggregation_mode=None,
             double_sparsity_config=None,
             page_size=64,
@@ -302,6 +303,24 @@ class TestValidator(unittest.TestCase):
             self.assertIn("disaggregation", str(ctx.exception).lower())
         finally:
             os.environ.pop("SGLANG_DS_ALLOW_NO_ADAPTER", None)
+
+    def test_hierarchical_cache_rejected(self):
+        # The hierarchical-cache check fires before the payload check, so no
+        # adapter/payload is needed to reach it.
+        args = self._args(
+            enable_double_sparsity=True,
+            enable_hierarchical_cache=True,
+        )
+        with self.assertRaises(ValueError) as ctx:
+            validate_double_sparsity(args)
+        self.assertIn("hierarchical", str(ctx.exception).lower())
+
+    def test_hierarchical_cache_allowed_without_double_sparsity(self):
+        # DSA-native (Double Sparsity off) + hierarchical cache must NOT be
+        # rejected by the Double Sparsity validator (early-return no-op).
+        validate_double_sparsity(
+            self._args(enable_double_sparsity=False, enable_hierarchical_cache=True)
+        )
 
     def test_page_size_mismatch(self):
         args = self._args(
@@ -11895,9 +11914,9 @@ class TestCompactSelectorWidthAllocation(unittest.TestCase):
 
 
 class TestDSIndexerCacheGate(unittest.TestCase):
-    """task3: the DS-mode indexer index-k sidecar gate on DSATokenToKVPool, and the
-    matching cell-size drop in the configurator. The gate is DS-only; DSA-native and
-    HiSparse keep the buffer."""
+    """DS-mode indexer index-k sidecar gate on DSATokenToKVPool, the matching cell-size
+    drop in the configurator, and the hierarchical-cache host-sidecar guard. The gate is
+    DS-only; DSA-native and HiSparse keep the buffer."""
 
     def _pool(self, gate: bool):
         from sglang.srt.mem_cache.memory_pool import DSATokenToKVPool
@@ -11953,6 +11972,28 @@ class TestDSIndexerCacheGate(unittest.TestCase):
         self.assertIn("index_k", cpu)
         self.assertIsNone(cpu["index_k"])
         p.load_cpu_copy(cpu, idx)  # must not raise
+
+    def test_indexer_host_rejects_gated_pool(self):
+        # Hierarchical cache builds a DSA indexer host sidecar from the device
+        # pool; a gated pool has no index-k buffer, so construction must fail
+        # loudly (defense-in-depth behind the server-args validator) rather than
+        # hit a NoneType iteration deep inside init_kv_buffer.
+        from sglang.srt.mem_cache.memory_pool_host import DSAIndexerPoolHost
+
+        p = self._pool(gate=True)
+        with self.assertRaises(RuntimeError) as ctx:
+            DSAIndexerPoolHost(p, None, "layer_first")
+        self.assertIn("gate_index_k_cache", str(ctx.exception))
+
+    def test_indexer_host_does_not_guard_ungated_pool(self):
+        # The gate guard is the first statement in __init__; for an ungated
+        # (DSA-native) pool it must NOT fire. Construction then fails later on
+        # the stub anchor_host, proving execution passed the guard untouched.
+        from sglang.srt.mem_cache.memory_pool_host import DSAIndexerPoolHost
+
+        p = self._pool(gate=False)
+        with self.assertRaises(AttributeError):
+            DSAIndexerPoolHost(p, None, "layer_first")
 
     def _cell_size(self, *, ds_on: bool, hisparse: bool = False):
         from types import SimpleNamespace

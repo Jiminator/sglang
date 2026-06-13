@@ -1,0 +1,4 @@
+probe=ds_hicache_reject exit=1
+fail_closed_validator_error_present=yes
+nonetype_crash_in_init_kv_buffer=none
+ValueError: Standalone Double Sparsity does not support --enable-hierarchical-cache. The hierarchical cache builds a per-token DSA indexer host sidecar from the device KV pool, but Double Sparsity replaces the DSA indexer with query-signature selection and does not allocate that sidecar, so its host offload and cached-prefix label semantics are undefined. Drop --enable-hierarchical-cache (Double Sparsity targets the in-GPU radix cache).

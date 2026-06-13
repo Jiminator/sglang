@@ -72,6 +72,16 @@ def validate_double_sparsity(server_args: "ServerArgs") -> None:
             "(HiSparse is the PD-disaggregated sparsity path)."
         )
 
+    if getattr(server_args, "enable_hierarchical_cache", False):
+        raise ValueError(
+            "Standalone Double Sparsity does not support --enable-hierarchical-cache. "
+            "The hierarchical cache builds a per-token DSA indexer host sidecar from the "
+            "device KV pool, but Double Sparsity replaces the DSA indexer with "
+            "query-signature selection and does not allocate that sidecar, so its host "
+            "offload and cached-prefix label semantics are undefined. Drop "
+            "--enable-hierarchical-cache (Double Sparsity targets the in-GPU radix cache)."
+        )
+
     payload = getattr(server_args, "double_sparsity_config", None)
     if payload is None or (isinstance(payload, str) and not payload.strip()):
         raise ValueError(

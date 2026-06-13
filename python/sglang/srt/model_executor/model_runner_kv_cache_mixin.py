@@ -513,8 +513,8 @@ class ModelRunnerKVCacheMixin:
             elif getattr(self.server_args, "enable_double_sparsity", False):
                 # Double Sparsity gates the DSA indexer index-k sidecar off (DS
                 # replaces the indexer's selection, so it is never invoked or read);
-                # skipping the allocation is the M1 capacity lever, matched by the
-                # configurator's cell-size math. HiSparse keeps the buffer, so the
+                # skipping the allocation frees those bytes for more KV tokens, matched
+                # by the configurator's cell-size math. HiSparse keeps the buffer, so the
                 # flag is set only on the plain DSATokenToKVPool path.
                 pool_kwargs["gate_index_k_cache"] = True
             self.token_to_kv_pool = PoolCls(
