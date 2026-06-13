@@ -1,0 +1,4 @@
+probe=ds_int8_ladder cap=342784 bs_cap=74
+conc=16 ach_conc=16.00 decTPS_p50=34.88 agg_tok/s=462.1 ttft_p99=3.12s done=64
+conc=32 ach_conc=31.99 decTPS_p50=29.88 agg_tok/s=705.1 ttft_p99=6.20s done=128
+conc=64 ach_conc=47.86 decTPS_p50=26.02 agg_tok/s=776.5 ttft_p99=26.26s done=128

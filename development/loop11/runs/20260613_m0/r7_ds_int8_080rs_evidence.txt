@@ -1,0 +1,9 @@
+probe=ds_int8_080rs status=OK
+max_total_num_tokens=342784 bs_cap=floor(cap/4608)=74
+smoke=OK:Paris. The city is located on the River Seine in the north o
+[2026-06-13 23:14:58 TP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 342784, KV size: 16.34 GB
+[2026-06-13 23:14:58 TP0] Memory pool end. avail mem=32.26 GB
+[2026-06-13 23:15:40 TP0] Capture cuda graph end. Time elapsed: 40.83 s. mem usage=0.76 GB. avail mem=22.32 GB.
+[2026-06-13 23:15:44 TP0] max_total_num_tokens=342784, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=64, context_len=202752, available_gpu_mem=22.32 GB
+[2026-06-13 23:14:58 TP5] token_label_table: 6.77 GB/rank  L=78 T=342848 H=8 D=32 page=64 dtype=torch.int8 scales=float16
+[2026-06-13 23:14:58 TP1] token_label_table: 6.77 GB/rank  L=78 T=342848 H=8 D=32 page=64 dtype=torch.int8 scales=float16

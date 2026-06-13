@@ -11995,20 +11995,42 @@ class TestDSIndexerCacheGate(unittest.TestCase):
         with self.assertRaises(AttributeError):
             DSAIndexerPoolHost(p, None, "layer_first")
 
-    def _cell_size(self, *, ds_on: bool, hisparse: bool = False):
+    def _cell_size(
+        self,
+        *,
+        ds_on: bool,
+        hisparse: bool = False,
+        signature_dtype: str = None,
+        label_dim: int = 16,
+        num_heads: int = 4,
+    ):
         from types import SimpleNamespace
         from unittest import mock
 
         from sglang.srt.model_executor import pool_configurator as pc
 
         cfg = pc.DefaultPoolConfigurator.__new__(pc.DefaultPoolConfigurator)
+        mc_kwargs = dict(kv_lora_rank=512, qk_rope_head_dim=64, hf_config=object())
+        sa_kwargs = dict(enable_double_sparsity=ds_on)
+        # When signature_dtype is given, supply the table-aware sizing inputs the
+        # validator sets before init_memory_pool (parsed DS config + channel mask +
+        # model dims). Omitting it exercises the indexer-only (no-table) path.
+        if signature_dtype is not None:
+            mc_kwargs.update(
+                num_hidden_layers=2,
+                get_num_attention_heads=lambda tp: num_heads,
+            )
+            sa_kwargs.update(
+                _double_sparsity_parsed_config=SimpleNamespace(
+                    signature_dtype=signature_dtype
+                ),
+                _double_sparsity_channel_mask=SimpleNamespace(label_dim=label_dim),
+            )
         mr = SimpleNamespace(
-            model_config=SimpleNamespace(
-                kv_lora_rank=512, qk_rope_head_dim=64, hf_config=object()
-            ),
+            model_config=SimpleNamespace(**mc_kwargs),
             kv_cache_dtype=torch.float8_e4m3fn,
             use_mla_backend=True,
-            server_args=SimpleNamespace(enable_double_sparsity=ds_on),
+            server_args=SimpleNamespace(**sa_kwargs),
             enable_hisparse=hisparse,
         )
         with mock.patch.object(pc, "get_attention_tp_size", return_value=1), \
@@ -12029,6 +12051,37 @@ class TestDSIndexerCacheGate(unittest.TestCase):
         hi = self._cell_size(ds_on=True, hisparse=True)
         dsa = self._cell_size(ds_on=False)
         self.assertEqual(hi, dsa)
+
+    def test_cell_size_reserves_fp16_table_term_under_ds(self):
+        # fp16 signature table reserves num_layers*num_heads*label_dim*2 per token
+        # (2*4*16*2 = 256) on top of the no-table DS cell.
+        with_table = self._cell_size(ds_on=True, signature_dtype="fp16")
+        no_table = self._cell_size(ds_on=True)
+        self.assertEqual(with_table - no_table, 2 * 4 * 16 * 2)
+
+    def test_cell_size_int8_table_term_smaller_than_fp16(self):
+        # int8 reserves num_layers*num_heads*(label_dim+2) per token (2*4*18 = 144):
+        # 1-byte signatures + a 2-byte fp16 per-(layer,token,head) scale.
+        no_table = self._cell_size(ds_on=True)
+        int8 = self._cell_size(ds_on=True, signature_dtype="int8")
+        fp16 = self._cell_size(ds_on=True, signature_dtype="fp16")
+        self.assertEqual(int8 - no_table, 2 * 4 * (16 + 2))
+        self.assertLess(int8, fp16)
+
+    def test_cell_size_no_table_term_for_dsa_native(self):
+        # DSA-native must not reserve the DS signature table even if DS config
+        # attrs are present — the term is gated on enable_double_sparsity.
+        self.assertEqual(
+            self._cell_size(ds_on=False, signature_dtype="fp16"),
+            self._cell_size(ds_on=False),
+        )
+
+    def test_cell_size_no_table_term_for_hisparse(self):
+        # HiSparse has no TokenLabelTable; sizing matches DSA-native (no table).
+        self.assertEqual(
+            self._cell_size(ds_on=True, hisparse=True, signature_dtype="fp16"),
+            self._cell_size(ds_on=False),
+        )
 
 
 if __name__ == "__main__":
