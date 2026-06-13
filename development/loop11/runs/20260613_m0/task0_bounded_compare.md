@@ -29,3 +29,4 @@ Bounded = `selector_width_overflow_policy=fail_closed`, `selector_width_buckets=
 | bnd_tf_on_rs_085 | tf | on | 0.85 | fail_closed | 118 | 14.25 | 13.94 | 0.31 | OK:Paris. The city is located on the River  |
 | bnd_tf_on_rs_090 | tf | on | 0.90 | fail_closed | 147 | 6.63 | 6.32 | 0.31 | OK:Paris. The city is located on the River  |
 | bnd_tf_on_rs_095 | tf | on | 0.95 | fail_closed | 176 | 1.14 | None | — | OK:Paris. The city is located on the River  |
+| bnd_tf_on_rs_096 | tf | on | 0.96 | fail_closed | 0 | None | None | — | - |

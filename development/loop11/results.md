@@ -1,19 +1,22 @@
 # Loop 11 Results — Authoritative Current State
 
 > Maintained rewrite-over-append: this document always reflects the loop's current state.
-> Last regenerated: Round 3, 2026-06-13. HEAD at round start: `c0f4bb19d`.
+> Last regenerated: Round 4, 2026-06-13. HEAD at round start: `eefbf6986`.
 
 ## 1. Current state summary
 
-- **M0 COMPLETE (Rounds 0–3).** task0 (memory accounting + the full 12-config unbounded capacity
-  grid + the FULL bounded right-sized ceiling matrix), task1 (frozen radix-ON DSA @0.8 baseline),
-  task2 (DS-Offload rejection memo) all done with durable, tracked evidence. No AC *verdicts* — M0
-  is ground truth. M1 may now start.
-- **R3 completed the bounded right-sized matrix** Codex R2 flagged as a selected subset: all six
-  `{fp16,int8,tf} × {indexer on/off}` rs configs swept `fail_closed [4608]` to their boot ceilings
-  (highest-pass + first-fail), with a canonical bounded-ceiling table next to the unbounded control
-  grid (§5.1). Finding: bounded reclaims ~0.3 GB per config (subsumed by the envelope) and lifts
-  one ceiling (tf/on/rs 0.90→0.95).
+- **M0 COMPLETE (Rounds 0–4).** task0 (memory accounting + the full 12-config unbounded capacity
+  grid + the full bounded right-sized ceiling matrix, every bounded config closed with a measured
+  highest-pass AND first-fail), task1 (frozen radix-ON DSA @0.8 baseline), task2 (DS-Offload
+  rejection memo) all done with durable, tracked evidence. No AC *verdicts* — M0 is ground truth.
+  M1 may now start.
+- **R4 closed the last open bounded ceiling** (Codex R3): bounded `tf/on/rs` passed the R3 grid-top
+  0.95, so R4 probed 0.96 → graph_capture_oom — first-fail captured, ceiling closed. All six
+  bounded configs now have a real highest-pass + first-fail (§5.1).
+- **R3 completed the bounded right-sized matrix** Codex R2 flagged as a subset: all six
+  `{fp16,int8,tf} × {indexer on/off}` rs configs swept `fail_closed [4608]`, with a canonical
+  bounded-ceiling table next to the unbounded control grid (§5.1). Finding: bounded reclaims ~0.3
+  GB per config (subsumed by the envelope) and lifts one ceiling (tf/on/rs 0.90→0.95).
 - **R2 landed the loop's first production code:** the bounded selector-width feature
   (`selector_width_overflow_policy`), DS-gated, default byte-compatible; matrix/extracts carry
   `graph_capture` + `smoke` + first-fail `note`. **AC-7 verified** (§7).
@@ -207,22 +210,25 @@ ceilings (highest-pass + first-fail). Drivers `stage_task0_bounded.sh` (R2) + `s
 | int8 | on  | 0.85 / bs118 / 3.72 | 0.90 | same ceiling, +0.34 GB |
 | int8 | off | 0.85 / bs145 / 1.39 | 0.90 | same ceiling, +0.34 GB |
 | tf | off | 0.90 / bs181 / 5.72 | 0.95 | same ceiling, +0.31 GB |
-| tf | on | **0.95 / bs176 / 1.14** | ≥grid-top | **+1 step (unbounded 0.90→0.95)** |
+| tf | on | **0.95 / bs176 / 1.14** | 0.96 (graph_capture_oom) | **+1 step (unbounded 0.90→0.95)** |
+
+All six bounded configs are closed with a measured highest-pass AND first-fail (R3 swept five;
+R4 closed `tf/on/rs` — it passed the R3 grid-top 0.95, so R4 probed 0.96 → graph_capture_oom).
 
 **Two findings:** (1) Bounded reclaims a uniform **~0.3 GB** vs the unbounded rs row at every
 matched point — clean attribution from the matched control `ctl_int8_off_rs_080` (`full_fallback`
 `{4608, full}` = 11.49 GB = unbounded exactly; bounded `{4608}` = 11.83 → the +0.34 GB is precisely
 the dropped full-width DS scratch). (2) For **5 of 6** configs the ~0.3 GB does not cross a
 fraction step, so the boot ceiling is unchanged; for **tf/on/rs** it tips a ragged 0.90→0.95 (bs147
-→ bs176, 1.14 GB ready). The small delta is because `cuda_graph_max_bs=64` already shrinks the
-full-width score plane (`[64, 202752]` ≈ 80–240 MB, not GB; the measured ~1.95 GB DS graph overhead
-was a bs512-default cost). **So bounded selector-width is largely subsumed by the right-sized
-envelope as a headroom lever; its durable value is the fail-closed served-width contract** (§7),
-plus an occasional one-step ceiling lift where headroom is on the edge.
+→ bs176, 1.14 GB ready; 0.96 then fails). The small delta is because `cuda_graph_max_bs=64` already
+shrinks the full-width score plane (`[64, 202752]` ≈ 80–240 MB, not GB; the measured ~1.95 GB DS
+graph overhead was a bs512-default cost). **So bounded selector-width is largely subsumed by the
+right-sized envelope as a headroom lever; its durable value is the fail-closed served-width
+contract** (§7), plus an occasional one-step ceiling lift where headroom is on the edge.
 
 task0 is now complete to the plan contract: the unbounded `{default, right-sized}` grid (§5) AND
-the bounded right-sized ceilings (this section), each config with highest-pass + first-fail, all
-backed by durable extracts with graph_capture/smoke/note.
+the bounded right-sized ceilings (this section), each of the six bounded configs with a measured
+highest-pass + first-fail, all backed by durable extracts with graph_capture/smoke/note.
 
 ## 6. Queue state
 

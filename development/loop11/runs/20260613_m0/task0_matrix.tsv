@@ -24,6 +24,7 @@ bnd_tf_on_rs_080	bounded	tf	on	rs	fail_closed	0.80	OK	410560	89	0.3	22.02	yes	OK
 bnd_tf_on_rs_085	bounded	tf	on	rs	fail_closed	0.85	OK	544704	118	0.3	14.25	yes	OK:Paris. The city is located on the River 	-
 bnd_tf_on_rs_090	bounded	tf	on	rs	fail_closed	0.90	OK	678848	147	0.3	6.63	yes	OK:Paris. The city is located on the River 	-
 bnd_tf_on_rs_095	bounded	tf	on	rs	fail_closed	0.95	OK	813056	176	0.3	1.14	yes	OK:Paris. The city is located on the River 	-
+bnd_tf_on_rs_096	bounded	tf	on	rs	fail_closed	0.96	BOOT_FAIL	0	0	0.3	None	-	-	graph_capture_oom
 p05_fp16_on_rs16k_080	ctxlen	fp16	on	rs16k	-	0.80	OK	410560	89	15.27	6.94	yes	OK:Paris. The city is located on the River 	-
 p10_int8_off_rs16k_080	ctxlen	int8	off	rs16k	-	0.80	OK	504640	109	9.97	11.71	yes	OK:Paris. The city is located on the River 	-
 p09_int8_on_rs16k_080	ctxlen	int8	on	rs16k	-	0.80	OK	410560	89	8.11	14.04	yes	OK:Paris. The city is located on the River 	-

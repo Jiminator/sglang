@@ -28,4 +28,4 @@ Same boot/capture/smoke ceiling, with the bounded selector-width feature (no ful
 | int8 | off | rs(bounded) | 0.85 / bs145 / 1.39 | 0.90 (cuda_oom) | 0.75 |
 | int8 | on | rs(bounded) | 0.85 / bs118 / 3.72 | 0.90 (cuda_oom) | 0.80 |
 | tf | off | rs(bounded) | 0.90 / bs181 / 5.72 | 0.95 (other:Failed to CUDA calloc 10485760 bytes) | 0.75 |
-| tf | on | rs(bounded) | 0.95 / bs176 / 1.14 | ≥grid-top | 0.80 |
+| tf | on | rs(bounded) | 0.95 / bs176 / 1.14 | 0.96 (graph_capture_oom) | 0.80 |
