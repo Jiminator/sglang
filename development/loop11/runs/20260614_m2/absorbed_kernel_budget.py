@@ -1,15 +1,17 @@
 """task5 GPU paged absorbed-latent score kernel — CAPTURED-REPLAY budget.
 
-Mirrors development/loop10/task11_logical_score_bench.py exactly (BS=29, H=8,
-WIDTH=5120, seq=4608, captured-replay median x 780 calls/window) so the absorbed
-kernel's per-window cost is directly comparable to the landed logical-score
-bucket (~23,080 us/window, target <=20,000 us/window = 25.6 us/call).
+Mirrors development/loop10/task11_logical_score_bench.py (BS=29, H=8, WIDTH=5120,
+seq=4608, captured-replay median x 780 calls/window) so the absorbed kernel's
+per-window cost is directly comparable to the landed logical-score bucket
+(~23,080 us/window, target <=20,000 us/window = 25.6 us/call).
 
-The absorbed kernel reads the full 512-dim fp8 latent (vs the label kernel's
-label_dim=32 signature), so per token it does num_heads x 512 MACs vs num_heads x
-32 — a known ~16x compute risk the plan flagged as MEASURED, not assumed. One
-latent read serves all heads. Eager timing measures host JIT dispatch, so every
-variant is captured into its own CUDA graph and the REPLAY is timed.
+R14: the kernel uses block-scale reassociation with tl.dot tensor-core tiles
+(per 128-channel block: partial = tl.dot(fp8_latent_blk, v_blk) then *block_scale,
+fp32-accumulate per head, head-max) — no [TOKEN_BLOCK,512] dequant tile. The harness
+calls the PUBLIC wrapper absorbed_score_paged_fp8() (not the private Triton symbol),
+so the measured number is the default callable path. Eager timing measures host JIT
+dispatch, so each token_block is captured into its own CUDA graph and the REPLAY is
+timed.
 
 Run: python development/loop11/runs/20260614_m2/absorbed_kernel_budget.py \
        --out development/loop11/runs/20260614_m2/absorbed_kernel_budget.json
@@ -55,8 +57,7 @@ def main() -> int:
     args = ap.parse_args()
 
     from sglang.srt.layers.attention.double_sparsity.absorbed_latent_kernel import (
-        _absorbed_score_kernel,
-        _next_pow2,
+        absorbed_score_paged_fp8,
     )
 
     dev = torch.device("cuda")
@@ -73,67 +74,28 @@ def main() -> int:
         .contiguous()
     )
     seq_lens = torch.full((BS,), SEQ, dtype=torch.int32, device=dev)
-    out = torch.empty((BS, WIDTH), dtype=torch.float32, device=dev)
 
-    def launch(tb, workers):
-        tbp = _next_pow2(min(tb, WIDTH))
-        lora_pow2 = _next_pow2(LORA)
-        ntb = (WIDTH + tbp - 1) // tbp
-        nw = max(1, min(workers, ntb))
-        grid = (BS, nw)
-        _absorbed_score_kernel[grid](
-            v,
-            fp8,
-            scales,
-            written,
-            rpi,
-            rtt,
-            seq_lens,
-            out,
-            num_heads=H,
-            max_seq_len=WIDTH,
-            lora=LORA,
-            block_size=BLOCK,
-            max_pool_len=WIDTH,
-            max_tokens=WIDTH,
-            v_stride_b=v.stride(0),
-            v_stride_h=v.stride(1),
-            fp8_stride_t=fp8.stride(0),
-            scale_stride_t=scales.stride(0),
-            rtt_stride_p=rtt.stride(0),
-            out_stride_b=out.stride(0),
-            TOKEN_BLOCK=tbp,
-            LORA_POW2=lora_pow2,
-            HEAD_AGG_MEAN=False,
-            STORE_DEAD_NEG_INF=True,
-            WORKERS=nw,
+    def call(tb):
+        return absorbed_score_paged_fp8(
+            v, fp8, scales, rpi, rtt, seq_lens, WIDTH, written=written, token_block=tb
         )
 
     results = []
-    for tb in [16, 32, 64, 128, 256]:
-        for wk in [128]:
-            # warmup compile outside capture
-            for _ in range(3):
-                launch(tb, wk)
-            torch.cuda.synchronize()
-            gr = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(gr):
-                launch(tb, wk)
-            us = _time_replay_us(gr)
-            window = us * 780.0
-            results.append(
-                {
-                    "token_block": tb,
-                    "workers": wk,
-                    "us_per_call": us,
-                    "us_per_window": window,
-                }
-            )
-            print(
-                f"[absorbed-budget] seq={SEQ} tb={tb} w={wk}: {us:.2f} us/call "
-                f"(~{window/1000:.1f}k us/window)",
-                flush=True,
-            )
+    for tb in [16, 32, 64, 128]:
+        for _ in range(3):  # warmup compile outside capture
+            call(tb)
+        torch.cuda.synchronize()
+        gr = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(gr):
+            call(tb)
+        us = _time_replay_us(gr)
+        window = us * 780.0
+        results.append({"token_block": tb, "us_per_call": us, "us_per_window": window})
+        print(
+            f"[absorbed-budget] seq={SEQ} tb={tb}: {us:.2f} us/call "
+            f"(~{window/1000:.1f}k us/window)",
+            flush=True,
+        )
 
     best = min(results, key=lambda r: r["us_per_call"])
     summary = {
@@ -145,6 +107,7 @@ def main() -> int:
             "seq": SEQ,
             "block": BLOCK,
         },
+        "kernel": "tl.dot block-scale reassociation (tf32), public wrapper path",
         "logical_score_landed_bucket_us_window": 23080.0,
         "budget_target_us_window": 20000.0,
         "results": results,

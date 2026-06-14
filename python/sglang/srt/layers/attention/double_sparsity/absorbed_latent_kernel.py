@@ -108,7 +108,7 @@ if _HAS_TRITON:
         rtt_stride_p: tl.constexpr,
         out_stride_b: tl.constexpr,
         TOKEN_BLOCK: tl.constexpr,
-        LORA_POW2: tl.constexpr,
+        H_POW2: tl.constexpr,
         HEAD_AGG_MEAN: tl.constexpr,
         STORE_DEAD_NEG_INF: tl.constexpr,
         WORKERS: tl.constexpr,
@@ -130,11 +130,10 @@ if _HAS_TRITON:
             nblk = live_blocks
 
         pool_idx = tl.load(rpi_ptr + batch_id).to(tl.int64)
-        l_offs = tl.arange(0, LORA_POW2)
-        l_mask = l_offs < lora
-        blk_of = (
-            l_offs // block_size
-        )  # which 128-block each channel reads its scale from
+        h_offs = tl.arange(0, H_POW2)
+        h_mask = h_offs < num_heads
+        c_offs = tl.arange(0, block_size)
+        nblk_lat = lora // block_size  # number of 128-channel latent blocks
 
         for tok_blk in range(worker, nblk, WORKERS):
             tok_offs = tok_blk * TOKEN_BLOCK + tl.arange(0, TOKEN_BLOCK)
@@ -161,44 +160,52 @@ if _HAS_TRITON:
                 )
                 valid = pos_valid & written
 
-                # Load the fp8 latent tile and dequant per element with its
-                # per-128-block scale (dequant-then-dot == the CPU reference).
-                lat_offs = safe_phys[:, None] * fp8_stride_t + l_offs[None, :]
-                tile_mask = in_range[:, None] & l_mask[None, :]
-                lat = tl.load(fp8_ptr + lat_offs, mask=tile_mask, other=0.0).to(
-                    tl.float32
-                )
-                sc = tl.load(
-                    scale_ptr + safe_phys[:, None] * scale_stride_t + blk_of[None, :],
-                    mask=tile_mask,
-                    other=0.0,
-                ).to(tl.float32)
-                lat_deq = lat * sc  # [TOKEN_BLOCK, LORA_POW2]
-
-                if HEAD_AGG_MEAN:
-                    acc = tl.zeros((TOKEN_BLOCK,), dtype=tl.float32)
-                else:
-                    acc = tl.full((TOKEN_BLOCK,), float("-inf"), dtype=tl.float32)
-
-                for h in range(num_heads):
-                    v_h = tl.load(
-                        v_ptr + batch_id * v_stride_b + h * v_stride_h + l_offs,
-                        mask=l_mask,
+                # Block-scale reassociation with a tensor-core MMA: per 128-wide
+                # latent block, partial[tok, h] = Σ_{l∈blk} v[h,l]·fp8(latent[tok,l])
+                # via tl.dot, then weight by that token's fp32 block scale and
+                # accumulate fp32 per head — never materializing a [TOKEN_BLOCK, lora]
+                # dequant tile (what the spilled per-head vector loop did). Real
+                # arithmetic is identical to dequant-then-dot; only the tf32 MMA and
+                # the fp32 reassociation differ (declared value-affecting, recall-gated).
+                acc = tl.zeros((TOKEN_BLOCK, H_POW2), dtype=tl.float32)
+                for blk in range(nblk_lat):
+                    cols = blk * block_size + c_offs
+                    lat_blk = tl.load(
+                        fp8_ptr + safe_phys[:, None] * fp8_stride_t + cols[None, :],
+                        mask=in_range[:, None],
+                        other=0.0,
+                    ).to(
+                        tl.float32
+                    )  # [TOKEN_BLOCK, block_size]
+                    v_blk_t = tl.load(
+                        v_ptr
+                        + batch_id * v_stride_b
+                        + h_offs[None, :] * v_stride_h
+                        + cols[:, None],
+                        mask=h_mask[None, :],
+                        other=0.0,
+                    ).to(
+                        tl.float32
+                    )  # [block_size, H_POW2]
+                    partial = tl.dot(lat_blk, v_blk_t, allow_tf32=True)  # [TB, H_POW2]
+                    sc_blk = tl.load(
+                        scale_ptr + safe_phys * scale_stride_t + blk,
+                        mask=in_range,
                         other=0.0,
                     ).to(tl.float32)
-                    dot = tl.sum(lat_deq * v_h[None, :], axis=1)  # [TOKEN_BLOCK]
-                    if HEAD_AGG_MEAN:
-                        acc += dot
-                    else:
-                        acc = tl.where(dot > acc, dot, acc)
+                    acc += partial * sc_blk[:, None]
 
                 if HEAD_AGG_MEAN:
-                    acc = acc / num_heads
+                    acc = tl.where(h_mask[None, :], acc, 0.0)
+                    score = tl.sum(acc, axis=1) / num_heads
+                else:
+                    acc = tl.where(h_mask[None, :], acc, float("-inf"))
+                    score = tl.max(acc, axis=1)
 
                 out_score = tl.where(
                     valid,
-                    acc,
-                    tl.full(acc.shape, float("-inf"), dtype=tl.float32),
+                    score,
+                    tl.full((TOKEN_BLOCK,), float("-inf"), dtype=tl.float32),
                 )
                 tl.store(
                     out_ptr + batch_id * out_stride_b + tok_offs,
@@ -218,11 +225,20 @@ def absorbed_score_paged_fp8(
     written: Optional[torch.Tensor] = None,
     *,
     block_size: int = 128,
-    token_block: int = 64,
+    token_block: int = 128,
     workers: int = 128,
+    num_warps: int = 2,
+    num_stages: int = 2,
     head_agg: str = "max",
 ) -> torch.Tensor:
     """Paged absorbed score from the resident fp8 latent — GPU.
+
+    ``token_block=128`` + ``num_warps=2`` + ``num_stages=2`` is the measured-best
+    config (captured-replay sweep: 19.4 µs/call ≈ 15.2k µs/window at the bs=29/H=8/
+    width=5120/seq=4608 op point, under the ~23.1k logical-score bucket). The MMA
+    inner loop tiles ``[TOKEN_BLOCK, 128] @ [128, H_pow2]`` per latent block, so both
+    ``TOKEN_BLOCK`` and the head tile are floored at 16 for tensor cores. Triton's
+    default ``num_warps=4`` over-subscribes this shape (~2× slower) — hence the knob.
 
     Args:
         v: ``[bs, H, lora]`` fp32 — the per-head query projection ``v_h`` (from
@@ -254,9 +270,10 @@ def absorbed_score_paged_fp8(
 
     out = torch.empty((bs, max_seq_len), dtype=torch.float32, device=device)
     max_pool_len = int(req_to_token.shape[1])
+    # tl.dot needs ≥16 on every tile dim; pad both the token tile and the head tile.
     desired_block = min(token_block, max(max_seq_len, 1))
-    token_block_pow2 = _next_pow2(desired_block)
-    lora_pow2 = _next_pow2(lora)
+    token_block_pow2 = max(16, _next_pow2(desired_block))
+    h_pow2 = max(16, _next_pow2(num_heads))
     num_token_blocks = (max_seq_len + token_block_pow2 - 1) // token_block_pow2
     num_workers = max(1, min(int(workers), num_token_blocks))
     grid = (bs, num_workers)
@@ -283,10 +300,12 @@ def absorbed_score_paged_fp8(
         rtt_stride_p=req_to_token.stride(0),
         out_stride_b=out.stride(0),
         TOKEN_BLOCK=token_block_pow2,
-        LORA_POW2=lora_pow2,
+        H_POW2=h_pow2,
         HEAD_AGG_MEAN=head_agg == "mean",
         STORE_DEAD_NEG_INF=True,
         WORKERS=num_workers,
+        num_warps=num_warps,
+        num_stages=num_stages,
     )
     return out
 
@@ -305,6 +324,7 @@ def absorbed_latent_score_logical_paged(
     written: Optional[torch.Tensor] = None,
     *,
     block_size: int = 128,
+    token_block: int = 128,
     head_agg: str = "max",
 ) -> torch.Tensor:
     """GPU equivalent of ``absorbed_latent.absorbed_latent_score_logical`` reading
@@ -323,5 +343,6 @@ def absorbed_latent_score_logical_paged(
         max_seq_len,
         written=written,
         block_size=block_size,
+        token_block=token_block,
         head_agg=head_agg,
     )

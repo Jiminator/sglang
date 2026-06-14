@@ -12614,10 +12614,12 @@ class TestAbsorbedLatentPagedGPU(unittest.TestCase):
         fp8, scales = quantize_latent_fp8(f["c_kv"])
         cpu = self._cpu_reference(f, fp8, scales)
         gpu = self._run_gpu(f, fp8, scales)
-        # identical mask + dequant values -> only fp32 reassociation differs
+        # same fp8 bytes both sides; the tl.dot tensor-core path rounds to tf32 in
+        # the MMA (+ block-scale reassociation), so parity is tf32-level (~1e-3 rel)
+        # while SELECTION stays exact — the oracle-recall overlap below is the gate.
         finite = torch.isfinite(cpu)
         self.assertTrue(bool((torch.isinf(cpu) == torch.isinf(gpu)).all()))
-        torch.testing.assert_close(gpu[finite], cpu[finite], atol=1e-3, rtol=1e-4)
+        torch.testing.assert_close(gpu[finite], cpu[finite], atol=0.1, rtol=5e-3)
         # oracle recall: identical logical winners per request
         top_k = 2
         idx_cpu, _ = select_topk_sequence_order(cpu, top_k)
@@ -12706,7 +12708,68 @@ class TestAbsorbedLatentPagedGPU(unittest.TestCase):
         cpu = self._cpu_reference(f, fp8, scales, head_agg="mean")
         gpu = self._run_gpu(f, fp8, scales, head_agg="mean")
         finite = torch.isfinite(cpu)
-        torch.testing.assert_close(gpu[finite], cpu[finite], atol=1e-3, rtol=1e-4)
+        torch.testing.assert_close(gpu[finite], cpu[finite], atol=0.1, rtol=5e-3)
+
+    def test_paged_gpu_production_quantizer_bytes(self):
+        # Feed the kernel the EXACT production KV-writer bytes from
+        # quantize_k_cache_separate (not the quantize_latent_fp8 helper, which is
+        # not byte-identical to production), reading `[512 fp8 | 4 fp32 scales]`
+        # directly off the `[T, 1, 528]` nope buffer via strided views — proves the
+        # scorer consumes the resident pool fp8 the production writer emits.
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
+            absorbed_latent_score_logical,
+        )
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent_kernel import (
+            absorbed_latent_score_logical_paged,
+            dequantize_latent_fp8,
+        )
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            select_topk_sequence_order,
+        )
+        from sglang.srt.layers.attention.dsa.quant_k_cache import (
+            quantize_k_cache_separate,
+        )
+
+        f = self._fixture()
+        dev = torch.device("cuda")
+        max_tokens = f["c_kv"].shape[0]
+        k_nope = f["c_kv"].to(dev).to(torch.bfloat16)  # [max_tokens, 512]
+        k_rope = torch.zeros(max_tokens, 64, dtype=torch.bfloat16, device=dev)
+        nope_u8, _ = quantize_k_cache_separate(k_nope, k_rope)  # [max_tokens, 1, 528]
+        fp8 = nope_u8[:, 0, :512].view(torch.float8_e4m3fn)  # production fp8 latent
+        scales = nope_u8[:, 0, 512:].view(torch.float32)  # 4 fp32 per-128-block scales
+        # CPU oracle dequants the SAME production bytes (so any diff is tf32 MMA only)
+        cpu = absorbed_latent_score_logical(
+            f["queries"],
+            dequantize_latent_fp8(fp8.cpu(), scales.cpu()),
+            f["w_sel"],
+            f["sel"],
+            f["weights"],
+            f["req_pool_indices"],
+            f["req_to_token"],
+            f["seq_lens"],
+            f["max_seq_len"],
+            written=f["written"],
+        )
+        gpu = absorbed_latent_score_logical_paged(
+            f["queries"].to(dev),
+            fp8,
+            scales,
+            f["w_sel"].to(dev),
+            f["sel"].to(dev),
+            f["weights"].to(dev),
+            f["req_pool_indices"].to(dev),
+            f["req_to_token"].to(dev),
+            f["seq_lens"].to(dev),
+            f["max_seq_len"],
+            written=f["written"].to(dev),
+        ).cpu()
+        finite = torch.isfinite(cpu)
+        self.assertTrue(bool((torch.isinf(cpu) == torch.isinf(gpu)).all()))
+        torch.testing.assert_close(gpu[finite], cpu[finite], atol=0.1, rtol=5e-3)
+        idx_cpu, _ = select_topk_sequence_order(cpu, 2)
+        idx_gpu, _ = select_topk_sequence_order(gpu, 2)
+        self.assertEqual(self._overlap(idx_cpu, idx_gpu, 2), 1.0)
 
 
 if __name__ == "__main__":

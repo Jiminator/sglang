@@ -5,7 +5,15 @@
 
 ## 1. Current state summary
 
-- **M0 COMPLETE (Rounds 0–4); M1 (task3 + task4) COMPLETE + VERIFIED (R9 review). M2 task5 IN PROGRESS (R10–R13).**
+- **M0 COMPLETE (Rounds 0–4); M1 (task3 + task4) COMPLETE + VERIFIED (R9 review). M2 task5 IN PROGRESS (R10–R14).**
+- **R14 — task5 GPU kernel budget optimization (Codex R13 gap 1 + wrapper bug).** Rewrote the kernel
+  to block-scale reassociation with a `tl.dot` tensor-core MMA (no `[TOKEN_BLOCK,512]` spill); fixed
+  the wrapper default (token_block 64→128, exposed; harness uses the public path); tuned `num_warps=2,
+  num_stages=2` (Triton's default 4 was ~2× too many). **Captured-replay budget 64.0k → 15.1k
+  µs/window — PASS** (under 20k target + 23.1k landed logical-score; 4.2× faster). tf32 parity ~1e-3,
+  selection exact (oracle recall=1.0); NEW production-byte test (`quantize_k_cache_separate`). Owner
+  ruled: keep tf32, no fp8-`v_h`. 5 GPU tests + full DS suite (424) pass. NIAH recall@2048 = R15 slice
+  (server-required; reclassification rejected by Codex). (§10)
 - **R13 — task5 GPU paged kernel + budget + validity (Codex R12 gap 1) + AC-8 ledger repair (gap 2).**
   New `absorbed_latent_kernel.py`: a Triton paged fp8-latent score kernel mirroring `_logical_score_kernel`,
   reading the resident `[512 fp8 | 4 fp32 scales]` latent with in-register dequant. CPU-vs-GPU equivalence
@@ -429,7 +437,7 @@ descriptor, not the gate. Admission/capacity is met.
 
 M1 is VERIFIED COMPLETE (R9 review). M2 task5 STARTED (§10).
 
-## 10. M2 task5: absorbed-latent score-only prototype — IN PROGRESS (R10–R13)
+## 10. M2 task5: absorbed-latent score-only prototype — IN PROGRESS (R10–R14)
 
 The structural fix (DEC-2): replace the materialized signature table with scores read directly from
 the resident fp8 KV latent. **Load-bearing identity (proven, code-cited):** today's
@@ -505,10 +513,28 @@ fp8 quantization is applied at KV-write time (`set_mla_kv_buffer`), so a written
 valid fp8+scales. (The serving-time confirmation of this ordering on real traffic is a task6 item,
 once the latent scorer is in the loop.)
 
-**Remaining for task5** (next rounds): **kernel budget optimization** (tensor-core `tl.dot`
-reformulation + block-scale reassociation to bring ≤ ~23.5k µs/window, or record the floor); the
-**served NIAH recall@2048 gate** vs frozen `recall_baseline.json` (±0.5pp fail-closed) — which
-requires the absorbed scorer wired INTO serving, i.e. the **task6** selector-ABI swap, so it is an
-AC-5 serving gate on the integrated path, not a standalone task5 slice (plan_v2.md:191/195). Then
-task6 swaps the selector ABI to the latent binding and DELETES
+**Landed R14 (kernel budget optimization — Codex R13 gap 1 + blocking issue 1):** the kernel inner
+loop was rewritten to **block-scale reassociation with a `tl.dot` tensor-core MMA** — per 128-wide
+latent block, `partial[tok,h] = tl.dot(fp8_latent_blk, v_blk)` (tf32), weighted by that token's fp32
+block scale and fp32-accumulated per head, then head-max — so it **never materializes the
+`[TOKEN_BLOCK,512]` dequant tile** that spilled the R13 vector loop. The wrapper-default bug is fixed
+(`token_block` 64→128 default, exposed through `absorbed_latent_score_logical_paged`, harness calls
+the PUBLIC wrapper). A `num_warps`/`num_stages` sweep found Triton's default `num_warps=4`
+over-subscribed this shape ~2×; **`num_warps=2, num_stages=2, token_block=128`** is the measured best.
+**Captured-replay budget: 19.4 µs/call ≈ 15.1k µs/window — PASS (under the 20k target AND the ~23.1k
+landed logical-score bucket)**, down from R13's 64.0k (4.2× faster). Equivalence preserved: the tf32
+MMA gives ~1e-3 score parity (vs R13's 7.6e-6 exact) but **selection stays exact (oracle recall =
+1.0)**; a NEW `test_paged_gpu_production_quantizer_bytes` feeds the kernel the real
+`quantize_k_cache_separate` `[512 fp8 | 4 fp32 scales]` bytes (not the helper — Codex showed they are
+not byte-identical) and confirms parity + selection. 5 GPU tests; full DS suite 424 pass. Owner ruled
+(R14): keep the less-lossy tf32 path, tune without fp8 `v_h` — the fp8-`v_h` tensor-core variant stays
+documented but unused (additionally value-affecting). Budget slice CLOSED at budget.
+
+**Remaining for task5** (next round): the **served NIAH recall@2048 gate** vs frozen
+`development/loop9/runs/20260610_m0/recall_baseline.json` (±0.5pp fail-closed) — Codex R13 rejected
+folding this wholly into task6. It needs a LIVE TP=8 GLM-5.1 server (`loop7/niah_oracle_sweep.py`
+issues HTTP `/generate`; cannot run in-process) with the absorbed scorer wired SIDE-BY-SIDE into the
+serving recall-oracle hook (`selection_kernel._maybe_record_recall_oracle`), then
+`loop9/oracle_recall_summary.py` vs the frozen baseline. That is the R15 slice; **task6 stays blocked
+until it passes.** Then task6 swaps the selector ABI to the latent binding and DELETES
 `token_label_table.py`/`token_label_write.py` (DEC-2).

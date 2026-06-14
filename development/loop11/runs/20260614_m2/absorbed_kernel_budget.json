@@ -7,45 +7,35 @@
     "seq": 4608,
     "block": 128
   },
+  "kernel": "tl.dot block-scale reassociation (tf32), public wrapper path",
   "logical_score_landed_bucket_us_window": 23080.0,
   "budget_target_us_window": 20000.0,
   "results": [
     {
       "token_block": 16,
-      "workers": 128,
-      "us_per_call": 104.22399640083313,
-      "us_per_window": 81294.71719264984
+      "us_per_call": 44.12800073623657,
+      "us_per_window": 34419.84057426453
     },
     {
       "token_block": 32,
-      "workers": 128,
-      "us_per_call": 82.0159986615181,
-      "us_per_window": 63972.478955984116
+      "us_per_call": 26.976000517606735,
+      "us_per_window": 21041.280403733253
     },
     {
       "token_block": 64,
-      "workers": 128,
-      "us_per_call": 1433.791995048523,
-      "us_per_window": 1118357.756137848
+      "us_per_call": 20.51199972629547,
+      "us_per_window": 15999.359786510468
     },
     {
       "token_block": 128,
-      "workers": 128,
-      "us_per_call": 1977.6959419250488,
-      "us_per_window": 1542602.834701538
-    },
-    {
-      "token_block": 256,
-      "workers": 128,
-      "us_per_call": 1580.3840160369873,
-      "us_per_window": 1232699.53250885
+      "us_per_call": 19.392000511288643,
+      "us_per_window": 15125.760398805141
     }
   ],
   "best": {
-    "token_block": 32,
-    "workers": 128,
-    "us_per_call": 82.0159986615181,
-    "us_per_window": 63972.478955984116
+    "token_block": 128,
+    "us_per_call": 19.392000511288643,
+    "us_per_window": 15125.760398805141
   },
-  "verdict": "OVER_BUDGET"
+  "verdict": "PASS"
 }
