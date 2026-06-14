@@ -1,11 +1,20 @@
 # Loop 11 Results — Authoritative Current State
 
 > Maintained rewrite-over-append: this document always reflects the loop's current state.
-> Last regenerated: Round 15, 2026-06-14. HEAD at round start: `08a310a72` (R14).
+> Last regenerated: Round 17, 2026-06-14. HEAD at round start: `4b0be6936` (R16).
 
 ## 1. Current state summary
 
-- **M0 COMPLETE (Rounds 0–4); M1 (task3 + task4) COMPLETE + VERIFIED (R9 review). M2 task5 COMPLETE pending R16 verification (R10–R16); task6 unblocked.**
+- **M0 COMPLETE (Rounds 0–4); M1 (task3+task4) COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 IN PROGRESS (R17 slice 1).**
+- **R17 — task6 slice 1: table-free latent selector ABI (config-gated, default OFF).** New `table_free`
+  config: when on, the selector binds the absorbed state (no `TokenLabelTable`), `retrieve_topk_graph_safe`
+  returns the production top-k from the absorbed-latent score (the R16-validated scorer), pool-sizing
+  skips the table reservation, and validation rejects cosine/hybrid (absorbed identity is `scorer_norm
+  ="off"` only). Default OFF ⇒ shipped DSA default + the DS table path are byte-identical (every gate
+  reduces to the original; independently re-verified). +13 table_free unit tests (selection==table,
+  validation, pool-sizing skip); full DS suite 442 pass. Also fixed the AC-8 results.md header. NEXT
+  task6 slices: DELETE `token_label_table.py`/`token_label_write.py` (DEC-2), serving capacity payoff
+  @0.8, same-round AC-7. (§10)
 - **R16 — task5 served recall@2048 gate PASS on GLM-5.1 (Codex R15 gap + 2 helper fixes).** Added the
   comparability checks to `absorbed_recall_summary.py` (length-set + per-length sample-count equality —
   non-comparable populations now FAIL) and made `run_absorbed.sh` post-process + exit with the gate
@@ -455,7 +464,7 @@ descriptor, not the gate. Admission/capacity is met.
 
 M1 is VERIFIED COMPLETE (R9 review). M2 task5 STARTED (§10).
 
-## 10. M2 task5: absorbed-latent score-only prototype — COMPLETE pending R16 verification (R10–R16)
+## 10. M2 task5: absorbed-latent score-only prototype — VERIFIED COMPLETE (R10–R16; review R16)
 
 The structural fix (DEC-2): replace the materialized signature table with scores read directly from
 the resident fp8 KV latent. **Load-bearing identity (proven, code-cited):** today's
@@ -600,3 +609,45 @@ op-point (overall +0.085pp, ≤0.352pp per length) — the declared value-affect
 now UNBLOCKED:** swap the selector ABI to the latent binding, graph scratch for `v_h`, reject
 cosine/hybrid, DELETE `token_label_table.py`/`token_label_write.py` (DEC-2), capacity payoff @0.8,
 same-round AC-7.
+
+## 11. M2 task6: table-free latent-selector integration — IN PROGRESS (R17 slice 1)
+
+The structural payoff (DEC-2): make DS selection score the resident fp8 latent directly so the
+`TokenLabelTable` (5.29 GB/rank fp16) is never allocated → the KV pool grows → the bs cap lifts. task5
+proved the absorbed scorer is correct (CPU+GPU equivalence, served recall@2048 PASS); task6 integrates
+it as the production selection path and removes the table.
+
+**Landed R17 (slice 1 — the table-free ABI, config-gated `table_free`, default OFF):**
+- `config.py`: `table_free: bool = False` (config-borne → reaches TP workers). `validator.py`:
+  `table_free` requires `scorer_norm="off"` (the absorbed identity holds only there — cosine/hybrid
+  rejected with a clear error).
+- `selector.py`: `bind_runtime_data` accepts a table-free bind (`_bind_table_free`) — binds the
+  channel mask + the pre-installed `absorbed_w_sel`, NO table; `retrieve_topk` routes to the absorbed
+  selection when `table_free`.
+- `selection_kernel.py`: `absorbed_topk_select` (score the resident latent → reduce → mask → top-k);
+  `retrieve_topk_graph_safe` gains a `table_free` early branch that writes the RETURNED
+  `out_indices`/`out_lengths` from the absorbed score and skips all table scoring/labels-gather. Score
+  buffer shape `[max_bs, max_seq_len]` unchanged; rope dims excluded by construction (no-PE queries +
+  K-noPE W_UK rows).
+- `deepseek_v2.py`: builds `selector.absorbed_w_sel` at bind when `table_free OR recall_oracle`; skips
+  the `TokenLabelTable` allocation under `table_free`; per-step reads the resident fp8 latent +
+  per-128-block scales and threads `table_free` into the selector call. The non-None-table precondition
+  accepts the table-free bind.
+- `pool_configurator.py`: `_compute_cell_size` omits the `TokenLabelTable` reservation under
+  `table_free` (the freed bytes become tokens — the capacity payoff, measured in a serving slice).
+
+**Default-OFF byte-identicality (the AC-7 safety property, independently re-verified):** every changed
+site reduces to the original when `table_free=False` (and `recall_oracle=False`) — `table = None if
+table_free else <original>`; the alloc/precondition guards become `not table_free`; the
+`retrieve_topk_graph_safe` table-free block is a guarded early return; pool cell-size reserves the
+table exactly as before. The 427 pre-existing tests (table path) pass unchanged + 13 new `table_free`
+tests (selection == table path; validation rejects cosine/hybrid; pool-sizing omits the table term
+under table_free and is unchanged off). Full DS suite 442 pass. No shared-default behavior changed →
+no AC-7 boot this slice.
+
+**Remaining for task6** (next slices): DELETE `token_label_table.py` + `token_label_write.py` +
+the prefill label-write hook (DEC-2) once `table_free` is the validated default; the **serving capacity
+payoff @ mem 0.8** (boot readout: table-free pool grows → bs cap ≥64, AC-1.2); CUDA-graph capture-safe
+`v_h` scratch for the captured table-free path; **same-round AC-7 serving regression** (DS-off smoke +
+Case-2 + radix-ON DSA) when table_free changes the served default. Then task7 (radix-on), task8 (bs64
+tax), task9 (locked AC-11 sweep).

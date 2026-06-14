@@ -12062,6 +12062,7 @@ class TestDSIndexerCacheGate(unittest.TestCase):
         signature_dtype: str = None,
         label_dim: int = 16,
         num_heads: int = 4,
+        table_free: bool = False,
     ):
         from types import SimpleNamespace
         from unittest import mock
@@ -12081,7 +12082,7 @@ class TestDSIndexerCacheGate(unittest.TestCase):
             )
             sa_kwargs.update(
                 _double_sparsity_parsed_config=SimpleNamespace(
-                    signature_dtype=signature_dtype
+                    signature_dtype=signature_dtype, table_free=table_free
                 ),
                 _double_sparsity_channel_mask=SimpleNamespace(label_dim=label_dim),
             )
@@ -12140,6 +12141,27 @@ class TestDSIndexerCacheGate(unittest.TestCase):
         self.assertEqual(
             self._cell_size(ds_on=True, hisparse=True, signature_dtype="fp16"),
             self._cell_size(ds_on=False),
+        )
+
+    def test_cell_size_table_free_omits_table_term(self):
+        # Table-free scores the resident latent directly, so the per-token
+        # TokenLabelTable reservation is dropped. The byte delta vs the table path
+        # is exactly the fp16 table term (signatures + `written` bitmap) =
+        # num_layers*num_heads*label_dim*2 + num_layers = 2*4*16*2 + 2 = 258.
+        with_table = self._cell_size(ds_on=True, signature_dtype="fp16")
+        table_free = self._cell_size(
+            ds_on=True, signature_dtype="fp16", table_free=True
+        )
+        self.assertEqual(with_table - table_free, 2 * 4 * 16 * 2 + 2)
+        # And table-free matches the no-table (indexer-only) cell exactly.
+        self.assertEqual(table_free, self._cell_size(ds_on=True))
+
+    def test_cell_size_table_free_off_is_byte_identical(self):
+        # table_free=False must leave the cell size byte-identical to omitting the
+        # flag entirely (the default-off byte-identicality contract).
+        self.assertEqual(
+            self._cell_size(ds_on=True, signature_dtype="fp16", table_free=False),
+            self._cell_size(ds_on=True, signature_dtype="fp16"),
         )
 
 
@@ -12493,6 +12515,205 @@ class TestAbsorbedLatentLogical(unittest.TestCase):
             0.9,
             f"fp8 pool-layout vs full-precision top-{top_k} overlap {overlap:.4f}",
         )
+
+
+class TestTableFreeConfigAndValidation(unittest.TestCase):
+    """table_free config parse + the scorer_norm='off' validation gate. Default
+    off ⇒ nothing new (byte-identical); the absorbed identity only holds for
+    scorer_norm='off', so cosine/hybrid + table_free is rejected."""
+
+    def test_table_free_defaults_off(self):
+        cfg = parse_double_sparsity_config(_valid_payload())
+        self.assertFalse(cfg.table_free)
+
+    def test_table_free_parses_true(self):
+        payload = (
+            '{"channel_mask_path": "/tmp/cm.safetensors", "page_size": 64, '
+            '"table_free": true}'
+        )
+        cfg = parse_double_sparsity_config(payload)
+        self.assertTrue(cfg.table_free)
+
+    def test_table_free_coerces_string(self):
+        payload = (
+            '{"channel_mask_path": "/tmp/cm.safetensors", "page_size": 64, '
+            '"table_free": "yes"}'
+        )
+        self.assertTrue(parse_double_sparsity_config(payload).table_free)
+
+    def _args(self, payload):
+        return SimpleNamespace(
+            enable_double_sparsity=True,
+            enable_hisparse=False,
+            enable_hierarchical_cache=False,
+            disaggregation_mode=None,
+            double_sparsity_config=payload,
+            page_size=64,
+            disable_cuda_graph=True,
+        )
+
+    def _payload(self, *, scorer_norm, recall_oracle=False):
+        return (
+            '{"channel_mask_path": "/tmp/cm.safetensors", "page_size": 64, '
+            f'"table_free": true, "scorer_norm": "{scorer_norm}"'
+            + (', "recall_oracle": true' if recall_oracle else "")
+            + "}"
+        )
+
+    def test_table_free_rejects_cosine(self):
+        with self.assertRaises(ValueError) as ctx:
+            validate_double_sparsity(self._args(self._payload(scorer_norm="cosine")))
+        self.assertIn("scorer_norm='off'", str(ctx.exception))
+
+    def test_table_free_rejects_hybrid(self):
+        with self.assertRaises(ValueError) as ctx:
+            validate_double_sparsity(self._args(self._payload(scorer_norm="hybrid")))
+        self.assertIn("scorer_norm='off'", str(ctx.exception))
+
+    def test_table_free_off_norm_passes_the_norm_gate(self):
+        # scorer_norm='off' must clear the table_free norm gate. It later trips a
+        # DIFFERENT check (no real channel-mask file on disk), proving the norm
+        # gate itself did not reject it.
+        with self.assertRaises(Exception) as ctx:
+            validate_double_sparsity(self._args(self._payload(scorer_norm="off")))
+        self.assertNotIn("scorer_norm='off'", str(ctx.exception))
+
+    def test_table_free_with_recall_oracle_compatible(self):
+        # table_free + recall_oracle share the scorer_norm='off' identity; the norm
+        # gate must not reject the combination.
+        with self.assertRaises(Exception) as ctx:
+            validate_double_sparsity(
+                self._args(self._payload(scorer_norm="off", recall_oracle=True))
+            )
+        self.assertNotIn("scorer_norm='off'", str(ctx.exception))
+
+
+class TestTableFreeSelectionEqualsTable(TestAbsorbedLatentLogical):
+    """The table-free top-K equals the table top-K on a fixture where both paths
+    are available. For scorer_norm='off' the absorbed score IS the table score
+    (already proven by the parent class), so the selections must match — this is
+    the production-flip equivalence the table-free path rests on. Reuses the parent's
+    `_logical_fixture` (req_to_token paging, an unwritten in-range hole)."""
+
+    def test_table_free_topk_equals_table_topk(self):
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            absorbed_topk_select,
+            retrieve_topk_via_labels,
+        )
+
+        f = self._logical_fixture()
+        top_k = 2
+
+        # Table path: score the materialized TokenLabelTable signatures.
+        idx_table, len_table = retrieve_topk_via_labels(
+            queries=f["queries"],
+            token_signatures=f["signatures"].unsqueeze(0),
+            written=f["written"].unsqueeze(0),
+            channel_selection=f["sel"].unsqueeze(0),
+            channel_weights=f["weights"].unsqueeze(0),
+            layer_id=0,
+            max_top_k=top_k,
+            req_pool_indices=f["req_pool_indices"],
+            req_to_token=f["req_to_token"],
+            seq_lens=f["seq_lens"],
+            max_seq_len=f["max_seq_len"],
+            scorer_norm="off",
+        )
+
+        # Table-free path: select from the absorbed-latent score (dequantized c_kv
+        # reference; `written` masks the in-range hole).
+        idx_tf, len_tf = absorbed_topk_select(
+            queries=f["queries"],
+            absorbed_w_sel=f["w_sel"],
+            channel_selection_layer=f["sel"],
+            channel_weights_layer=f["weights"],
+            req_pool_indices=f["req_pool_indices"],
+            req_to_token=f["req_to_token"],
+            seq_lens=f["seq_lens"],
+            max_seq_len=f["max_seq_len"],
+            max_top_k=top_k,
+            written_layer=f["written"],
+            absorbed_latent=f["c_kv"],
+        )
+
+        # Identical selection (exact overlap) and identical valid lengths.
+        self.assertEqual(self._overlap(idx_table, idx_tf, top_k), 1.0)
+        torch.testing.assert_close(idx_tf, idx_table)
+        torch.testing.assert_close(len_tf, len_table)
+        # The unwritten in-range hole is excluded by both.
+        self.assertNotIn(
+            f["hole_pos"], [int(x) for x in idx_tf[f["hole_req"]].tolist()]
+        )
+
+    def test_table_free_via_selector_retrieve_topk(self):
+        # End-to-end through the selector: a table-free bind (no TokenLabelTable)
+        # routes retrieve_topk to the absorbed path and returns the table top-K.
+        from sglang.srt.layers.attention.double_sparsity.selector import (
+            DoubleSparsitySelector,
+        )
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            retrieve_topk_via_labels,
+        )
+
+        f = self._logical_fixture()
+        H = int(f["sel"].shape[0])
+        nope = int(f["queries"].shape[-1])
+        top_k = 2
+
+        cfg = parse_double_sparsity_config(
+            '{"channel_mask_path": "/tmp/cm.safetensors", "page_size": 64, '
+            f'"top_k": {top_k}, "table_free": true}}'
+        )
+        sel = DoubleSparsitySelector(
+            cfg, num_local_heads=H, head_dim=nope, device=torch.device("cpu")
+        )
+        # Channel mask: per-layer [num_layers, H, label_dim]; this fixture is 1
+        # layer, so wrap the [H, label_dim] slice.
+        channel_mask = SimpleNamespace(
+            channel_selection=f["sel"].unsqueeze(0).to(torch.int32),
+            channel_weights=f["weights"].unsqueeze(0).to(torch.float32),
+            label_dim=int(f["sel"].shape[-1]),
+        )
+        sel.absorbed_w_sel = f["w_sel"]
+        sel.bind_runtime_data(token_label_table=None, channel_mask=channel_mask)
+        self.assertFalse(sel.IS_PLACEHOLDER)
+        self.assertIsNone(sel.token_label_table)
+
+        # True table-free has no per-slot `written` table, so the selector path
+        # masks validity via per-request `sparse_mask` instead. Build a mask that
+        # marks the unwritten in-range hole invalid (what the table's `written`
+        # does), so the selector reproduces the table selection exactly.
+        bs = int(f["seq_lens"].numel())
+        sparse_mask = torch.zeros(bs, f["max_seq_len"], dtype=torch.bool)
+        for r in range(bs):
+            sparse_mask[r, : int(f["seq_lens"][r])] = True
+        sparse_mask[f["hole_req"], f["hole_pos"]] = False
+
+        idx_tf, _ = sel.retrieve_topk(
+            queries=f["queries"],
+            layer_id=0,
+            req_pool_indices=f["req_pool_indices"],
+            sparse_mask=sparse_mask,
+            seq_lens=f["seq_lens"],
+            req_to_token=f["req_to_token"],
+            max_seq_len=f["max_seq_len"],
+            absorbed_latent=f["c_kv"],
+        )
+        idx_table, _ = retrieve_topk_via_labels(
+            queries=f["queries"],
+            token_signatures=f["signatures"].unsqueeze(0),
+            written=f["written"].unsqueeze(0),
+            channel_selection=f["sel"].unsqueeze(0),
+            channel_weights=f["weights"].unsqueeze(0),
+            layer_id=0,
+            max_top_k=top_k,
+            req_pool_indices=f["req_pool_indices"],
+            req_to_token=f["req_to_token"],
+            seq_lens=f["seq_lens"],
+            max_seq_len=f["max_seq_len"],
+            scorer_norm="off",
+        )
+        self.assertEqual(self._overlap(idx_table, idx_tf, top_k), 1.0)
 
 
 @unittest.skipUnless(

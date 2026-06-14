@@ -182,7 +182,14 @@ class DefaultPoolConfigurator(MemoryPoolConfigurator):
                     mr.server_args, "_double_sparsity_parsed_config", None
                 )
                 mask = getattr(mr.server_args, "_double_sparsity_channel_mask", None)
-                if ds_parsed is not None and mask is not None:
+                # Table-free selection scores the resident latent directly, so the
+                # TokenLabelTable is never allocated — drop its per-token reservation
+                # (the freed bytes become admitted tokens). Default off ⇒ this term
+                # is reserved exactly as before (byte-identical cell size).
+                table_free = ds_parsed is not None and getattr(
+                    ds_parsed, "table_free", False
+                )
+                if ds_parsed is not None and mask is not None and not table_free:
                     num_label_layers = model_config.num_hidden_layers
                     num_local_heads = model_config.get_num_attention_heads(tp_size)
                     label_dim = int(mask.label_dim)

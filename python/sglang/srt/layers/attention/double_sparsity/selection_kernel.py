@@ -1527,6 +1527,101 @@ def _logical_score_triton(
     )
 
 
+def absorbed_topk_select(
+    *,
+    queries: torch.Tensor,
+    absorbed_w_sel: torch.Tensor,
+    channel_selection_layer: torch.Tensor,
+    channel_weights_layer: torch.Tensor,
+    req_pool_indices: torch.Tensor,
+    req_to_token: torch.Tensor,
+    seq_lens: torch.Tensor,
+    max_seq_len: int,
+    max_top_k: int,
+    written_layer: Optional[torch.Tensor] = None,
+    absorbed_latent_fp8: Optional[torch.Tensor] = None,
+    absorbed_latent_scales: Optional[torch.Tensor] = None,
+    absorbed_latent: Optional[torch.Tensor] = None,
+    per_request_valid: Optional[torch.Tensor] = None,
+    process_group=None,
+    reduce_ca=None,
+    score_reduce_bf16: bool = False,
+    head_agg: str = "max",
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Table-free selection: score → all-reduce → per-request mask → top-K → ascend,
+    from the resident MLA latent with NO TokenLabelTable.
+
+    ``score[b, t] = agg_h ( v_h[b] · c_kv[t] )`` for ``scorer_norm="off"`` — the
+    absorbed-latent identity the recall oracle already validated. The rope dims are
+    excluded by construction: ``absorbed_w_sel`` is the K-noPE ``W_UK`` rows (built
+    from ``kv_b_proj`` sliced to ``[:qk_nope_head_dim]``) and ``queries`` is the
+    no-PE query, so the score never touches a positional channel.
+
+    Reads the paged fp8 latent (``absorbed_latent_fp8`` + ``absorbed_latent_scales``,
+    the resident pool bytes) on CUDA, or a dequantized ``absorbed_latent`` ``[T, lora]``
+    on the CPU reference path. Returns ``(selected_indices, valid_lengths)`` —
+    sequence-ascending int32, ``-1`` padded.
+    """
+    if absorbed_latent_fp8 is not None and absorbed_latent_scales is not None:
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent_kernel import (
+            absorbed_latent_score_logical_paged,
+        )
+
+        scores = absorbed_latent_score_logical_paged(
+            queries,
+            absorbed_latent_fp8,
+            absorbed_latent_scales,
+            absorbed_w_sel,
+            channel_selection_layer,
+            channel_weights_layer,
+            req_pool_indices,
+            req_to_token,
+            seq_lens,
+            max_seq_len,
+            written=written_layer,
+            head_agg=head_agg,
+        )
+    elif absorbed_latent is not None:
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
+            absorbed_latent_score_logical,
+        )
+
+        scores = absorbed_latent_score_logical(
+            queries,
+            absorbed_latent,
+            absorbed_w_sel,
+            channel_selection_layer,
+            channel_weights_layer,
+            req_pool_indices,
+            req_to_token,
+            seq_lens,
+            max_seq_len,
+            written=written_layer,
+            head_agg=head_agg,
+        )
+    else:
+        raise ValueError(
+            "absorbed_topk_select requires either (absorbed_latent_fp8, "
+            "absorbed_latent_scales) for the paged path or absorbed_latent for the "
+            "dequantized reference path."
+        )
+
+    scores = reduce_token_scores(
+        scores,
+        process_group=process_group,
+        reduce_ca=reduce_ca,
+        use_bf16=score_reduce_bf16,
+    )
+    if per_request_valid is not None:
+        if per_request_valid.shape != scores.shape:
+            raise ValueError(
+                f"per_request_valid shape {tuple(per_request_valid.shape)} must "
+                f"match absorbed score shape {tuple(scores.shape)}."
+            )
+        scores = scores.masked_fill(~per_request_valid.to(torch.bool), float("-inf"))
+    return select_topk_sequence_order(scores, max_top_k)
+
+
 def retrieve_topk_graph_safe(
     *,
     queries: torch.Tensor,
@@ -1569,6 +1664,8 @@ def retrieve_topk_graph_safe(
     absorbed_latent_fp8: Optional[torch.Tensor] = None,
     absorbed_latent_scales: Optional[torch.Tensor] = None,
     absorbed_w_sel: Optional[torch.Tensor] = None,
+    absorbed_latent: Optional[torch.Tensor] = None,
+    table_free: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Capture-safe retrieve_topk that writes results into caller-owned buffers.
 
@@ -1590,6 +1687,49 @@ def retrieve_topk_graph_safe(
     """
     bs = req_pool_indices.shape[0]
     device = queries.device
+
+    # Table-free selection: the RETURNED top-K comes from the absorbed-latent
+    # score read straight off the resident MLA latent — no TokenLabelTable scoring,
+    # no labels gather. The absorbed identity holds only for scorer_norm="off"
+    # (validate_double_sparsity enforces it), and the rope dims are excluded by
+    # construction (no-PE queries + K-noPE W_UK rows in absorbed_w_sel). Off the
+    # table_free path this whole block is skipped (default-off byte-identical).
+    if table_free:
+        assert scorer_norm == "off", (
+            "table_free selection requires scorer_norm='off' (the absorbed-latent "
+            f"identity only holds there); got {scorer_norm!r}."
+        )
+        assert absorbed_w_sel is not None, (
+            "table_free selection requires absorbed_w_sel (the bind-time K-noPE "
+            "W_UK projection)."
+        )
+        indices, valid = absorbed_topk_select(
+            queries=queries,
+            absorbed_w_sel=absorbed_w_sel,
+            channel_selection_layer=channel_selection[layer_id],
+            channel_weights_layer=channel_weights[layer_id],
+            req_pool_indices=req_pool_indices,
+            req_to_token=req_to_token,
+            seq_lens=seq_lens,
+            max_seq_len=max_seq_len,
+            max_top_k=max_top_k,
+            written_layer=written[layer_id] if written is not None else None,
+            absorbed_latent_fp8=absorbed_latent_fp8,
+            absorbed_latent_scales=absorbed_latent_scales,
+            absorbed_latent=absorbed_latent,
+            per_request_valid=per_request_valid,
+            process_group=process_group,
+            reduce_ca=reduce_ca,
+            score_reduce_bf16=score_reduce_bf16,
+            head_agg=head_agg,
+        )
+        mtk = indices.shape[1]
+        out_indices[:bs, :mtk].copy_(indices)
+        if mtk < out_indices.shape[1]:
+            out_indices[:bs, mtk:].fill_(-1)
+        out_lengths[:bs].copy_(valid)
+        return out_indices, out_lengths
+
     use_triton_fast = (
         _TRITON_AVAILABLE
         and device.type == "cuda"

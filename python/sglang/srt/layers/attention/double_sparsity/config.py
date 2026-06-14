@@ -39,6 +39,7 @@ _ALLOWED_FIELDS = {
     "anchor_mode",
     "anchor_budget",
     "recall_oracle",
+    "table_free",
     "selection_capture",
     "selector_width_buckets",
     "selector_width_overflow_policy",
@@ -65,6 +66,13 @@ _ALLOWED_FIELDS = {
 #   illegal under graph capture). NOTE: this disables graph CAPTURE, but the
 #   selector still runs the graph-safe path (retrieve_topk_graph_safe) eagerly —
 #   the oracle hook lives there, not in the eager retrieve_topk_via_labels path.
+# table_free: config-borne enable for the table-free absorbed-latent selection
+#   path (off by default; byte-identical selection when off). When on, the
+#   selector drops the TokenLabelTable scoring and instead selects from the
+#   absorbed-latent score (score = max_h v_h · c_kv, scorer_norm="off" only) read
+#   straight off the resident MLA latent — the score the recall oracle already
+#   validated. Config-borne so it reaches TP workers. Requires scorer_norm="off"
+#   (the absorbed identity only holds there; see validate_double_sparsity).
 # selection_capture: config-borne enable for the per-(layer, decode-step)
 #   selection dump (selected_indices + valid_lengths). When on, the graph state
 #   allocates per-layer capture buffers, the selector mirrors every layer's
@@ -142,6 +150,7 @@ class DoubleSparsityConfig:
     anchor_mode: str = _DEFAULT_ANCHOR_MODE
     anchor_budget: int = _DEFAULT_ANCHOR_BUDGET
     recall_oracle: bool = False
+    table_free: bool = False
     selection_capture: bool = False
     selector_width_buckets: List[int] = field(
         default_factory=lambda: list(_DEFAULT_SELECTOR_WIDTH_BUCKETS)
@@ -182,6 +191,11 @@ class DoubleSparsityConfig:
             raise ValueError(
                 f"Double Sparsity 'recall_oracle' must be a boolean, "
                 f"got {self.recall_oracle!r}."
+            )
+        if not isinstance(self.table_free, bool):
+            raise ValueError(
+                f"Double Sparsity 'table_free' must be a boolean, "
+                f"got {self.table_free!r}."
             )
         if not isinstance(self.selection_capture, bool):
             raise ValueError(
@@ -369,6 +383,7 @@ def parse_double_sparsity_config(payload: str) -> DoubleSparsityConfig:
         anchor_mode=str(data.get("anchor_mode", _DEFAULT_ANCHOR_MODE)),
         anchor_budget=int(data.get("anchor_budget", _DEFAULT_ANCHOR_BUDGET)),
         recall_oracle=_coerce_bool(data.get("recall_oracle", False), "recall_oracle"),
+        table_free=_coerce_bool(data.get("table_free", False), "table_free"),
         selection_capture=_coerce_bool(
             data.get("selection_capture", False), "selection_capture"
         ),

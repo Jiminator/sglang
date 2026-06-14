@@ -173,6 +173,22 @@ def validate_double_sparsity(server_args: "ServerArgs") -> None:
             "recall_oracle."
         )
 
+    # Table-free absorbed-latent selection gate. The absorbed identity
+    # (score = max_h v_h · c_kv) reproduces the table score ONLY for
+    # scorer_norm="off" — the cosine/hybrid norms operate on the materialized
+    # per-head signature, which the table-free path never builds. Reject them so
+    # table_free can never silently select with the wrong score. (table_free +
+    # recall_oracle stay compatible: the oracle's side-by-side absorbed
+    # diagnostic shares the same scorer_norm="off" identity.)
+    if getattr(config, "table_free", False) and config.scorer_norm != "off":
+        raise ValueError(
+            f"Double Sparsity table_free requires scorer_norm='off', got "
+            f"scorer_norm={config.scorer_norm!r}. The absorbed-latent identity "
+            "(score = max_h v_h · c_kv) only reproduces the table score for "
+            "scorer_norm='off'; cosine/hybrid operate on the materialized "
+            "signature the table-free path does not build."
+        )
+
     # Page size pairing (config vs server) + supported set.
     server_page_size = getattr(server_args, "page_size", None)
     if config.page_size not in _SUPPORTED_PAGE_SIZES:
