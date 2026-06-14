@@ -114,6 +114,48 @@ def absorbed_latent_v(
     return torch.einsum("bhd,hdl->bhl", q_sel, w_sel.to(torch.float32))
 
 
+def absorbed_latent_v_into(
+    out: torch.Tensor,
+    queries: torch.Tensor,
+    w_sel: torch.Tensor,
+    channel_selection: torch.Tensor,
+    channel_weights: torch.Tensor,
+    *,
+    scratch_qsel: torch.Tensor,
+) -> torch.Tensor:
+    """Allocation-free :func:`absorbed_latent_v` — writes ``v_h`` into a caller-owned
+    ``out[:bs]`` (fp32 ``[bs_buf, H, kv_lora_rank]``) for the graph-safe path.
+
+    Same value as :func:`absorbed_latent_v`: ``v_h[b,h,l] = Σ_d (w_c·q_c)·w_sel[h,d,l]``.
+    Every step writes into caller-owned scratch (``gather(out=)``, ``mul_``, then a
+    head-batched ``bmm(out=)`` over a transposed view of ``out``), so after warmup the
+    caching-allocator counter does not grow — CUDA-graph safe. ``scratch_qsel`` is
+    fp32 ``[bs_buf, H, label_dim]`` for the weighted-gather; ``channel_selection`` must
+    be int64 here (the caller pre-copies the int32 layer mask into an int64 scratch so
+    ``gather`` does no per-step ``.long()`` allocation).
+    """
+    bs = queries.shape[0]
+    out_v = out[:bs]  # [bs, H, lora]
+    label_dim = int(channel_selection.shape[1])
+    q_sel = scratch_qsel[:bs, :, :label_dim]  # [bs, H, label_dim]
+    # weighted query at the selected channels: w_c · q_{S_h}  -> [bs, H, label_dim].
+    torch.gather(
+        queries.to(torch.float32),
+        2,
+        channel_selection.unsqueeze(0).expand(bs, -1, -1),
+        out=q_sel,
+    )
+    q_sel.mul_(channel_weights.to(torch.float32).unsqueeze(0))
+    # v_h = Σ_d (w_c·q_c) · w_sel[h, d, :] as a per-head bmm: batch the head axis so
+    # the contraction is [H, bs, label_dim] @ [H, label_dim, lora] -> [H, bs, lora],
+    # written straight into a head-major (transposed) view of out_v with out=.
+    q_hbd = q_sel.transpose(0, 1)  # [H, bs, label_dim] (view)
+    w_sel_f = w_sel.to(torch.float32)  # [H, label_dim, lora]
+    v_hbl = out_v.transpose(0, 1)  # [H, bs, lora] (view of out_v)
+    torch.bmm(q_hbd, w_sel_f, out=v_hbl)
+    return out_v
+
+
 def absorbed_latent_score(
     queries: torch.Tensor,
     c_kv: torch.Tensor,

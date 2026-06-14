@@ -493,6 +493,11 @@ class DeepseekSparseAttnBackend(
         # bf16 transport for the cross-TP score reduce (score_reduce_dtype);
         # sizes the bf16 scratch in ds_graph_state.
         self.ds_score_reduce_bf16: bool = False
+        # Table-free (absorbed-latent) selection: when on, ds_graph_state carries
+        # the absorbed-latent scratch (v_h / weighted-query / int64 mask) so the
+        # graph-safe table-free path is allocation-free. Off ⇒ table path, no
+        # extra scratch (byte-identical).
+        self.ds_table_free: bool = False
         # Compact DS selector widths to capture as extra graph variants
         # (config-borne; empty = full width only). The CUDA-graph runner reads
         # this to build its selector-width ladder.
@@ -525,6 +530,7 @@ class DeepseekSparseAttnBackend(
                 self.ds_score_reduce_bf16 = (
                     getattr(ds_cfg, "score_reduce_dtype", "bf16") == "bf16"
                 )
+                self.ds_table_free = bool(getattr(ds_cfg, "table_free", False))
                 self.ds_selector_width_buckets = list(
                     getattr(ds_cfg, "selector_width_buckets", []) or []
                 )
@@ -559,6 +565,14 @@ class DeepseekSparseAttnBackend(
                 self.ds_selection_capture_layers = int(_sig.shape[0])
         self._ds_channel_selection = getattr(
             model_runner.server_args, "_ds_channel_selection", None
+        )
+        # Mask channel count (label_dim) for the table-free absorbed scratch —
+        # derived from the published channel selection ([L, H, label_dim]); 0
+        # leaves the scratch unallocated (and the table-free path falls back).
+        self.ds_label_dim: int = (
+            int(self._ds_channel_selection.shape[-1])
+            if self._ds_channel_selection is not None
+            else 0
         )
         # Published by finalize_double_sparsity_bind() (which runs before this
         # backend is constructed). Fall back to the model's own no-PE head width
@@ -915,6 +929,10 @@ class DeepseekSparseAttnBackend(
                 score_reduce_bf16=self.ds_score_reduce_bf16,
                 enable_lifted_budget_decode=self.ds_lifted_budget_decode,
                 lifted_q_pad_heads=(128 if self.device_sm_major >= 10 else 64),
+                table_free=self.ds_table_free,
+                num_local_heads=self.num_q_heads,
+                label_dim=self.ds_label_dim,
+                kv_lora_rank=self.kv_lora_rank,
                 device=cache_seqlens_int32.device,
             )
 
@@ -1127,6 +1145,10 @@ class DeepseekSparseAttnBackend(
                 score_reduce_bf16=self.ds_score_reduce_bf16,
                 enable_lifted_budget_decode=self.ds_lifted_budget_decode,
                 lifted_q_pad_heads=(128 if self.device_sm_major >= 10 else 64),
+                table_free=self.ds_table_free,
+                num_local_heads=self.num_q_heads,
+                label_dim=self.ds_label_dim,
+                kv_lora_rank=self.kv_lora_rank,
                 device=device,
             )
             self._ds_graph_state_by_width[width] = state

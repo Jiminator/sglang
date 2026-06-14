@@ -1666,6 +1666,9 @@ def retrieve_topk_graph_safe(
     absorbed_w_sel: Optional[torch.Tensor] = None,
     absorbed_latent: Optional[torch.Tensor] = None,
     table_free: bool = False,
+    scratch_absorbed_v: Optional[torch.Tensor] = None,  # fp32 [max_bs, H, kv_lora_rank]
+    scratch_absorbed_qsel: Optional[torch.Tensor] = None,  # fp32 [max_bs, H, label_dim]
+    scratch_absorbed_sel_i64: Optional[torch.Tensor] = None,  # int64 [H, label_dim]
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Capture-safe retrieve_topk that writes results into caller-owned buffers.
 
@@ -1703,6 +1706,25 @@ def retrieve_topk_graph_safe(
             "table_free selection requires absorbed_w_sel (the bind-time K-noPE "
             "W_UK projection)."
         )
+
+    use_triton_fast = (
+        _TRITON_AVAILABLE
+        and device.type == "cuda"
+        and scratch_scores is not None
+        and scratch_topk_values is not None
+        and scratch_topk_indices is not None
+        and scratch_invalid_mask is not None
+        and scratch_sorted_vals is not None
+        and scratch_boundary is not None
+        and scratch_valid_i64 is not None
+        and scratch_throwaway_idx is not None
+    )
+
+    # Table-free CPU / no-scratch fallback (unit tests): the eager
+    # absorbed_topk_select scores the resident latent without the in-place
+    # graph-state scratch. The graph-safe table_free path below fills
+    # scratch_scores in place and shares the table path's reduce + radix top-k.
+    if table_free and not use_triton_fast:
         indices, valid = absorbed_topk_select(
             queries=queries,
             absorbed_w_sel=absorbed_w_sel,
@@ -1730,20 +1752,7 @@ def retrieve_topk_graph_safe(
         out_lengths[:bs].copy_(valid)
         return out_indices, out_lengths
 
-    use_triton_fast = (
-        _TRITON_AVAILABLE
-        and device.type == "cuda"
-        and scratch_scores is not None
-        and scratch_topk_values is not None
-        and scratch_topk_indices is not None
-        and scratch_invalid_mask is not None
-        and scratch_sorted_vals is not None
-        and scratch_boundary is not None
-        and scratch_valid_i64 is not None
-        and scratch_throwaway_idx is not None
-    )
-
-    if not use_triton_fast:
+    if not table_free and not use_triton_fast:
         indices, valid = retrieve_topk_via_labels(
             queries=queries,
             token_signatures=token_signatures,
@@ -1780,8 +1789,6 @@ def retrieve_topk_graph_safe(
     # may be fp32 / fp16 / bf16 — the kernel casts via tl.load(...).to(tl.float32).
     sel_layer = channel_selection[layer_id]
     w_layer = channel_weights[layer_id]
-    sig_layer = token_signatures[layer_id]
-    written_layer = written[layer_id]
     scale_layer = token_scales[layer_id] if token_scales is not None else None
     assert sel_layer.dtype == torch.int32, (
         f"channel_selection must be int32, got {sel_layer.dtype}"
@@ -1811,25 +1818,67 @@ def retrieve_topk_graph_safe(
     _store_dead = (
         radix_topk_scratch is None or recall_oracle or anchor_mode != "off"
     )
-    torch.cuda.nvtx.range_push("ds_logical_score")
-    _logical_score_triton(
-        q_proj_input=queries,
-        channel_selection_layer=sel_layer,
-        channel_weights_layer=w_layer,
-        sig_layer=sig_layer,
-        written_layer=written_layer,
-        req_pool_indices=req_pool_indices,
-        req_to_token=req_to_token,
-        seq_lens=seq_lens,
-        out=scores_view,
-        max_seq_len=max_seq_len,
-        scale_layer=scale_layer,
-        scorer_norm=scorer_norm,
-        head_agg=head_agg,
-        hybrid_threshold=hybrid_threshold,
-        store_dead_neg_inf=_store_dead,
-    )
-    torch.cuda.nvtx.range_pop()
+    if table_free:
+        # Score the SAME logical positions straight from the resident fp8 latent
+        # into scratch_scores IN PLACE (no TokenLabelTable). v_h is built into
+        # scratch_absorbed_v allocation-free, then the paged absorbed kernel
+        # writes the score; from here the path is IDENTICAL to the table branch
+        # (reduce + radix top-k). The absorbed paged kernel always stores -inf
+        # over dead positions, matching _store_dead's full-width consumers.
+        assert absorbed_latent_fp8 is not None and absorbed_latent_scales is not None, (
+            "table_free graph-safe selection requires the resident fp8 latent "
+            "(absorbed_latent_fp8, absorbed_latent_scales)."
+        )
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent_kernel import (
+            absorbed_latent_score_logical_paged,
+        )
+
+        sel_i64 = None
+        if scratch_absorbed_sel_i64 is not None:
+            scratch_absorbed_sel_i64.copy_(sel_layer)
+            sel_i64 = scratch_absorbed_sel_i64
+        torch.cuda.nvtx.range_push("ds_absorbed_score")
+        absorbed_latent_score_logical_paged(
+            queries,
+            absorbed_latent_fp8,
+            absorbed_latent_scales,
+            absorbed_w_sel,
+            sel_layer,
+            w_layer,
+            req_pool_indices,
+            req_to_token,
+            seq_lens,
+            max_seq_len,
+            written=written[layer_id] if written is not None else None,
+            head_agg=head_agg,
+            out=scores_view,
+            scratch_v=scratch_absorbed_v,
+            scratch_qsel=scratch_absorbed_qsel,
+            channel_selection_i64=sel_i64,
+        )
+        torch.cuda.nvtx.range_pop()
+    else:
+        sig_layer = token_signatures[layer_id]
+        written_layer = written[layer_id]
+        torch.cuda.nvtx.range_push("ds_logical_score")
+        _logical_score_triton(
+            q_proj_input=queries,
+            channel_selection_layer=sel_layer,
+            channel_weights_layer=w_layer,
+            sig_layer=sig_layer,
+            written_layer=written_layer,
+            req_pool_indices=req_pool_indices,
+            req_to_token=req_to_token,
+            seq_lens=seq_lens,
+            out=scores_view,
+            max_seq_len=max_seq_len,
+            scale_layer=scale_layer,
+            scorer_norm=scorer_norm,
+            head_agg=head_agg,
+            hybrid_threshold=hybrid_threshold,
+            store_dead_neg_inf=_store_dead,
+        )
+        torch.cuda.nvtx.range_pop()
 
     # The radix selector upcasts score loads in-register, so the reduced bf16
     # buffer can be its authoritative input: the compared values are
@@ -1997,7 +2046,7 @@ def retrieve_topk_graph_safe(
                 req_to_token,
                 seq_lens,
                 max_seq_len,
-                written=written[layer_id],
+                written=written[layer_id] if written is not None else None,
                 head_agg=head_agg,
             )
             absorbed_scores = reduce_token_scores(

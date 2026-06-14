@@ -2511,10 +2511,30 @@ class DeepseekV2AttentionMLA(
                         absorbed_latent_scales=_absorbed_latent_scales,
                         absorbed_w_sel=_selector.absorbed_w_sel,
                         table_free=_table_free,
+                        scratch_absorbed_v=getattr(
+                            _ds_graph_state, "scratch_absorbed_v", None
+                        ),
+                        scratch_absorbed_qsel=getattr(
+                            _ds_graph_state, "scratch_absorbed_qsel", None
+                        ),
+                        scratch_absorbed_sel_i64=getattr(
+                            _ds_graph_state, "scratch_absorbed_sel_i64", None
+                        ),
                     )
                     selected_indices = _ds_graph_state.selected_indices[:_bs]
                     valid_lengths = _ds_graph_state.valid_lengths[:_bs]
                 else:
+                    # Fail closed: the eager retrieve_topk fallback does not thread
+                    # the resident fp8 latent, so table-free selection cannot score
+                    # here. The table-free path only runs through the graph-safe
+                    # retrieve_topk_graph_safe above (which reads the latent).
+                    if _table_free:
+                        raise RuntimeError(
+                            "Double Sparsity table_free requires the graph-safe "
+                            "selector path (preallocated ds_graph_state + the "
+                            "resident fp8 latent); the eager retrieve_topk fallback "
+                            "is not wired for table_free."
+                        )
                     selected_indices, valid_lengths = (
                         self.double_sparsity_selector.retrieve_topk(
                             queries=queries_for_ds,

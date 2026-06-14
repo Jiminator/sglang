@@ -111,6 +111,7 @@ if _HAS_TRITON:
         H_POW2: tl.constexpr,
         HEAD_AGG_MEAN: tl.constexpr,
         STORE_DEAD_NEG_INF: tl.constexpr,
+        HAS_WRITTEN: tl.constexpr,
         WORKERS: tl.constexpr,
     ):
         # Persistent-worker layout, identical in spirit to _logical_score_kernel:
@@ -155,10 +156,13 @@ if _HAS_TRITON:
                 ).to(tl.int64)
                 safe_phys = tl.minimum(tl.maximum(phys, 0), max_tokens - 1)
 
-                written = tl.load(written_ptr + safe_phys, mask=in_range, other=0).to(
-                    tl.int1
-                )
-                valid = pos_valid & written
+                if HAS_WRITTEN:
+                    written = tl.load(
+                        written_ptr + safe_phys, mask=in_range, other=0
+                    ).to(tl.int1)
+                    valid = pos_valid & written
+                else:
+                    valid = pos_valid
 
                 # Block-scale reassociation with a tensor-core MMA: per 128-wide
                 # latent block, partial[tok, h] = Σ_{l∈blk} v[h,l]·fp8(latent[tok,l])
@@ -230,6 +234,7 @@ def absorbed_score_paged_fp8(
     num_warps: int = 2,
     num_stages: int = 2,
     head_agg: str = "max",
+    out: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Paged absorbed score from the resident fp8 latent — GPU.
 
@@ -248,6 +253,9 @@ def absorbed_score_paged_fp8(
         req_pool_indices / req_to_token / seq_lens: paging, as in the production
             logical scorer.
         written: optional ``[max_tokens]`` bool; ``None`` treats all slots written.
+        out: optional pre-allocated ``[bs_buf, max_seq_len]`` fp32 destination. When
+            given, the kernel writes into ``out[:bs, :max_seq_len]`` (the graph-safe
+            zero-alloc path) instead of a fresh ``torch.empty`` (the diagnostic path).
 
     Returns:
         ``[bs, max_seq_len]`` fp32 scores (``-inf`` on unwritten / out-of-range).
@@ -265,10 +273,16 @@ def absorbed_score_paged_fp8(
     device = v.device
     if max_seq_len <= 0:
         return torch.full((bs, 1), float("-inf"), dtype=torch.float32, device=device)
-    if written is None:
-        written = torch.ones(max_tokens, dtype=torch.bool, device=device)
+    # `written is None` means treat every slot as written — drive the kernel via the
+    # HAS_WRITTEN=False constexpr instead of materializing a per-call ones tensor
+    # (a per-call torch.ones would break the graph-safe zero-alloc contract).
+    has_written = written is not None
+    written_ptr = written if has_written else v
 
-    out = torch.empty((bs, max_seq_len), dtype=torch.float32, device=device)
+    if out is None:
+        out = torch.empty((bs, max_seq_len), dtype=torch.float32, device=device)
+    else:
+        out = out[:bs, :max_seq_len]
     max_pool_len = int(req_to_token.shape[1])
     # tl.dot needs ≥16 on every tile dim; pad both the token tile and the head tile.
     desired_block = min(token_block, max(max_seq_len, 1))
@@ -282,7 +296,7 @@ def absorbed_score_paged_fp8(
         v,
         latent_fp8,
         latent_scales,
-        written,
+        written_ptr,
         req_pool_indices,
         req_to_token,
         seq_lens,
@@ -303,6 +317,7 @@ def absorbed_score_paged_fp8(
         H_POW2=h_pow2,
         HEAD_AGG_MEAN=head_agg == "mean",
         STORE_DEAD_NEG_INF=True,
+        HAS_WRITTEN=has_written,
         WORKERS=num_workers,
         num_warps=num_warps,
         num_stages=num_stages,
@@ -326,13 +341,38 @@ def absorbed_latent_score_logical_paged(
     block_size: int = 128,
     token_block: int = 128,
     head_agg: str = "max",
+    out: Optional[torch.Tensor] = None,
+    scratch_v: Optional[torch.Tensor] = None,
+    scratch_qsel: Optional[torch.Tensor] = None,
+    channel_selection_i64: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """GPU equivalent of ``absorbed_latent.absorbed_latent_score_logical`` reading
     the paged fp8 latent. Builds ``v_h`` host-side then launches the paged kernel.
-    """
-    from .absorbed_latent import absorbed_latent_v
 
-    v = absorbed_latent_v(queries, w_sel, channel_selection, channel_weights)
+    Diagnostic path (default): ``v_h`` and the score are freshly allocated.
+    Graph-safe path: ``scratch_v`` / ``scratch_qsel`` / ``channel_selection_i64``
+    (the int64 layer mask) build ``v_h`` allocation-free, and ``out`` receives the
+    score in place — so after warmup the call grows no caching-allocator counter.
+    """
+    if (
+        scratch_v is not None
+        and scratch_qsel is not None
+        and channel_selection_i64 is not None
+    ):
+        from .absorbed_latent import absorbed_latent_v_into
+
+        v = absorbed_latent_v_into(
+            scratch_v,
+            queries,
+            w_sel,
+            channel_selection_i64,
+            channel_weights,
+            scratch_qsel=scratch_qsel,
+        )
+    else:
+        from .absorbed_latent import absorbed_latent_v
+
+        v = absorbed_latent_v(queries, w_sel, channel_selection, channel_weights)
     return absorbed_score_paged_fp8(
         v,
         latent_fp8,
@@ -345,4 +385,5 @@ def absorbed_latent_score_logical_paged(
         block_size=block_size,
         token_block=token_block,
         head_agg=head_agg,
+        out=out,
     )

@@ -5,7 +5,17 @@
 
 ## 1. Current state summary
 
-- **M0 COMPLETE (Rounds 0–4); M1 (task3+task4) COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 IN PROGRESS (R17 slice 1).**
+- **M0 COMPLETE (Rounds 0–4); M1 (task3+task4) COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 IN PROGRESS (R17 ABI + R18 capture-safe).**
+- **R18 — task6: the table-free graph-safe path is now CUDA-graph capturable (allocation-free).** Codex
+  R17's CUDA probe found `retrieve_topk_graph_safe(table_free=True)` did 34 allocations (it called the
+  allocating `absorbed_topk_select` detour). Rewrote it to fill the pre-allocated `scratch_scores` in
+  place (new `scratch_absorbed_v`/`_qsel`/`_sel_i64` in `DSGraphState`; `absorbed_latent_v_into`
+  zero-alloc `v_h` build; `absorbed_score_paged_fp8(out=...)` + `HAS_WRITTEN` constexpr) then reuse the
+  table path's existing in-place reduce + radix top-k. **`assert_no_alloc_in_region`: 34 → 0** (eager +
+  captured-replay, bit-equal). `capture_decode_step` handles table_free; the eager fallback fails closed
+  (no bare ValueError). All `table_free`-gated → DSA default + DS table path byte-identical (SHA-256
+  match; dsa_backend `ds_table_free=False` → no absorbed scratch). +5 tests; full DS suite 447 pass;
+  black-clean. (§11)
 - **R17 — task6 slice 1: table-free latent selector ABI (config-gated, default OFF).** New `table_free`
   config: when on, the selector binds the absorbed state (no `TokenLabelTable`), `retrieve_topk_graph_safe`
   returns the production top-k from the absorbed-latent score (the R16-validated scorer), pool-sizing
@@ -645,9 +655,21 @@ tests (selection == table path; validation rejects cosine/hybrid; pool-sizing om
 under table_free and is unchanged off). Full DS suite 442 pass. No shared-default behavior changed →
 no AC-7 boot this slice.
 
+**Landed R18 (capture-safe table-free path — Codex R17 blocking defect):** the table-free graph-safe
+selection is now allocation-free (CUDA-graph capturable), the blocking prerequisite for the capacity
+payoff. `DSGraphState` gains `scratch_absorbed_v [max_bs,H,kv_lora_rank]` + `_qsel` + `_sel_i64`
+(allocated only when `table_free`); `absorbed_latent_v_into` builds `v_h` zero-alloc
+(`gather(out=)` + `mul_` + head-batched `bmm(out=)`); `absorbed_score_paged_fp8(out=...)` writes
+`scratch_scores` in place (+ `HAS_WRITTEN` constexpr removes a hidden per-call `torch.ones`);
+`retrieve_topk_graph_safe(table_free=True)` then reuses the table path's in-place reduce + radix top-k
+(the `absorbed_topk_select` detour is kept only for the CPU/eager fallback). `capture_decode_step`
+handles table_free; the deepseek_v2 eager fallback fails closed. **`assert_no_alloc_in_region` 34 → 0**
+(eager + captured replay, bit-equal); table_free selection == table; `table_free=False` byte-identical
+(SHA-256 + 447 tests); dsa_backend `ds_table_free=False` ⇒ no absorbed scratch (DSA default unchanged).
+
 **Remaining for task6** (next slices): DELETE `token_label_table.py` + `token_label_write.py` +
 the prefill label-write hook (DEC-2) once `table_free` is the validated default; the **serving capacity
-payoff @ mem 0.8** (boot readout: table-free pool grows → bs cap ≥64, AC-1.2); CUDA-graph capture-safe
-`v_h` scratch for the captured table-free path; **same-round AC-7 serving regression** (DS-off smoke +
-Case-2 + radix-ON DSA) when table_free changes the served default. Then task7 (radix-on), task8 (bs64
-tax), task9 (locked AC-11 sweep).
+payoff @ mem 0.8** (boot readout: table-free pool grows → bs cap ≥64, AC-1.2 — table_free becomes the
+served default here); **same-round AC-7 serving regression** (DS-off smoke + Case-2 + radix-ON DSA) for
+the accumulated shared-surface changes (pool-sizing skip, dsa_backend graph-state, selection_kernel) —
+run bundled with the capacity boot. Then task7 (radix-on), task8 (bs64 tax), task9 (locked AC-11 sweep).

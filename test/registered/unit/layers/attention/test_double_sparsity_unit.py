@@ -3762,6 +3762,74 @@ class TestCUDAGraphCapture(unittest.TestCase):
         req_to_token = torch.tensor([[2, 3, 0, 1]], dtype=torch.int32, device=device)
         return sel, req_to_token
 
+    def _make_table_free_selector_cuda(self, device):
+        """Table-free-bound selector + the resident fp8 latent (no TokenLabelTable).
+
+        2-token fixture: latent c_kv chosen so logical top-1 = position 1.
+        Returns (selector, req_to_token, queries, fp8, scales).
+        """
+        from sglang.srt.layers.attention.double_sparsity.channel_mask import ChannelMask
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent_kernel import (
+            quantize_latent_fp8,
+        )
+        H, label_dim, nope, lora, T = 1, 1, 1, 128, 2
+        cfg_str = (
+            '{"top_k": 1, "page_size": 64, "table_free": true, '
+            '"channel_mask_path": "/tmp/x.safetensors", "device_buffer_size": 4096}'
+        )
+        cfg = parse_double_sparsity_config(cfg_str)
+        sel = DoubleSparsitySelector(
+            config=cfg, num_local_heads=H, head_dim=nope, device=device,
+        )
+        # w_sel maps the single selected channel onto a unit latent direction.
+        sel.absorbed_w_sel = torch.zeros(H, label_dim, lora, device=device)
+        sel.absorbed_w_sel[0, 0, 0] = 1.0
+        mask = ChannelMask(
+            channel_selection=torch.zeros(1, H, label_dim, dtype=torch.int32, device=device),
+            channel_weights=torch.ones(1, H, label_dim, dtype=torch.float32, device=device),
+            schema_version="1", dtype="fp8_e4m3", head_dim=nope, page_size=64,
+            label_dim=label_dim, content_sha256="test",
+        )
+        sel.bind_runtime_data(None, mask)
+        # latent: slot 0 -> 1.0, slot 1 -> 5.0 on the scored channel; queries = 1.
+        c_kv = torch.zeros(T, lora, device=device)
+        c_kv[0, 0] = 1.0
+        c_kv[1, 0] = 5.0
+        fp8, scales = quantize_latent_fp8(c_kv, block_size=128)
+        req_to_token = torch.tensor([[0, 1]], dtype=torch.int32, device=device)
+        queries = torch.ones(1, H, nope, dtype=torch.float32, device=device)
+        return sel, req_to_token, queries, fp8, scales
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
+    def test_capture_decode_step_table_free_zero_alloc(self):
+        """capture_decode_step routes a table-free-bound selector through the
+        graph-safe in-place path; replay is zero-alloc and picks the top latent."""
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state, assert_no_alloc_in_region, capture_decode_step,
+        )
+        device = torch.device("cuda")
+        sel, req_to_token, queries, fp8, scales = self._make_table_free_selector_cuda(device)
+        state = allocate_graph_state(
+            max_bs=1, max_top_k=1, max_seq_len=2,
+            num_local_heads=1, label_dim=1, kv_lora_rank=128,
+            table_free=True, device=device,
+        )
+        req_pool = torch.zeros(1, dtype=torch.int32, device=device)
+        seq_lens = torch.tensor([2], dtype=torch.int32, device=device)
+        sparse_mask = torch.ones(1, 2, dtype=torch.int32, device=device)
+        replay = capture_decode_step(
+            sel, state=state, queries=queries, layer_id=0,
+            req_pool_indices=req_pool, sparse_mask=sparse_mask, seq_lens=seq_lens,
+            req_to_token=req_to_token, max_seq_len=2,
+            absorbed_latent_fp8=fp8, absorbed_latent_scales=scales,
+        )
+        with assert_no_alloc_in_region("table_free capture_decode_step replay"):
+            idx, length = replay()
+        torch.cuda.synchronize()
+        # logical position 1 (latent 5.0) outranks position 0 (latent 1.0).
+        self.assertEqual(int(length[0].item()), 1)
+        self.assertEqual(int(idx[0, 0].item()), 1)
+
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
     def test_cuda_graph_100_step_replay_matches_eager(self):
         """CUDA graph replay 100x produces results bit-equal to the eager path."""
@@ -4113,6 +4181,254 @@ class TestCUDAGraphCapture(unittest.TestCase):
             ),
             f"unexpected: {state.selected_indices[0, :2].tolist()}",
         )
+
+    def _make_table_free_fixture_cuda(self, device, *, seed=3):
+        """Table-free graph-safe fixture: a channel mask + bind-time W_UK rows
+        (`w_sel`) + the resident fp8 latent, plus a TokenLabelTable whose
+        signatures are `w_sel @ dequant(latent)` so the table path and the
+        table-free path MUST select the same positions (the absorbed identity).
+        """
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent_kernel import (
+            dequantize_latent_fp8, quantize_latent_fp8,
+        )
+        g = torch.Generator(device="cpu").manual_seed(seed)
+        H, nope, lora, label_dim = 2, 8, 128, 4
+        max_tokens, seq, bs, top_k = 64, 20, 3, 6
+        sel = torch.stack(
+            [torch.randperm(nope, generator=g)[:label_dim] for _ in range(H)]
+        ).to(torch.int32).to(device)
+        weights = torch.randn(H, label_dim, generator=g).to(device).float()
+        cs = sel.unsqueeze(0)            # [1, H, label_dim] int32
+        cw = weights.unsqueeze(0)        # [1, H, label_dim] fp32
+        w_sel = torch.randn(H, label_dim, lora, generator=g).to(device).float()
+        c_kv = torch.randn(max_tokens, lora, generator=g).to(device).float()
+        # fp8 round-trip so the table is built from the SAME values the kernel scores.
+        fp8, scales = quantize_latent_fp8(c_kv, block_size=128)
+        c_kv_deq = dequantize_latent_fp8(fp8, scales, block_size=128)
+        signatures = torch.einsum("hdl,tl->thd", w_sel, c_kv_deq).contiguous()
+        queries = torch.randn(bs, H, nope, generator=g).to(device).float()
+        req_pool = torch.arange(bs, dtype=torch.int32, device=device)
+        req_to_token = (
+            torch.arange(bs * seq, dtype=torch.int32, device=device).reshape(bs, seq) * 7
+        ) % max_tokens
+        seq_lens = torch.tensor([12, 20, 16], dtype=torch.int32, device=device)
+        return dict(
+            H=H, label_dim=label_dim, lora=lora, max_tokens=max_tokens, seq=seq,
+            bs=bs, top_k=top_k, cs=cs, cw=cw, w_sel=w_sel, fp8=fp8, scales=scales,
+            signatures=signatures.unsqueeze(0), queries=queries, req_pool=req_pool,
+            req_to_token=req_to_token, seq_lens=seq_lens,
+        )
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
+    def test_retrieve_topk_graph_safe_table_free_zero_allocs_after_warmup(self):
+        """DECISIVE: table-free graph-safe selection is allocation-free.
+
+        On the pre-rewrite code this branch called absorbed_topk_select →
+        absorbed_latent_score_logical_paged (torch.empty) + select_topk_sequence_order
+        (arange/sort/selected), so the second call did 34 CUDA allocations inside
+        assert_no_alloc_in_region. After the rewrite the absorbed score fills the
+        pre-allocated scratch_scores in place and shares the table path's in-place
+        reduce + radix top-k, so the second call does ZERO new allocations.
+        """
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state, assert_no_alloc_in_region, radix_topk_scratch,
+        )
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            retrieve_topk_graph_safe,
+        )
+        device = torch.device("cuda")
+        f = self._make_table_free_fixture_cuda(device)
+        state = allocate_graph_state(
+            max_bs=f["bs"], max_top_k=f["top_k"], max_seq_len=f["seq"],
+            num_local_heads=f["H"], label_dim=f["label_dim"],
+            kv_lora_rank=f["lora"], table_free=True, device=device,
+        )
+        self.assertIsNotNone(state.scratch_absorbed_v)
+        self.assertEqual(
+            tuple(state.scratch_absorbed_v.shape), (f["bs"], f["H"], f["lora"])
+        )
+        kwargs = dict(
+            queries=f["queries"], token_signatures=None, written=None,
+            channel_selection=f["cs"], channel_weights=f["cw"], layer_id=0,
+            req_pool_indices=f["req_pool"], req_to_token=f["req_to_token"],
+            seq_lens=f["seq_lens"], max_seq_len=f["seq"], max_top_k=f["top_k"],
+            out_indices=state.selected_indices, out_lengths=state.valid_lengths,
+            scratch_scores=state.scratch_scores,
+            scratch_topk_values=state.scratch_topk_values,
+            scratch_topk_indices=state.scratch_topk_indices,
+            scratch_invalid_mask=state.scratch_invalid_mask,
+            scratch_sorted_vals=state.scratch_sorted_vals,
+            scratch_boundary=state.scratch_boundary,
+            scratch_valid_i64=state.scratch_valid_i64,
+            scratch_pv_mask=state.scratch_pv_mask,
+            scratch_throwaway_idx=state.scratch_throwaway_idx,
+            scratch_scores_bf16=state.scratch_scores_bf16,
+            radix_topk_scratch=radix_topk_scratch(state), topk_block=state.topk_block,
+            absorbed_latent_fp8=f["fp8"], absorbed_latent_scales=f["scales"],
+            absorbed_w_sel=f["w_sel"], table_free=True,
+            scratch_absorbed_v=state.scratch_absorbed_v,
+            scratch_absorbed_qsel=state.scratch_absorbed_qsel,
+            scratch_absorbed_sel_i64=state.scratch_absorbed_sel_i64,
+        )
+        # Warmup (allowed to allocate: Triton autotune, caching allocator).
+        retrieve_topk_graph_safe(**kwargs)
+        torch.cuda.synchronize()
+        # Second call MUST be 0-alloc (fails on the pre-rewrite code: 34 allocs).
+        with assert_no_alloc_in_region("table_free graph-safe"):
+            retrieve_topk_graph_safe(**kwargs)
+        torch.cuda.synchronize()
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
+    def test_retrieve_topk_graph_safe_table_free_matches_table(self):
+        """Table-free graph-safe selection == the table graph-safe selection on
+        the same fixture (the table signatures ARE w_sel @ dequant(latent))."""
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state, radix_topk_scratch,
+        )
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            retrieve_topk_graph_safe,
+        )
+        device = torch.device("cuda")
+        f = self._make_table_free_fixture_cuda(device)
+        written = torch.ones(f["max_tokens"], dtype=torch.bool, device=device)
+
+        st = allocate_graph_state(
+            max_bs=f["bs"], max_top_k=f["top_k"], max_seq_len=f["seq"],
+            num_local_heads=f["H"], label_dim=f["label_dim"], device=device,
+        )
+        retrieve_topk_graph_safe(
+            queries=f["queries"], token_signatures=f["signatures"],
+            written=written.unsqueeze(0), channel_selection=f["cs"],
+            channel_weights=f["cw"], layer_id=0, req_pool_indices=f["req_pool"],
+            req_to_token=f["req_to_token"], seq_lens=f["seq_lens"],
+            max_seq_len=f["seq"], max_top_k=f["top_k"],
+            out_indices=st.selected_indices, out_lengths=st.valid_lengths,
+            scratch_scores=st.scratch_scores, scratch_topk_values=st.scratch_topk_values,
+            scratch_topk_indices=st.scratch_topk_indices,
+            scratch_invalid_mask=st.scratch_invalid_mask,
+            scratch_sorted_vals=st.scratch_sorted_vals,
+            scratch_boundary=st.scratch_boundary, scratch_valid_i64=st.scratch_valid_i64,
+            scratch_pv_mask=st.scratch_pv_mask,
+            scratch_throwaway_idx=st.scratch_throwaway_idx,
+            radix_topk_scratch=radix_topk_scratch(st), topk_block=st.topk_block,
+        )
+        torch.cuda.synchronize()
+        table_idx = st.selected_indices[: f["bs"]].clone()
+        table_len = st.valid_lengths[: f["bs"]].clone()
+
+        sf = allocate_graph_state(
+            max_bs=f["bs"], max_top_k=f["top_k"], max_seq_len=f["seq"],
+            num_local_heads=f["H"], label_dim=f["label_dim"],
+            kv_lora_rank=f["lora"], table_free=True, device=device,
+        )
+        retrieve_topk_graph_safe(
+            queries=f["queries"], token_signatures=None, written=None,
+            channel_selection=f["cs"], channel_weights=f["cw"], layer_id=0,
+            req_pool_indices=f["req_pool"], req_to_token=f["req_to_token"],
+            seq_lens=f["seq_lens"], max_seq_len=f["seq"], max_top_k=f["top_k"],
+            out_indices=sf.selected_indices, out_lengths=sf.valid_lengths,
+            scratch_scores=sf.scratch_scores, scratch_topk_values=sf.scratch_topk_values,
+            scratch_topk_indices=sf.scratch_topk_indices,
+            scratch_invalid_mask=sf.scratch_invalid_mask,
+            scratch_sorted_vals=sf.scratch_sorted_vals,
+            scratch_boundary=sf.scratch_boundary, scratch_valid_i64=sf.scratch_valid_i64,
+            scratch_pv_mask=sf.scratch_pv_mask,
+            scratch_throwaway_idx=sf.scratch_throwaway_idx,
+            radix_topk_scratch=radix_topk_scratch(sf), topk_block=sf.topk_block,
+            absorbed_latent_fp8=f["fp8"], absorbed_latent_scales=f["scales"],
+            absorbed_w_sel=f["w_sel"], table_free=True,
+            scratch_absorbed_v=sf.scratch_absorbed_v,
+            scratch_absorbed_qsel=sf.scratch_absorbed_qsel,
+            scratch_absorbed_sel_i64=sf.scratch_absorbed_sel_i64,
+        )
+        torch.cuda.synchronize()
+        self.assertTrue(
+            torch.equal(table_idx, sf.selected_indices[: f["bs"]]),
+            f"table {table_idx.tolist()} != table_free "
+            f"{sf.selected_indices[: f['bs']].tolist()}",
+        )
+        self.assertTrue(torch.equal(table_len, sf.valid_lengths[: f["bs"]]))
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
+    def test_retrieve_topk_graph_safe_table_free_capture_replay(self):
+        """Table-free path captures into a CUDA graph and replays zero-alloc,
+        bit-equal to the eager call."""
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state, assert_no_alloc_in_region, radix_topk_scratch,
+        )
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            retrieve_topk_graph_safe,
+        )
+        device = torch.device("cuda")
+        f = self._make_table_free_fixture_cuda(device, seed=5)
+        s = allocate_graph_state(
+            max_bs=f["bs"], max_top_k=f["top_k"], max_seq_len=f["seq"],
+            num_local_heads=f["H"], label_dim=f["label_dim"],
+            kv_lora_rank=f["lora"], table_free=True, device=device,
+        )
+
+        def call():
+            retrieve_topk_graph_safe(
+                queries=f["queries"], token_signatures=None, written=None,
+                channel_selection=f["cs"], channel_weights=f["cw"], layer_id=0,
+                req_pool_indices=f["req_pool"], req_to_token=f["req_to_token"],
+                seq_lens=f["seq_lens"], max_seq_len=f["seq"], max_top_k=f["top_k"],
+                out_indices=s.selected_indices, out_lengths=s.valid_lengths,
+                scratch_scores=s.scratch_scores,
+                scratch_topk_values=s.scratch_topk_values,
+                scratch_topk_indices=s.scratch_topk_indices,
+                scratch_invalid_mask=s.scratch_invalid_mask,
+                scratch_sorted_vals=s.scratch_sorted_vals,
+                scratch_boundary=s.scratch_boundary,
+                scratch_valid_i64=s.scratch_valid_i64,
+                scratch_pv_mask=s.scratch_pv_mask,
+                scratch_throwaway_idx=s.scratch_throwaway_idx,
+                radix_topk_scratch=radix_topk_scratch(s), topk_block=s.topk_block,
+                absorbed_latent_fp8=f["fp8"], absorbed_latent_scales=f["scales"],
+                absorbed_w_sel=f["w_sel"], table_free=True,
+                scratch_absorbed_v=s.scratch_absorbed_v,
+                scratch_absorbed_qsel=s.scratch_absorbed_qsel,
+                scratch_absorbed_sel_i64=s.scratch_absorbed_sel_i64,
+            )
+
+        warm = torch.cuda.Stream()
+        warm.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(warm):
+            call()
+        torch.cuda.current_stream().wait_stream(warm)
+        eager = s.selected_indices.clone()
+
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):  # raises if the path host-syncs under capture
+            call()
+        with assert_no_alloc_in_region("table_free capture replay"):
+            graph.replay()
+        torch.cuda.synchronize()
+        self.assertTrue(torch.equal(s.selected_indices, eager))
+
+    def test_allocate_graph_state_table_free_off_leaves_absorbed_scratch_none(self):
+        """Default-off invariant: table_free=False allocates NO absorbed scratch,
+        so the shipped table graph-safe path is byte-identical (no new tensors)."""
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state,
+        )
+        device = torch.device("cpu")
+        st = allocate_graph_state(
+            max_bs=2, max_top_k=4, max_seq_len=8,
+            num_local_heads=2, label_dim=4, kv_lora_rank=128, device=device,
+        )
+        self.assertIsNone(st.scratch_absorbed_v)
+        self.assertIsNone(st.scratch_absorbed_qsel)
+        self.assertIsNone(st.scratch_absorbed_sel_i64)
+        sf = allocate_graph_state(
+            max_bs=2, max_top_k=4, max_seq_len=8,
+            num_local_heads=2, label_dim=4, kv_lora_rank=128,
+            table_free=True, device=device,
+        )
+        self.assertIsNotNone(sf.scratch_absorbed_v)
+        self.assertEqual(tuple(sf.scratch_absorbed_v.shape), (2, 2, 128))
+        self.assertEqual(tuple(sf.scratch_absorbed_qsel.shape), (2, 2, 4))
+        self.assertEqual(tuple(sf.scratch_absorbed_sel_i64.shape), (2, 4))
 
     def _make_production_forward_batch(self, device, *, req_to_token, bs=1, max_seq_len=4):
         """Production-shaped forward_batch: int64 req_pool_indices + int64 seq_lens.
@@ -11951,6 +12267,10 @@ class TestCompactSelectorWidthAllocation(unittest.TestCase):
             ds_selection_capture_layers=0,
             ds_score_reduce_bf16=True,
             ds_lifted_budget_decode=False,
+            ds_table_free=False,
+            num_q_heads=8,
+            ds_label_dim=16,
+            kv_lora_rank=512,
             device_sm_major=9,
             req_to_token=torch.zeros(1, 202756, dtype=torch.int32),
             _ds_graph_state_by_width={},
