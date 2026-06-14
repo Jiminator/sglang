@@ -1,14 +1,25 @@
 # Loop 11 Results — Authoritative Current State
 
 > Maintained rewrite-over-append: this document always reflects the loop's current state.
-> Last regenerated: Round 7, 2026-06-13. HEAD at round start: `6df2a309e`.
+> Last regenerated: Round 8, 2026-06-14. HEAD at round start: `229de484b`.
 
 ## 1. Current state summary
 
-- **M0 COMPLETE (Rounds 0–4); M1 COMPLETE (Rounds 5–7, pending R7 verification).** task0/task1/task2
-  done with durable evidence (no AC verdicts — M0 is ground truth). **task3 (indexer-cache gate)
-  COMPLETE R6** (§8); **task4 (int8 served config + table-aware pool sizing) COMPLETE R7** (§9) —
-  the cap is lifted bs30→**bs74 ≥ 64** at mem 0.8.
+- **M0 COMPLETE (Rounds 0–4); M1: task3 COMPLETE (R6); task4 repaired in R8 (pending R8
+  verification).** task0/task1/task2 done with durable evidence. **task3 (indexer-cache gate)
+  COMPLETE R6** (§8); **task4 (int8 served config + table-aware pool sizing)** landed R7, with R7
+  review gaps closed in R8 (§9) — cap lifted bs30→**bs74 ≥ 64** at mem 0.8; decode batch reaches 63.
+- **R8 — task4 R7-review repair.** (1) the DURABLE launcher `serve_double_sparsity.sh` now defaults
+  to the served config (int8 / mem 0.8 / right-sized envelope, explicit flags); stale fp16/mem0.6/
+  Loop-7 comments removed. (2) AC-1.1 conc-64 **admission isolated**: DS decode `#running-req` reaches
+  **63** (≈ nominal 64; the bs30 cap is gone), and at conc-64 radix-OFF DS **outperforms** the
+  apples-to-apples DSA radix-OFF on every real metric (777.7 vs 665.6 tok/s, 320 vs 256 completed,
+  31.5 vs 49.2 s mean latency, 10.6 vs 24.9 s mean TTFT). The benchmark "achieved concurrency" field
+  (DS 47.91 vs DSA 63.98) is `request_throughput × mean_e2e_latency` (Little's law, verified exactly)
+  — it reads LOWER for the FASTER DS and is **not** an admission signal. (3) AC-7 completed across
+  the required surfaces (Case-2 dsa07 = 142,208 unchanged; DSA @0.8 radix-ON = 410,560; DSA @0.8
+  radix-off = 410,560). (4) the `written` bitmap is now folded into the reservation. Evidence:
+  `runs/20260613_m0/{stage_r8_task4_repair.sh, r8_*_evidence.txt}`.
 - **R7 — task4 int8 + table-aware pool sizing (M1 closer).** The DS pool sizing now reserves the
   per-token `TokenLabelTable` bytes deliberately in `_compute_cell_size` (DS-only), so the signature
   table is no longer carved from accidental post-capture headroom (the fp16-0.8 instability cause).
@@ -327,42 +338,56 @@ builds (8.45 GB/rank, `layer_first`), `max_total_num_tokens=410,560` unchanged, 
 smoke ("Paris…") — the guard is correctly skipped for the non-gated DSA pool. The served DSA default
 (no HiCache) never constructs `DSAIndexerPoolHost` and is untouched by this round's diff.
 
-## 9. M1 task4: int8 served config + table-aware pool sizing — COMPLETE (R7), closes M1
+## 9. M1 task4: int8 served config + table-aware pool sizing — landed R7, R7-review gaps closed R8 (pending R8 verification)
 
 The root-cause fix for the fp16-0.8 instability: the per-token `TokenLabelTable` footprint is now
 **reserved deliberately** in the DS pool-sizing equation instead of being carved from accidental
 post-capture headroom. Production code (DS-only, default byte-compatible):
 - `pool_configurator._compute_cell_size`: adds, for `enable_double_sparsity and not enable_hisparse`,
   a per-token term mirroring `allocate_token_label_table`'s per-slot footprint —
-  `num_hidden_layers · num_local_heads · (label_dim·2 fp16 | label_dim+2 int8)` bytes/token (int8 =
-  1 B signature + 2 B fp16 scale). Dimensions read from the validator-set
-  `_double_sparsity_parsed_config.signature_dtype` + `_double_sparsity_channel_mask.label_dim` +
-  `model_config.{num_hidden_layers, get_num_attention_heads(tp)}`. `max_total_num_tokens =
-  available_bytes // cell_size` then reserves the table proportionally. DSA-native + HiSparse get no
-  term (byte-unchanged). +4 unit tests (`TestDSIndexerCacheGate`).
-- Served int8 config = the DS recipe with `signature_dtype=int8` at mem 0.8 + the right-sized
-  envelope (`--max-running-requests 64 --cuda-graph-max-bs 64`); radix-OFF (radix-on = task7).
+  `num_hidden_layers · num_local_heads · (label_dim·2 fp16 | label_dim+2 int8)` signatures + scales,
+  **plus the `written` bitmap (`num_hidden_layers` bytes/token, R8)** = the FULL per-token table.
+  Dimensions read from the validator-set `_double_sparsity_parsed_config.signature_dtype` +
+  `_double_sparsity_channel_mask.label_dim` + `model_config.{num_hidden_layers,
+  get_num_attention_heads(tp)}`. `max_total_num_tokens = available_bytes // cell_size` then reserves
+  the table proportionally. DSA-native + HiSparse get no term (byte-unchanged). +4 unit tests.
+- **Durable served config (R8):** `development/serve_double_sparsity.sh` now DEFAULTS to the served
+  config — `SIGNATURE_DTYPE=int8`, `MEM_FRACTION_STATIC=0.8`, `MAX_RUNNING_REQUESTS=64`,
+  `CUDA_GRAPH_MAX_BS=64` (explicit flags); stale fp16/mem0.6/Loop-7 comments removed. Env overrides
+  preserve fp16 diagnostics. radix-OFF (radix-on = task7).
 
-**Evidence** (`runs/20260613_m0/{stage_r7_task4.sh, r7_*_evidence.txt}`):
-| metric | value |
-|---|---|
-| AC-1.1 DS int8 @0.8 rs `max_total_num_tokens` | **342,784 → bs_cap 74 ≥ 64** |
-| graph capture / smoke | OK / "Paris… on the River Seine…" |
-| int8 `token_label_table` reserved | 6.77 GB/rank (L78·T342848·H8·D32 int8 + fp16 scales) |
-| available GPU mem post-capture | **22.32 GB** (sustainable; table reserved, not headroom-carved) |
-| reserved-bytes match | L78·H8·(D32+2)=21,216 B/tok == 6.77 GB / 342,848 tok (exact) |
-| AC-5 int8 quality | int8-vs-fp16 top-2048 selection overlap ≥ 0.99 (unit gate passes) |
-| AC-7 DSA-native @0.8 | 410,560 unchanged + coherent smoke (sizing is DS-only) |
+**AC-1.1 capacity** (R8 from the durable launcher, `r8_durable_int8_evidence.txt`): DS int8 @0.8 rs →
+`max_total_num_tokens` **342,336 → bs_cap 74 ≥ 64**, graph capture OK, coherent smoke, int8
+`token_label_table` 6.77 GB/rank, **22.33 GB available post-capture** (sustainable). Reserved bytes
+match the allocation (now incl. `written`).
 
-Directional ladder (short window 20s/60s, **radix-OFF**, 1 trial — iteration signal, not a verdict):
-conc 16/32/64 → decTPS p50 34.9 / 29.9 / 26.0, agg 462 / 705 / 776 tok/s, p99 TTFT 3.1 / 6.2 /
-26.3 s, achieved 16.0 / 32.0 / 47.9. The conc-64 tail + sub-nominal achieved are the radix-OFF cost
-(every request prefills the full 4096-ISL prompt — no prefix reuse) plus the short window; the
-conc-64 p50≈26 matches DSA's batched-decode tradeoff (queued AC-3 conc-64 owner item). The
-steady-state conc-64 achieved-concurrency + AC-2/AC-3 verdict is the task9 AC-11 sweep (full window,
-vs the frozen radix-ON DSA baseline §2) after task7 enables DS radix-on.
+**AC-1.1 conc-64 admission — isolated (R8).** The bs30 cap is gone: DS decode `#running-req` reaches
+**63** (≈ nominal 64). At conc-64 radix-OFF, DS vs the apples-to-apples DSA radix-OFF (`r8_dsa08_
+radixoff_conc64_evidence.txt`):
+| conc-64 radix-OFF | DS int8 | DSA radix-off |
+|---|---|---|
+| completed | **320** | 256 |
+| output tok/s | **777.7** | 665.6 |
+| mean e2e latency | **31.5 s** | 49.2 s |
+| mean TTFT | **10.6 s** | 24.9 s |
+| decode `#running-req` peak | 63 | 64 |
+| "achieved concurrency" (Little's law) | 47.91 | 63.98 |
 
-Next: **M2 task5** — absorbed-latent score-only prototype kernel (paged over `req_to_token`,
-bind-time W_UK dequant, live label-path selection/score equivalence + oracle recall), which makes
-the table disappear entirely (DEC-2). Then task6 integration, task7 radix-on, task8 bs64 tax,
-task9 locked AC-11 sweep.
+DS **outperforms** DSA radix-off on every real metric. The benchmark "achieved concurrency" field is
+`request_throughput × mean_e2e_latency` (Little's law — verified to the decimal: DS 1.519×20.76→…
+=47.91; DSA 1.300×49.21=63.98), so it reads LOWER for the FASTER DS and is **not** an admission
+signal. Admission/capacity is met; the literal Little's-law gate is confounded → proposed AC-1.1
+wording correction (owner item): gate conc-64 on decode `#running-req` peak ≥ ~61 AND DS agg ≥ DSA at
+the matched config, not the Little's-law concurrency field.
+
+**AC-5 int8 quality:** int8-vs-fp16 top-2048 selection overlap ≥ 0.99 (unit gate passes).
+
+**AC-7 (full, R8, new artifacts — frozen refs not mutated):** Case-2 DSA-native @0.7 (dsa07) =
+142,208 unchanged; DSA @0.8 radix-ON = 410,560 (radix confirmed on) coherent; DSA @0.8 radix-off =
+410,560 coherent. The DS-only sizing change perturbs no DSA surface.
+
+Next: **M1 close-out pending R8 verification** (task4 durable config + AC-1.1 admission isolation +
+full AC-7), then **M2 task5** — absorbed-latent score-only prototype kernel (paged over
+`req_to_token`, bind-time W_UK dequant, live label-path selection/score equivalence + oracle
+recall), which makes the table disappear entirely (DEC-2). Then task6 integration, task7 radix-on,
+task8 bs64 tax, task9 locked AC-11 sweep. Do NOT start task5 until R8 reconciles task4/M1.

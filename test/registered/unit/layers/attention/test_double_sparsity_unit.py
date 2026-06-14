@@ -9742,12 +9742,14 @@ class TestCompactScaleSidecarConsumers(unittest.TestCase):
 
 
 class TestServeDoubleSparsityLauncherSignatureDtype(unittest.TestCase):
-    """serve_double_sparsity.sh must thread SIGNATURE_DTYPE into the DS config so
-    a cluster run can actually select the compact int8 table (default stays
-    fp16). Without this the documented `bash serve_double_sparsity.sh` boots the
-    full-precision table and any compact-path hardware claim is invalid."""
+    """serve_double_sparsity.sh is the durable DS launcher and must DEFAULT to the
+    served config: the compact int8 table at mem 0.8 with the right-sized envelope
+    (--max-running-requests 64 --cuda-graph-max-bs 64). Env overrides still select
+    the fp16 diagnostic table. Without these defaults the documented
+    `bash serve_double_sparsity.sh` boots the old fp16/mem0.6/default-envelope
+    point and any served-config hardware claim is invalid."""
 
-    def _launcher_config(self, env_extra):
+    def _run_launcher(self, env_extra):
         import subprocess, tempfile, os, json
         repo = os.path.normpath(
             os.path.join(os.path.dirname(__file__), "../../../../../")
@@ -9759,6 +9761,7 @@ class TestServeDoubleSparsityLauncherSignatureDtype(unittest.TestCase):
                 fh.write(
                     "#!/usr/bin/env bash\n"
                     'args=("$@")\n'
+                    'echo "ARGS=${args[*]}"\n'
                     'for i in "${!args[@]}"; do\n'
                     '  if [[ "${args[$i]}" == "--double-sparsity-config" ]]; then\n'
                     '    echo "DSCONFIG=${args[$((i+1))]}"\n'
@@ -9773,13 +9776,33 @@ class TestServeDoubleSparsityLauncherSignatureDtype(unittest.TestCase):
             out = subprocess.run(
                 ["bash", script], env=env, capture_output=True, text=True, timeout=60
             )
+            ds_cfg, args = None, []
             for line in (out.stdout + out.stderr).splitlines():
                 if line.startswith("DSCONFIG="):
-                    return json.loads(line[len("DSCONFIG="):])
-            self.fail(f"no DS config captured; stdout={out.stdout!r} stderr={out.stderr!r}")
+                    ds_cfg = json.loads(line[len("DSCONFIG=") :])
+                elif line.startswith("ARGS="):
+                    # Envelope flags precede the (space-containing) DS-config JSON,
+                    # so a naive split still recovers their single-token values.
+                    args = line[len("ARGS=") :].split()
+            if ds_cfg is None:
+                self.fail(f"no DS config captured; stdout={out.stdout!r} stderr={out.stderr!r}")
+            return ds_cfg, args
 
-    def test_default_signature_dtype_is_fp16(self):
-        self.assertEqual(self._launcher_config({}).get("signature_dtype"), "fp16")
+    def _launcher_config(self, env_extra):
+        return self._run_launcher(env_extra)[0]
+
+    def _arg_value(self, args, flag):
+        return args[args.index(flag) + 1] if flag in args else None
+
+    def test_default_signature_dtype_is_int8(self):
+        # The durable served config defaults to the compact int8 table (R8).
+        self.assertEqual(self._launcher_config({}).get("signature_dtype"), "int8")
+
+    def test_fp16_signature_dtype_override(self):
+        self.assertEqual(
+            self._launcher_config({"SIGNATURE_DTYPE": "fp16"}).get("signature_dtype"),
+            "fp16",
+        )
 
     def test_int8_signature_dtype_is_selected(self):
         import json
@@ -9787,6 +9810,13 @@ class TestServeDoubleSparsityLauncherSignatureDtype(unittest.TestCase):
         self.assertEqual(cfg.get("signature_dtype"), "int8")
         # The config must still parse as a valid DoubleSparsityConfig.
         self.assertEqual(parse_double_sparsity_config(json.dumps(cfg)).signature_dtype, "int8")
+
+    def test_default_served_envelope(self):
+        # The durable served config (R8): mem 0.8 + right-sized envelope.
+        _, args = self._run_launcher({})
+        self.assertEqual(self._arg_value(args, "--mem-fraction-static"), "0.8")
+        self.assertEqual(self._arg_value(args, "--max-running-requests"), "64")
+        self.assertEqual(self._arg_value(args, "--cuda-graph-max-bs"), "64")
 
 
 class TestBlockedTopKExactness(unittest.TestCase):
@@ -12053,19 +12083,19 @@ class TestDSIndexerCacheGate(unittest.TestCase):
         self.assertEqual(hi, dsa)
 
     def test_cell_size_reserves_fp16_table_term_under_ds(self):
-        # fp16 signature table reserves num_layers*num_heads*label_dim*2 per token
-        # (2*4*16*2 = 256) on top of the no-table DS cell.
+        # fp16 table per token = num_layers*num_heads*label_dim*2 signatures
+        # (2*4*16*2 = 256) + num_layers `written`-bitmap bytes (2) = 258.
         with_table = self._cell_size(ds_on=True, signature_dtype="fp16")
         no_table = self._cell_size(ds_on=True)
-        self.assertEqual(with_table - no_table, 2 * 4 * 16 * 2)
+        self.assertEqual(with_table - no_table, 2 * 4 * 16 * 2 + 2)
 
     def test_cell_size_int8_table_term_smaller_than_fp16(self):
-        # int8 reserves num_layers*num_heads*(label_dim+2) per token (2*4*18 = 144):
-        # 1-byte signatures + a 2-byte fp16 per-(layer,token,head) scale.
+        # int8 table per token = num_layers*num_heads*(label_dim+2) (2*4*18 = 144;
+        # 1-byte signatures + a 2-byte fp16 scale) + num_layers `written` bytes (2) = 146.
         no_table = self._cell_size(ds_on=True)
         int8 = self._cell_size(ds_on=True, signature_dtype="int8")
         fp16 = self._cell_size(ds_on=True, signature_dtype="fp16")
-        self.assertEqual(int8 - no_table, 2 * 4 * (16 + 2))
+        self.assertEqual(int8 - no_table, 2 * 4 * (16 + 2) + 2)
         self.assertLess(int8, fp16)
 
     def test_cell_size_no_table_term_for_dsa_native(self):

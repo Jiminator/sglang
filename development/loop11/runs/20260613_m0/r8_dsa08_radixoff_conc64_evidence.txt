@@ -1,0 +1,2 @@
+probe=dsa08_radixoff_conc64 (isolation + AC-7 DS-off @0.8) cap=410560 bs_cap=89 smoke=OK:Paris. Distance from London to Paris is 343 km, while direct max_decode_running_req=64
+achieved_conc=63.98 decTPS_p50=24.27 agg_tok/s=665.6 ttft_p99=28.20s completed=256

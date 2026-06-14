@@ -1,0 +1,4 @@
+probe=case2_dsa07 status=OK max_total_num_tokens=142208 smoke=OK:Paris. Distance from London to Paris is 343 km, while direct
+[2026-06-14 00:25:02 TP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 142208, KV size: 8.14 GB
+[2026-06-14 00:26:15 TP0] Capture cuda graph end. Time elapsed: 71.27 s. mem usage=2.73 GB. avail mem=33.89 GB.
+[2026-06-14 00:26:19 TP0] max_total_num_tokens=142208, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=2048, context_len=202752, available_gpu_mem=33.89 GB

@@ -40,31 +40,28 @@ PAGE_SIZE="${PAGE_SIZE:-64}"
 CHANNEL_MASK_PATH="${CHANNEL_MASK_PATH:-/models/dsv32-fp8-channel-mask.safetensors}"
 TOP_K="${TOP_K:-2048}"
 DEVICE_BUFFER_SIZE="${DEVICE_BUFFER_SIZE:-4096}"
-# Per-slot label storage precision. "fp16" (default) is full precision; "int8"
-# selects the compact path (int8 signatures + per-vector fp16 scales, ~0.5625x
-# bytes). The compact table only boots when this is set to int8 — running the
-# script as-is validates the fp16 table.
-SIGNATURE_DTYPE="${SIGNATURE_DTYPE:-fp16}"
-# Double Sparsity allocates a per-rank TokenLabelTable (sized from the KV pool,
-# tens of GiB on V3.2) AFTER the static weight+KV pool is reserved, and also
-# needs headroom for the regular CUDA-graph capture set plus per-request decode
-# activations. The stock default (0.897) OOMs at boot; 0.7 boots but OOMs during
-# generation on V3.2/H200. 0.6 boots and serves stably (verified): weights are
-# ~80 GB/rank, leaving a small KV pool plus ~38 GB of runtime headroom.
-MEM_FRACTION_STATIC="${MEM_FRACTION_STATIC:-0.6}"
+# Per-slot label storage precision. "int8" (default — the served config) is the
+# compact path (int8 signatures + per-vector fp16 scales, ~0.5625x bytes), gated
+# by int8-vs-fp16 selection overlap >= 0.99. Set SIGNATURE_DTYPE=fp16 for a
+# full-precision diagnostic run.
+SIGNATURE_DTYPE="${SIGNATURE_DTYPE:-int8}"
+# Double Sparsity's per-rank TokenLabelTable is now RESERVED in the KV-pool
+# sizing equation (pool_configurator._compute_cell_size folds in its per-token
+# bytes), so the table is no longer carved from post-capture headroom — which was
+# the reason mem_fraction previously had to be pinned to 0.6/0.7. With the table
+# reserved AND the right-sized envelope below, 0.8 boots with sustained headroom
+# (validated GLM-5.1-FP8 int8: max_total_num_tokens 342,784 / bs cap 74, ~22 GB
+# available post-capture). Lower it only to serve a deliberately smaller pool.
+MEM_FRACTION_STATIC="${MEM_FRACTION_STATIC:-0.8}"
+# Right-sized serving envelope: cap running requests and captured CUDA-graph
+# batch sizes at the workload concurrency ceiling so the graph-capture set does
+# not reserve memory for batches the workload never runs. Part of the 0.8 served
+# point. Raise for a larger concurrency envelope.
+MAX_RUNNING_REQUESTS="${MAX_RUNNING_REQUESTS:-64}"
+CUDA_GRAPH_MAX_BS="${CUDA_GRAPH_MAX_BS:-64}"
 # Fixed server seed so a paired DS-vs-baseline SLO comparison is seed-matched
 # (the only intended column differences are DS enablement/config + DS mem fraction).
 RANDOM_SEED="${RANDOM_SEED:-20260607}"
-
-# Loop-7 measurement op-point. The stock defaults (fp16 / mem 0.6) are the safe
-# fp16-table boot point, NOT the Loop-7 baseline/oracle/M1 operating point
-# (int8 compact table / mem 0.7). Set LOOP7_MEASUREMENT=1 to PIN the Loop-7
-# op-point so a measurement run cannot silently reproduce the old regime.
-if [[ "${LOOP7_MEASUREMENT:-0}" == "1" ]]; then
-  SIGNATURE_DTYPE="int8"
-  MEM_FRACTION_STATIC="0.7"
-  echo ">>> LOOP7_MEASUREMENT=1: pinned SIGNATURE_DTYPE=int8 MEM_FRACTION_STATIC=0.7"
-fi
 
 LOG_DIR="${LOG_DIR:-$(pwd)/development/logs}"
 mkdir -p "${LOG_DIR}"
@@ -159,6 +156,9 @@ echo "    channel_mask     = ${CHANNEL_MASK_PATH}"
 echo "    top_k            = ${TOP_K}"
 echo "    device_buffer    = ${DEVICE_BUFFER_SIZE}"
 echo "    signature_dtype  = ${SIGNATURE_DTYPE}"
+echo "    mem_fraction     = ${MEM_FRACTION_STATIC}"
+echo "    max_running_reqs = ${MAX_RUNNING_REQUESTS}"
+echo "    cuda_graph_max_bs= ${CUDA_GRAPH_MAX_BS}"
 echo "    recall_oracle    = ${RECALL_ORACLE} (eager: ${#CUDA_GRAPH_ARGS[@]} cuda-graph arg(s))"
 echo "    radix_cache      = $([[ -n "${RADIX_FIXTURE_ARTIFACT}" ]] && echo "ENABLED (fixture artifact: ${RADIX_FIXTURE_ARTIFACT})" || echo "disabled (no fixture artifact)")"
 echo "    log              = ${LOG_FILE}"
@@ -177,6 +177,8 @@ exec python3 -m sglang.launch_server \
   --tp-size "${TP_SIZE}" \
   --kv-cache-dtype "${KV_CACHE_DTYPE}" \
   --mem-fraction-static "${MEM_FRACTION_STATIC}" \
+  --max-running-requests "${MAX_RUNNING_REQUESTS}" \
+  --cuda-graph-max-bs "${CUDA_GRAPH_MAX_BS}" \
   --page-size "${PAGE_SIZE}" \
   --dsa-prefill-backend flashmla_kv \
   --dsa-decode-backend flashmla_kv \

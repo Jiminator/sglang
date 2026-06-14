@@ -191,8 +191,12 @@ class DefaultPoolConfigurator(MemoryPoolConfigurator):
                         signature_bytes_per_head = label_dim + 2
                     else:
                         signature_bytes_per_head = label_dim * 2
+                    # Signatures (+ int8 scales) per token, plus the `written`
+                    # bitmap (1 byte per (layer, token)) — the full per-token
+                    # TokenLabelTable footprint.
                     cell_size += (
                         num_label_layers * num_local_heads * signature_bytes_per_head
+                        + num_label_layers
                     )
         else:
             cell_size = (
