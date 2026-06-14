@@ -5,7 +5,19 @@
 
 ## 1. Current state summary
 
-- **M0 COMPLETE (Rounds 0–4); M1 (task3+task4) COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 IN PROGRESS (R17 ABI + R18 capture-safe).**
+- **M0 COMPLETE (Rounds 0–4); M1 (task3+task4) COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 IN PROGRESS (R17 ABI + R18 capture-safe + R19 production-hardening).**
+- **R19 — task6: production table-free capture hardened + the validity guard (Codex R18 defects 1–3; owner DEC-5/DEC-6).**
+  D1: publish `_ds_channel_selection`/`_ds_qk_nope_head_dim` unconditionally (was table-only branch, so
+  the served table_free path got `ds_label_dim=0` → allocating fallback); dsa_backend fails closed if
+  `ds_table_free` & `ds_label_dim≤0`; the `_use_graph_safe` predicate + `retrieve_topk_graph_safe(table_free)`
+  now REQUIRE the absorbed scratch (no silent alloc). D2: `absorbed_latent_v_into` casts bf16/fp16 queries
+  into a preallocated `scratch_absorbed_q` (was `queries.to(float32)` → 1 alloc; now 0). D3 (DEC-6): a tiny
+  per-slot `slot_written` validity bitmap (independent of the table — NOT the 5.29 GB signatures),
+  invalidated at `out_cache_loc` before selection + marked after the MLA KV write, fed to both absorbed
+  paths, fail-closed if absent → a reused slot with stale latent can't be selected until its fresh write.
+  +8 tests (bf16 0-alloc, backend-path scratch, stale-slot regression, default-off SHA); 455 DS suite;
+  black-clean. **Owner DEC-5:** AC-7 serving bundle runs once at the served-default flip (default-off
+  slices rely on unit-proven byte-identicality). (§11)
 - **R18 — task6: the table-free graph-safe path is now CUDA-graph capturable (allocation-free).** Codex
   R17's CUDA probe found `retrieve_topk_graph_safe(table_free=True)` did 34 allocations (it called the
   allocating `absorbed_topk_select` detour). Rewrote it to fill the pre-allocated `scratch_scores` in
@@ -667,9 +679,34 @@ handles table_free; the deepseek_v2 eager fallback fails closed. **`assert_no_al
 (eager + captured replay, bit-equal); table_free selection == table; `table_free=False` byte-identical
 (SHA-256 + 447 tests); dsa_backend `ds_table_free=False` ⇒ no absorbed scratch (DSA default unchanged).
 
-**Remaining for task6** (next slices): DELETE `token_label_table.py` + `token_label_write.py` +
-the prefill label-write hook (DEC-2) once `table_free` is the validated default; the **serving capacity
-payoff @ mem 0.8** (boot readout: table-free pool grows → bs cap ≥64, AC-1.2 — table_free becomes the
-served default here); **same-round AC-7 serving regression** (DS-off smoke + Case-2 + radix-ON DSA) for
-the accumulated shared-surface changes (pool-sizing skip, dsa_backend graph-state, selection_kernel) —
-run bundled with the capacity boot. Then task7 (radix-on), task8 (bs64 tax), task9 (locked AC-11 sweep).
+**Landed R19 (production capture hardening + validity guard — Codex R18 defects 1–3; owner DEC-5/DEC-6):**
+the SERVED table-free path is now genuinely allocation-free + has the stale-slot validity guard the
+table path provided. **D1 (served scratch):** `_ds_channel_selection`/`_ds_qk_nope_head_dim` are now
+published for every DS-enabled layer (the publish was inside the table-only branch, so the served
+`table_free` path got `ds_label_dim=0` → the absorbed scratch stayed None → the kernel fell back to the
+allocating `absorbed_latent_v`); `DeepseekSparseAttnBackend` fails closed if `ds_table_free` and
+`ds_label_dim≤0`; the production `_use_graph_safe` predicate AND `retrieve_topk_graph_safe(table_free=
+True)` REQUIRE `scratch_absorbed_v`/`_qsel`/`_sel_i64`/`_q` (no silent allocating fallback). **D2
+(served dtype):** `absorbed_latent_v_into` casts bf16/fp16 queries into a preallocated
+`scratch_absorbed_q` in place (the old `queries.to(float32)` allocated on the served bf16 input — 1
+alloc → 0). **D3 / DEC-6 (validity guard):** a tiny per-slot `slot_written` bool bitmap, INDEPENDENT
+of the TokenLabelTable (1 bit/slot, NOT the 5.29 GB signatures), allocated only when `table_free`,
+init False, invalidated `[layer_id, out_cache_loc]=False` before table-free selection (mirroring the
+table path) + marked True in `_write_token_labels` after the MLA KV write, fed as `written` into both
+the graph-safe and eager absorbed paths (the kernel's `HAS_WRITTEN` masks unwritten slots to −inf),
+fail-closed if absent — so a reused physical slot with stale latent can't be selected until its fresh
+write. +8 tests (bf16 0-alloc; backend-path scratch + fail-closed; stale-reused-slot regression;
+default-off SHA byte-identical); 455 DS suite; black-clean; `_write_token_labels` non-table_free path
+unchanged (table present ⇒ original write).
+
+**Owner decisions (R19 AskUserQuestion):** **DEC-5** — for default-OFF-gated shared-surface slices,
+the AC-7 serving bundle (DS-off + Case-2 + radix-ON DSA) runs ONCE at the served-default flip (bundled
+with the capacity boot), relying intra-round on the unit-proven byte-identicality; AC-7 is not a
+per-round blocker for default-off slices. **DEC-6** — the table-free validity guard is the tiny
+`slot_written` bitmap above (landed R19), NOT deferred to task7 (task7 radix-on validates it).
+
+**Remaining for task6** (next slice): make `table_free` the served default + DELETE
+`token_label_table.py`/`token_label_write.py` + prefill write-hook (DEC-2); the **serving capacity
+payoff @ mem 0.8** (boot readout: pool grows → bs cap ≥64, capture-all-buckets, conc-64 smoke, AC-1.2);
+the **AC-7 serving bundle** bundled with that boot (DEC-5). Then task7 (radix-on), task8 (bs64 tax),
+task9 (locked AC-11 sweep).

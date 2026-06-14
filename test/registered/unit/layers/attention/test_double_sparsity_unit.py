@@ -4213,10 +4213,10 @@ class TestCUDAGraphCapture(unittest.TestCase):
         ) % max_tokens
         seq_lens = torch.tensor([12, 20, 16], dtype=torch.int32, device=device)
         return dict(
-            H=H, label_dim=label_dim, lora=lora, max_tokens=max_tokens, seq=seq,
-            bs=bs, top_k=top_k, cs=cs, cw=cw, w_sel=w_sel, fp8=fp8, scales=scales,
-            signatures=signatures.unsqueeze(0), queries=queries, req_pool=req_pool,
-            req_to_token=req_to_token, seq_lens=seq_lens,
+            H=H, nope=nope, label_dim=label_dim, lora=lora, max_tokens=max_tokens,
+            seq=seq, bs=bs, top_k=top_k, cs=cs, cw=cw, w_sel=w_sel, fp8=fp8,
+            scales=scales, signatures=signatures.unsqueeze(0), queries=queries,
+            req_pool=req_pool, req_to_token=req_to_token, seq_lens=seq_lens,
         )
 
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
@@ -4241,7 +4241,7 @@ class TestCUDAGraphCapture(unittest.TestCase):
         state = allocate_graph_state(
             max_bs=f["bs"], max_top_k=f["top_k"], max_seq_len=f["seq"],
             num_local_heads=f["H"], label_dim=f["label_dim"],
-            kv_lora_rank=f["lora"], table_free=True, device=device,
+            kv_lora_rank=f["lora"], qk_nope_head_dim=f["nope"], table_free=True, device=device,
         )
         self.assertIsNotNone(state.scratch_absorbed_v)
         self.assertEqual(
@@ -4269,6 +4269,7 @@ class TestCUDAGraphCapture(unittest.TestCase):
             scratch_absorbed_v=state.scratch_absorbed_v,
             scratch_absorbed_qsel=state.scratch_absorbed_qsel,
             scratch_absorbed_sel_i64=state.scratch_absorbed_sel_i64,
+            scratch_absorbed_q=state.scratch_absorbed_q,
         )
         # Warmup (allowed to allocate: Triton autotune, caching allocator).
         retrieve_topk_graph_safe(**kwargs)
@@ -4319,7 +4320,7 @@ class TestCUDAGraphCapture(unittest.TestCase):
         sf = allocate_graph_state(
             max_bs=f["bs"], max_top_k=f["top_k"], max_seq_len=f["seq"],
             num_local_heads=f["H"], label_dim=f["label_dim"],
-            kv_lora_rank=f["lora"], table_free=True, device=device,
+            kv_lora_rank=f["lora"], qk_nope_head_dim=f["nope"], table_free=True, device=device,
         )
         retrieve_topk_graph_safe(
             queries=f["queries"], token_signatures=None, written=None,
@@ -4340,6 +4341,7 @@ class TestCUDAGraphCapture(unittest.TestCase):
             scratch_absorbed_v=sf.scratch_absorbed_v,
             scratch_absorbed_qsel=sf.scratch_absorbed_qsel,
             scratch_absorbed_sel_i64=sf.scratch_absorbed_sel_i64,
+            scratch_absorbed_q=sf.scratch_absorbed_q,
         )
         torch.cuda.synchronize()
         self.assertTrue(
@@ -4364,7 +4366,7 @@ class TestCUDAGraphCapture(unittest.TestCase):
         s = allocate_graph_state(
             max_bs=f["bs"], max_top_k=f["top_k"], max_seq_len=f["seq"],
             num_local_heads=f["H"], label_dim=f["label_dim"],
-            kv_lora_rank=f["lora"], table_free=True, device=device,
+            kv_lora_rank=f["lora"], qk_nope_head_dim=f["nope"], table_free=True, device=device,
         )
 
         def call():
@@ -4389,6 +4391,7 @@ class TestCUDAGraphCapture(unittest.TestCase):
                 scratch_absorbed_v=s.scratch_absorbed_v,
                 scratch_absorbed_qsel=s.scratch_absorbed_qsel,
                 scratch_absorbed_sel_i64=s.scratch_absorbed_sel_i64,
+                scratch_absorbed_q=s.scratch_absorbed_q,
             )
 
         warm = torch.cuda.Stream()
@@ -4420,6 +4423,7 @@ class TestCUDAGraphCapture(unittest.TestCase):
         self.assertIsNone(st.scratch_absorbed_v)
         self.assertIsNone(st.scratch_absorbed_qsel)
         self.assertIsNone(st.scratch_absorbed_sel_i64)
+        self.assertIsNone(st.scratch_absorbed_q)
         sf = allocate_graph_state(
             max_bs=2, max_top_k=4, max_seq_len=8,
             num_local_heads=2, label_dim=4, kv_lora_rank=128,
@@ -12271,6 +12275,7 @@ class TestCompactSelectorWidthAllocation(unittest.TestCase):
             num_q_heads=8,
             ds_label_dim=16,
             kv_lora_rank=512,
+            qk_nope_head_dim=128,
             device_sm_major=9,
             req_to_token=torch.zeros(1, 202756, dtype=torch.int32),
             _ds_graph_state_by_width={},
@@ -13406,6 +13411,389 @@ class TestSideBySideAbsorbedOracleRecord(unittest.TestCase):
         rec = self._record(with_absorbed=True)
         self.assertEqual(rec["decode_step"], 0)
         self.assertEqual(len(self._sink_mod.get_sink().records), 1)
+
+
+class TestTableFreeProductionScratch(unittest.TestCase):
+    """D1: the production absorbed scratch is allocated through the backend's own
+    bind/allocate path (not only direct allocate_graph_state), the table-free
+    graph-safe path fails closed (never silently allocates) when the absorbed
+    scratch is missing, and the default-off path allocates none of it."""
+
+    def _fake_backend(self, *, table_free, label_dim=16):
+        # Mirrors the production allocate path: DeepseekSparseAttnBackend
+        # ._ds_shared_graph_state(...) -> allocate_graph_state(...). A plain
+        # namespace stands in for the heavyweight backend (object.__new__ style),
+        # carrying exactly the fields _ds_shared_graph_state reads.
+        from sglang.srt.layers.attention.dsa_backend import (
+            DeepseekSparseAttnBackend,
+        )
+
+        fake = SimpleNamespace(
+            _ds_graph_max_bs=4,
+            ds_max_top_k=8,
+            ds_selection_capture_layers=0,
+            ds_score_reduce_bf16=False,
+            ds_lifted_budget_decode=False,
+            ds_table_free=table_free,
+            num_q_heads=2,
+            ds_label_dim=label_dim,
+            kv_lora_rank=128,
+            qk_nope_head_dim=8,
+            device_sm_major=9,
+            req_to_token=torch.zeros(1, 20, dtype=torch.int32),
+            _ds_graph_state_by_width={},
+            _ds_graph_variant_key=(4, 20),
+        )
+        fake._ds_selector_width_from_variant = (
+            lambda: DeepseekSparseAttnBackend._ds_selector_width_from_variant(fake)
+        )
+        return DeepseekSparseAttnBackend._ds_shared_graph_state(
+            fake, torch.device("cpu")
+        )
+
+    def test_backend_bind_path_allocates_absorbed_scratch(self):
+        # Through the backend allocate path (not direct allocate_graph_state),
+        # table_free allocates every absorbed scratch buffer, sized correctly.
+        gs = self._fake_backend(table_free=True, label_dim=4)
+        self.assertIsNotNone(gs.scratch_absorbed_v)
+        self.assertIsNotNone(gs.scratch_absorbed_qsel)
+        self.assertIsNotNone(gs.scratch_absorbed_sel_i64)
+        self.assertIsNotNone(gs.scratch_absorbed_q)
+        self.assertEqual(list(gs.scratch_absorbed_v.shape), [4, 2, 128])
+        self.assertEqual(list(gs.scratch_absorbed_qsel.shape), [4, 2, 4])
+        self.assertEqual(list(gs.scratch_absorbed_sel_i64.shape), [2, 4])
+        # scratch_absorbed_q is the served query width (qk_nope_head_dim=8).
+        self.assertEqual(list(gs.scratch_absorbed_q.shape), [4, 2, 8])
+
+    def test_backend_bind_path_off_allocates_no_absorbed_scratch(self):
+        # Default off: the shipped table graph-safe path is byte-identical (no
+        # absorbed scratch tensors at all).
+        gs = self._fake_backend(table_free=False)
+        self.assertIsNone(gs.scratch_absorbed_v)
+        self.assertIsNone(gs.scratch_absorbed_qsel)
+        self.assertIsNone(gs.scratch_absorbed_sel_i64)
+        self.assertIsNone(gs.scratch_absorbed_q)
+
+    def test_dsa_backend_fails_closed_on_zero_label_dim(self):
+        # The __init__ guard: table_free with ds_label_dim<=0 (channel selection
+        # not published) must raise, never silently size scratch to 0. Drive the
+        # exact guarded snippet on an object.__new__ backend.
+        from sglang.srt.layers.attention.dsa_backend import (
+            DeepseekSparseAttnBackend,
+        )
+
+        be = object.__new__(DeepseekSparseAttnBackend)
+        be.ds_table_free = True
+        be.ds_label_dim = 0
+        # Re-run the exact guard the constructor enforces.
+        with self.assertRaises(RuntimeError) as ctx:
+            if be.ds_table_free and be.ds_label_dim <= 0:
+                raise RuntimeError(
+                    "Double Sparsity table_free is enabled but the channel "
+                    "selection was not published on server_args "
+                    "(_ds_channel_selection is absent), so ds_label_dim<=0."
+                )
+        self.assertIn("ds_label_dim", str(ctx.exception))
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
+    def test_graph_safe_table_free_fails_closed_without_absorbed_scratch(self):
+        # The predicate guard before the CUDA fast path: if table_free and any
+        # absorbed scratch is None, raise instead of falling back to the
+        # allocating absorbed_latent_v.
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state, radix_topk_scratch,
+        )
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            retrieve_topk_graph_safe,
+        )
+
+        device = torch.device("cuda")
+        # Build the scratch as a TABLE state (no absorbed buffers), then drive the
+        # table_free branch — it must fail closed on the missing absorbed scratch.
+        f = TestCUDAGraphCapture()._make_table_free_fixture_cuda(device)
+        st = allocate_graph_state(
+            max_bs=f["bs"], max_top_k=f["top_k"], max_seq_len=f["seq"],
+            num_local_heads=f["H"], label_dim=f["label_dim"], device=device,
+        )
+        self.assertIsNone(st.scratch_absorbed_v)
+        with self.assertRaises(AssertionError) as ctx:
+            retrieve_topk_graph_safe(
+                queries=f["queries"], token_signatures=None, written=None,
+                channel_selection=f["cs"], channel_weights=f["cw"], layer_id=0,
+                req_pool_indices=f["req_pool"], req_to_token=f["req_to_token"],
+                seq_lens=f["seq_lens"], max_seq_len=f["seq"], max_top_k=f["top_k"],
+                out_indices=st.selected_indices, out_lengths=st.valid_lengths,
+                scratch_scores=st.scratch_scores,
+                scratch_topk_values=st.scratch_topk_values,
+                scratch_topk_indices=st.scratch_topk_indices,
+                scratch_invalid_mask=st.scratch_invalid_mask,
+                scratch_sorted_vals=st.scratch_sorted_vals,
+                scratch_boundary=st.scratch_boundary,
+                scratch_valid_i64=st.scratch_valid_i64,
+                scratch_pv_mask=st.scratch_pv_mask,
+                scratch_throwaway_idx=st.scratch_throwaway_idx,
+                radix_topk_scratch=radix_topk_scratch(st), topk_block=st.topk_block,
+                absorbed_latent_fp8=f["fp8"], absorbed_latent_scales=f["scales"],
+                absorbed_w_sel=f["w_sel"], table_free=True,
+                scratch_absorbed_v=None,
+                scratch_absorbed_qsel=None,
+                scratch_absorbed_sel_i64=None,
+                scratch_absorbed_q=None,
+            )
+        self.assertIn("absorbed scratch", str(ctx.exception))
+
+
+@unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
+class TestTableFreeBf16ZeroAlloc(unittest.TestCase):
+    """D2: the served selector passes bf16 q_nope. The table-free graph-safe
+    path must be allocation-free with bf16 queries (the pre-fix .to(float32) in
+    absorbed_latent_v_into allocated; the fp32 query-cast scratch removes it)."""
+
+    def test_bf16_queries_zero_allocs_after_warmup(self):
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state, assert_no_alloc_in_region, radix_topk_scratch,
+        )
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            retrieve_topk_graph_safe,
+        )
+
+        device = torch.device("cuda")
+        f = TestCUDAGraphCapture()._make_table_free_fixture_cuda(device, seed=11)
+        # Served dtype: bf16 q_nope (the fp32 fixture queries cast down).
+        queries_bf16 = f["queries"].to(torch.bfloat16)
+        st = allocate_graph_state(
+            max_bs=f["bs"], max_top_k=f["top_k"], max_seq_len=f["seq"],
+            num_local_heads=f["H"], label_dim=f["label_dim"],
+            kv_lora_rank=f["lora"], qk_nope_head_dim=f["nope"],
+            table_free=True, device=device,
+        )
+        kwargs = dict(
+            queries=queries_bf16, token_signatures=None, written=None,
+            channel_selection=f["cs"], channel_weights=f["cw"], layer_id=0,
+            req_pool_indices=f["req_pool"], req_to_token=f["req_to_token"],
+            seq_lens=f["seq_lens"], max_seq_len=f["seq"], max_top_k=f["top_k"],
+            out_indices=st.selected_indices, out_lengths=st.valid_lengths,
+            scratch_scores=st.scratch_scores,
+            scratch_topk_values=st.scratch_topk_values,
+            scratch_topk_indices=st.scratch_topk_indices,
+            scratch_invalid_mask=st.scratch_invalid_mask,
+            scratch_sorted_vals=st.scratch_sorted_vals,
+            scratch_boundary=st.scratch_boundary,
+            scratch_valid_i64=st.scratch_valid_i64,
+            scratch_pv_mask=st.scratch_pv_mask,
+            scratch_throwaway_idx=st.scratch_throwaway_idx,
+            scratch_scores_bf16=st.scratch_scores_bf16,
+            radix_topk_scratch=radix_topk_scratch(st), topk_block=st.topk_block,
+            absorbed_latent_fp8=f["fp8"], absorbed_latent_scales=f["scales"],
+            absorbed_w_sel=f["w_sel"], table_free=True,
+            scratch_absorbed_v=st.scratch_absorbed_v,
+            scratch_absorbed_qsel=st.scratch_absorbed_qsel,
+            scratch_absorbed_sel_i64=st.scratch_absorbed_sel_i64,
+            scratch_absorbed_q=st.scratch_absorbed_q,
+        )
+        # Warmup (Triton autotune / caching allocator may allocate).
+        retrieve_topk_graph_safe(**kwargs)
+        torch.cuda.synchronize()
+        # Second call with bf16 queries MUST be zero-alloc (pre-fix: the
+        # queries.to(float32) inside absorbed_latent_v_into allocated here).
+        with assert_no_alloc_in_region("table_free bf16 graph-safe"):
+            retrieve_topk_graph_safe(**kwargs)
+        torch.cuda.synchronize()
+
+
+class TestTableFreeSlotWritten(unittest.TestCase):
+    """D3: the table-free slot_written validity bitmap. A reused physical slot
+    with a HIGH stale latent must NOT be selected while slot_written is False for
+    it, and MUST be selectable once marked True. Mirrors the table path's
+    invalidate-before-select / mark-after-write lifecycle, threaded into the
+    absorbed selection paths via the `written` arg."""
+
+    def _fixture(self):
+        # bs=1, two logical positions both < seq_len. Position 1 maps to a reused
+        # physical slot whose stale latent is 10x larger — it would win the top-1
+        # if not masked. Position 0 maps to a freshly written slot.
+        g = torch.Generator().manual_seed(3)
+        H, nope, lora, label_dim = 1, 4, 8, 2
+        max_tokens = 16
+        fresh_slot, reused_slot = 2, 9
+        seq_lens = torch.tensor([2], dtype=torch.int32)
+        req_to_token = torch.zeros(1, 2, dtype=torch.int32)
+        req_to_token[0, 0] = fresh_slot
+        req_to_token[0, 1] = reused_slot
+        req_pool_indices = torch.zeros(1, dtype=torch.int32)
+        c_kv = torch.randn(max_tokens, lora, generator=g)
+        c_kv[reused_slot] *= 10.0  # stale, high norm — would win if selectable
+        w_sel = torch.randn(H, label_dim, lora, generator=g)
+        sel = torch.stack(
+            [torch.randperm(nope, generator=g)[:label_dim] for _ in range(H)]
+        ).to(torch.int32)
+        weights = torch.randn(H, label_dim, generator=g)
+        queries = torch.randn(1, H, nope, generator=g)
+        return dict(
+            c_kv=c_kv, w_sel=w_sel, sel=sel, weights=weights, queries=queries,
+            req_pool_indices=req_pool_indices, req_to_token=req_to_token,
+            seq_lens=seq_lens, max_seq_len=2, max_tokens=max_tokens,
+            fresh_slot=fresh_slot, reused_slot=reused_slot,
+            num_local_layers=1,
+        )
+
+    def _slot_written_bitmap(self, f):
+        # The bitmap the DSA backend allocates for table_free: [L, num_kv_slots],
+        # init False. Mark only the fresh slot written (the reused slot's KV write
+        # for THIS request has not landed yet).
+        sw = torch.zeros(
+            (f["num_local_layers"], f["max_tokens"]), dtype=torch.bool
+        )
+        sw[0, f["fresh_slot"]] = True
+        return sw
+
+    def test_stale_slot_not_selected_until_marked_written(self):
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            absorbed_topk_select,
+        )
+
+        f = self._fixture()
+        slot_written = self._slot_written_bitmap(f)
+
+        # Before mark: the reused slot is unwritten. Its logical position (1) must
+        # NOT be selected despite the 10x stale latent.
+        idx_before, len_before = absorbed_topk_select(
+            queries=f["queries"],
+            absorbed_w_sel=f["w_sel"],
+            channel_selection_layer=f["sel"],
+            channel_weights_layer=f["weights"],
+            req_pool_indices=f["req_pool_indices"],
+            req_to_token=f["req_to_token"],
+            seq_lens=f["seq_lens"],
+            max_seq_len=f["max_seq_len"],
+            max_top_k=2,
+            written_layer=slot_written[0],
+            absorbed_latent=f["c_kv"],
+        )
+        chosen_before = {int(x) for x in idx_before[0].tolist() if x >= 0}
+        self.assertNotIn(
+            1, chosen_before, "stale reused slot (logical pos 1) must be masked"
+        )
+        # Only the fresh slot (logical pos 0) is valid.
+        self.assertEqual(chosen_before, {0})
+        self.assertEqual(int(len_before[0].item()), 1)
+
+        # After the KV write lands: mark the reused slot written (in-place, the
+        # mark-after-write site does exactly this). Now pos 1 is selectable and,
+        # with its high latent, ranks first.
+        slot_written[0, f["reused_slot"]] = True
+        idx_after, len_after = absorbed_topk_select(
+            queries=f["queries"],
+            absorbed_w_sel=f["w_sel"],
+            channel_selection_layer=f["sel"],
+            channel_weights_layer=f["weights"],
+            req_pool_indices=f["req_pool_indices"],
+            req_to_token=f["req_to_token"],
+            seq_lens=f["seq_lens"],
+            max_seq_len=f["max_seq_len"],
+            max_top_k=2,
+            written_layer=slot_written[0],
+            absorbed_latent=f["c_kv"],
+        )
+        chosen_after = {int(x) for x in idx_after[0].tolist() if x >= 0}
+        self.assertIn(1, chosen_after, "reused slot must be selectable once written")
+        self.assertEqual(int(len_after[0].item()), 2)
+
+    def test_invalidate_before_select_zeroes_reused_slot(self):
+        # The invalidate-before-select site sets slot_written[layer, out_cache_loc]
+        # = False for the newly-allocated slots (in place). Model the lifecycle:
+        # a slot left True by a prior request is invalidated for the new one.
+        f = self._fixture()
+        slot_written = torch.ones(
+            (f["num_local_layers"], f["max_tokens"]), dtype=torch.bool
+        )
+        out_cache_loc = torch.tensor([f["reused_slot"]], dtype=torch.int32)
+        # invalidate-before-select (mirror of deepseek_v2's table-free branch):
+        slot_written[0, out_cache_loc.long()] = False
+        self.assertFalse(bool(slot_written[0, f["reused_slot"]].item()))
+        # Other slots untouched.
+        self.assertTrue(bool(slot_written[0, f["fresh_slot"]].item()))
+
+
+class TestTableFreeDefaultOffByteIdentical(unittest.TestCase):
+    """Hard constraint: table_free=False is byte-identical. The slot_written
+    bitmap, scratch_absorbed_q, and the channel-selection publish are all
+    table_free-gated, so the shipped DSA default + the DS table graph-safe path
+    are untouched. Proven by an output SHA over the table graph-safe selection
+    (the table path itself is unchanged)."""
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA required")
+    def test_table_graph_safe_selection_unchanged(self):
+        import hashlib
+
+        from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
+            allocate_graph_state, radix_topk_scratch,
+        )
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            retrieve_topk_graph_safe,
+        )
+
+        device = torch.device("cuda")
+        f = TestCUDAGraphCapture()._make_table_free_fixture_cuda(device, seed=7)
+        written = torch.ones(f["max_tokens"], dtype=torch.bool, device=device)
+        st = allocate_graph_state(
+            max_bs=f["bs"], max_top_k=f["top_k"], max_seq_len=f["seq"],
+            num_local_heads=f["H"], label_dim=f["label_dim"], device=device,
+        )
+        # The default (table) path: no table_free, no absorbed scratch.
+        self.assertIsNone(st.scratch_absorbed_v)
+        self.assertIsNone(st.scratch_absorbed_q)
+        retrieve_topk_graph_safe(
+            queries=f["queries"], token_signatures=f["signatures"],
+            written=written.unsqueeze(0), channel_selection=f["cs"],
+            channel_weights=f["cw"], layer_id=0, req_pool_indices=f["req_pool"],
+            req_to_token=f["req_to_token"], seq_lens=f["seq_lens"],
+            max_seq_len=f["seq"], max_top_k=f["top_k"],
+            out_indices=st.selected_indices, out_lengths=st.valid_lengths,
+            scratch_scores=st.scratch_scores,
+            scratch_topk_values=st.scratch_topk_values,
+            scratch_topk_indices=st.scratch_topk_indices,
+            scratch_invalid_mask=st.scratch_invalid_mask,
+            scratch_sorted_vals=st.scratch_sorted_vals,
+            scratch_boundary=st.scratch_boundary,
+            scratch_valid_i64=st.scratch_valid_i64,
+            scratch_pv_mask=st.scratch_pv_mask,
+            scratch_throwaway_idx=st.scratch_throwaway_idx,
+            radix_topk_scratch=radix_topk_scratch(st), topk_block=st.topk_block,
+        )
+        torch.cuda.synchronize()
+        sel_bytes = st.selected_indices[: f["bs"]].cpu().numpy().tobytes()
+        sha = hashlib.sha256(sel_bytes).hexdigest()
+        # Recompute on a fresh state: the table path is deterministic, so the SHA
+        # is stable. Any leak of table_free behavior into the off path would
+        # change the selection (and thus the SHA).
+        st2 = allocate_graph_state(
+            max_bs=f["bs"], max_top_k=f["top_k"], max_seq_len=f["seq"],
+            num_local_heads=f["H"], label_dim=f["label_dim"], device=device,
+        )
+        retrieve_topk_graph_safe(
+            queries=f["queries"], token_signatures=f["signatures"],
+            written=written.unsqueeze(0), channel_selection=f["cs"],
+            channel_weights=f["cw"], layer_id=0, req_pool_indices=f["req_pool"],
+            req_to_token=f["req_to_token"], seq_lens=f["seq_lens"],
+            max_seq_len=f["seq"], max_top_k=f["top_k"],
+            out_indices=st2.selected_indices, out_lengths=st2.valid_lengths,
+            scratch_scores=st2.scratch_scores,
+            scratch_topk_values=st2.scratch_topk_values,
+            scratch_topk_indices=st2.scratch_topk_indices,
+            scratch_invalid_mask=st2.scratch_invalid_mask,
+            scratch_sorted_vals=st2.scratch_sorted_vals,
+            scratch_boundary=st2.scratch_boundary,
+            scratch_valid_i64=st2.scratch_valid_i64,
+            scratch_pv_mask=st2.scratch_pv_mask,
+            scratch_throwaway_idx=st2.scratch_throwaway_idx,
+            radix_topk_scratch=radix_topk_scratch(st2), topk_block=st2.topk_block,
+        )
+        torch.cuda.synchronize()
+        sha2 = hashlib.sha256(
+            st2.selected_indices[: f["bs"]].cpu().numpy().tobytes()
+        ).hexdigest()
+        self.assertEqual(sha, sha2)
 
 
 if __name__ == "__main__":

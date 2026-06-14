@@ -574,6 +574,17 @@ class DeepseekSparseAttnBackend(
             if self._ds_channel_selection is not None
             else 0
         )
+        # Table-free selection sizes its absorbed scratch (and slot_written
+        # bitmap) from ds_label_dim. A zero label_dim would silently size the
+        # scratch to 0 and drop the table-free path back onto the allocating
+        # fallback — fail closed instead of serving a broken selector.
+        if self.ds_table_free and self.ds_label_dim <= 0:
+            raise RuntimeError(
+                "Double Sparsity table_free is enabled but the channel selection "
+                "was not published on server_args (_ds_channel_selection is "
+                "absent), so ds_label_dim<=0. finalize_double_sparsity_bind() must "
+                "publish _ds_channel_selection before the DSA backend is built."
+            )
         # Published by finalize_double_sparsity_bind() (which runs before this
         # backend is constructed). Fall back to the model's own no-PE head width
         # rather than a fixed default so a missing publish can never silently
@@ -585,6 +596,26 @@ class DeepseekSparseAttnBackend(
                 self.qk_nope_head_dim,
             )
         )
+        # Table-free validity bitmap: 1 bool per (local layer, physical KV slot).
+        # The table path keeps this inside the TokenLabelTable's `written`; the
+        # table-free path has no table, so a reused physical slot's STALE latent
+        # could be selected before the fresh KV write lands. This independent
+        # bitmap mirrors the table's invalidate-before-select / mark-after-write
+        # lifecycle (NOT the multi-GB signatures). Only allocated when table_free;
+        # the table path leaves it None (byte-identical). Indexed by GLOBAL
+        # layer_id, like the table's `written` and `_ds_channel_selection`.
+        self._ds_slot_written: Optional[torch.Tensor] = None
+        if self.ds_table_free:
+            _num_local_layers = int(self._ds_channel_selection.shape[0])
+            _num_kv_slots = self.token_to_kv_pool.size + self.token_to_kv_pool.page_size
+            self._ds_slot_written = torch.zeros(
+                (_num_local_layers, _num_kv_slots),
+                dtype=torch.bool,
+                device=self.device,
+            )
+            # Publish so the model layer's selector path (deepseek_v2) can resolve
+            # it through the ForwardContext-published attention backend.
+            setattr(model_runner.server_args, "_ds_slot_written", self._ds_slot_written)
         if self.num_q_heads <= 64:
             self.flashmla_kv_num_q_heads = 64
         elif self.num_q_heads <= 128:
@@ -933,6 +964,7 @@ class DeepseekSparseAttnBackend(
                 num_local_heads=self.num_q_heads,
                 label_dim=self.ds_label_dim,
                 kv_lora_rank=self.kv_lora_rank,
+                qk_nope_head_dim=self.qk_nope_head_dim,
                 device=cache_seqlens_int32.device,
             )
 
@@ -1149,6 +1181,7 @@ class DeepseekSparseAttnBackend(
                 num_local_heads=self.num_q_heads,
                 label_dim=self.ds_label_dim,
                 kv_lora_rank=self.kv_lora_rank,
+                qk_nope_head_dim=self.qk_nope_head_dim,
                 device=device,
             )
             self._ds_graph_state_by_width[width] = state
@@ -1709,11 +1742,19 @@ class DeepseekSparseAttnBackend(
         write labels; the extend snapshot only publishes when it is present
         and the mode is extend.
         """
-        if (
-            not self.enable_double_sparsity
-            or self._ds_token_label_table is None
-            or self._ds_channel_selection is None
-        ):
+        if not self.enable_double_sparsity:
+            return
+        # Table-free mark-after-write: the KV bytes for this layer/slot were just
+        # written by set_mla_kv_buffer (the caller), so mark these physical slots
+        # valid for selection. In-place index write on the preallocated bitmap
+        # (graph-safe — no per-step allocation). Mirrors the table path's
+        # token_label_write setting written=True. The table-free path has no
+        # TokenLabelTable, so it returns here after the mark.
+        if self._ds_token_label_table is None:
+            if self._ds_slot_written is not None:
+                self._ds_slot_written[layer.layer_id, cache_loc.long()] = True
+            return
+        if self._ds_channel_selection is None:
             return
         kv_b_proj = getattr(layer, "kv_b_proj", None)
         if kv_b_proj is None:

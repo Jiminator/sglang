@@ -1991,6 +1991,21 @@ class DeepseekV2AttentionMLA(
         # Default off ⇒ the table is allocated + bound exactly as before.
         table_free = bool(getattr(ds_parsed, "table_free", False))
 
+        # Publish the channel selection + no-PE head width on server_args
+        # REGARDLESS of the table / table-free branch. The table path's KV-write
+        # hook needs both; the table-free path additionally derives the absorbed
+        # scratch label_dim from _ds_channel_selection in DeepseekSparseAttnBackend
+        # (without this publish on the table-free branch the backend reads
+        # ds_label_dim=0 and never allocates the absorbed scratch). The mask loads
+        # on CPU but the write hook / absorbed scorer index GPU-resident tensors
+        # with it, so it must live on the selector's device.
+        setattr(
+            server_args,
+            "_ds_channel_selection",
+            local_mask.channel_selection.to(self.double_sparsity_selector.device),
+        )
+        setattr(server_args, "_ds_qk_nope_head_dim", self.qk_nope_head_dim)
+
         # Shared per-rank TokenLabelTable: one allocator-owned object across
         # all DS attention layers in the same model+rank. Stored on server_args
         # so the second layer's init reuses it.
@@ -2041,15 +2056,6 @@ class DeepseekV2AttentionMLA(
                 )
                 raise
             setattr(server_args, "_double_sparsity_token_label_table", table)
-            # Publish channel selection and nope_dim for the KV-write hook in dsa_backend.
-            # The mask loads on CPU but the KV-write hook gathers GPU-resident K_nope
-            # with it as the index, so it must live on the label table's device.
-            setattr(
-                server_args,
-                "_ds_channel_selection",
-                local_mask.channel_selection.to(self.double_sparsity_selector.device),
-            )
-            setattr(server_args, "_ds_qk_nope_head_dim", self.qk_nope_head_dim)
         elif not table_free:
             # Table already allocated by an earlier layer's init. Guard that it was
             # sized correctly for this KV pool — a mis-sized reuse would cause
@@ -2297,6 +2303,27 @@ class DeepseekV2AttentionMLA(
                         invalidate_token_label_slots,
                     )
                     invalidate_token_label_slots(_tlt.written, layer_id, _out_cache_loc)
+                # Table-free has no TokenLabelTable; the same invalidation runs on
+                # the independent slot_written bitmap (resolved through the
+                # ForwardContext attention backend), so a reused physical slot's
+                # stale latent cannot be selected before its fresh KV write lands.
+                # In-place index write on the preallocated bitmap (graph-safe).
+                if (
+                    _out_cache_loc is not None
+                    and _tlt is None
+                    and bool(
+                        getattr(
+                            self.double_sparsity_selector.config, "table_free", False
+                        )
+                    )
+                    and _has_forward_context()
+                ):
+                    _sw_backend = _get_attn_backend()
+                    if isinstance(_sw_backend, _TboAttnBackend):
+                        _sw_backend = _sw_backend.primary
+                    _slot_written = getattr(_sw_backend, "_ds_slot_written", None)
+                    if _slot_written is not None:
+                        _slot_written[layer_id, _out_cache_loc.long()] = False
                 # Use projected Q-noPE for DS selector when available; fall back
                 # to latent q_lora only for the placeholder path (unit tests).
                 queries_for_ds = q_nope if q_nope is not None else q_lora
@@ -2363,11 +2390,22 @@ class DeepseekV2AttentionMLA(
                 # precondition is the bind-time absorbed projection instead. The
                 # table path keeps the non-None-table precondition unchanged.
                 _table_free = bool(getattr(_selector.config, "table_free", False))
-                _has_selector_state = (
-                    _selector.absorbed_w_sel is not None
-                    if _table_free
-                    else _selector.token_label_table is not None
-                )
+                # Table-free requires BOTH the bind-time projection AND the
+                # preallocated absorbed scratch (v_h / weighted-query / int64 mask /
+                # fp32 query cast) — without them the graph-safe path would route
+                # through the allocating fallback, so insist on all of them here so
+                # the missing-scratch case fails closed below instead of allocating.
+                if _table_free:
+                    _has_selector_state = (
+                        _selector.absorbed_w_sel is not None
+                        and _ds_graph_state is not None
+                        and _ds_graph_state.scratch_absorbed_v is not None
+                        and _ds_graph_state.scratch_absorbed_qsel is not None
+                        and _ds_graph_state.scratch_absorbed_sel_i64 is not None
+                        and _ds_graph_state.scratch_absorbed_q is not None
+                    )
+                else:
+                    _has_selector_state = _selector.token_label_table is not None
                 _use_graph_safe = (
                     not _force_eager_select
                     and _ds_graph_state is not None
@@ -2449,14 +2487,35 @@ class DeepseekV2AttentionMLA(
 
                     # Table tensors are absent on the table-free path (no
                     # TokenLabelTable); the table_free branch in
-                    # retrieve_topk_graph_safe never reads them.
+                    # retrieve_topk_graph_safe never reads them. The validity
+                    # `written` arg for table_free is the independent slot_written
+                    # bitmap [L, T] (the absorbed kernel masks unwritten slots to
+                    # -inf via its HAS_WRITTEN path). Fail closed if the bitmap is
+                    # absent — a missing guard would let a reused slot's stale
+                    # latent be selected.
                     _tlt = _selector.token_label_table
+                    _written_arg = _tlt.written if _tlt is not None else None
+                    if _table_free:
+                        _sw_backend = None
+                        if _has_forward_context():
+                            _sw_backend = _get_attn_backend()
+                            if isinstance(_sw_backend, _TboAttnBackend):
+                                _sw_backend = _sw_backend.primary
+                        _written_arg = getattr(_sw_backend, "_ds_slot_written", None)
+                        if _written_arg is None:
+                            raise RuntimeError(
+                                "Double Sparsity table_free requires the "
+                                "slot_written validity bitmap, but it is absent on "
+                                "the attention backend; a reused KV slot's stale "
+                                "latent could be selected. Ensure the DSA backend "
+                                "allocated _ds_slot_written under table_free."
+                            )
                     retrieve_topk_graph_safe(
                         queries=queries_for_ds,
                         token_signatures=(
                             _tlt.signatures if _tlt is not None else None
                         ),
-                        written=_tlt.written if _tlt is not None else None,
+                        written=_written_arg,
                         channel_selection=_selector.channel_mask.channel_selection,
                         channel_weights=_selector.channel_mask.channel_weights,
                         layer_id=layer_id,
@@ -2519,6 +2578,9 @@ class DeepseekV2AttentionMLA(
                         ),
                         scratch_absorbed_sel_i64=getattr(
                             _ds_graph_state, "scratch_absorbed_sel_i64", None
+                        ),
+                        scratch_absorbed_q=getattr(
+                            _ds_graph_state, "scratch_absorbed_q", None
                         ),
                     )
                     selected_indices = _ds_graph_state.selected_indices[:_bs]

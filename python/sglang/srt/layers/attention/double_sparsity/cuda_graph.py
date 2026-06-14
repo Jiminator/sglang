@@ -85,6 +85,10 @@ class DSGraphState:
     scratch_absorbed_qsel: Optional[torch.Tensor] = None
     # scratch_absorbed_sel_i64: int64 [num_local_heads, label_dim]
     scratch_absorbed_sel_i64: Optional[torch.Tensor] = None
+    # scratch_absorbed_q: fp32 [max_bs, num_local_heads, qk_nope_head_dim] — the
+    # served bf16/fp16 query is cast into this in place (copy_), so the absorbed
+    # v_h build never calls queries.to(torch.float32) on the hot path.
+    scratch_absorbed_q: Optional[torch.Tensor] = None
     # Scratch bundle for the sequence-aware deterministic radix top-k
     # (topk_kernel.select_topk_sequence_order_triton). When present, the
     # graph-safe selection replaces the two full-width torch.topk passes.
@@ -154,6 +158,7 @@ def allocate_graph_state(
     lifted_head_dim: int = 576,
     table_free: bool = False,
     kv_lora_rank: int = 0,
+    qk_nope_head_dim: int = 0,
     device: Optional[torch.device] = None,
 ) -> DSGraphState:
     """Pre-allocate replay-stable buffers for the DS decode path.
@@ -176,7 +181,8 @@ def allocate_graph_state(
     max_top_k)``.  ``num_local_heads`` and ``label_dim`` size the table-free
     (absorbed-latent) scratch when ``table_free`` is set (the table path's Triton
     kernel reads heads/label_dim from the bound selector at call time, so it does
-    not need them); ``kv_lora_rank`` is the latent width for ``scratch_absorbed_v``.
+    not need them); ``kv_lora_rank`` is the latent width for ``scratch_absorbed_v``,
+    ``qk_nope_head_dim`` is the served query width for ``scratch_absorbed_q``.
     """
     if max_bs <= 0:
         raise ValueError(f"max_bs must be positive, got {max_bs}.")
@@ -218,6 +224,7 @@ def allocate_graph_state(
     scratch_absorbed_v = None
     scratch_absorbed_qsel = None
     scratch_absorbed_sel_i64 = None
+    scratch_absorbed_q = None
     scratch_req_pool_indices = None
     scratch_seq_lens = None
     lp_error_scratch = None
@@ -285,6 +292,16 @@ def allocate_graph_state(
             scratch_absorbed_sel_i64 = torch.zeros(
                 (num_local_heads, label_dim),
                 dtype=torch.int64,
+                device=device,
+            )
+            # The served query is bf16/fp16 [bs, H, qk_nope_head_dim]; cast it into
+            # this fp32 scratch in place so the v_h build never allocates. Fall back
+            # to label_dim width only when qk_nope_head_dim was not supplied (CPU
+            # unit fixtures); the production backend always passes it.
+            _q_width = qk_nope_head_dim if qk_nope_head_dim > 0 else label_dim
+            scratch_absorbed_q = torch.zeros(
+                (max_bs, num_local_heads, _q_width),
+                dtype=torch.float32,
                 device=device,
             )
         topk_nblocks = (max_seq_len + topk_block - 1) // topk_block
@@ -364,6 +381,7 @@ def allocate_graph_state(
         scratch_absorbed_v=scratch_absorbed_v,
         scratch_absorbed_qsel=scratch_absorbed_qsel,
         scratch_absorbed_sel_i64=scratch_absorbed_sel_i64,
+        scratch_absorbed_q=scratch_absorbed_q,
         scratch_topk_hist=scratch_topk_hist,
         scratch_topk_key_prefix=scratch_topk_key_prefix,
         scratch_topk_quota=scratch_topk_quota,
@@ -566,6 +584,7 @@ def capture_decode_step(
                 scratch_absorbed_v=state.scratch_absorbed_v,
                 scratch_absorbed_qsel=state.scratch_absorbed_qsel,
                 scratch_absorbed_sel_i64=state.scratch_absorbed_sel_i64,
+                scratch_absorbed_q=state.scratch_absorbed_q,
             )
         else:
             out_idx, out_len = selector.retrieve_topk(

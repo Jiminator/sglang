@@ -345,19 +345,22 @@ def absorbed_latent_score_logical_paged(
     scratch_v: Optional[torch.Tensor] = None,
     scratch_qsel: Optional[torch.Tensor] = None,
     channel_selection_i64: Optional[torch.Tensor] = None,
+    scratch_q: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """GPU equivalent of ``absorbed_latent.absorbed_latent_score_logical`` reading
     the paged fp8 latent. Builds ``v_h`` host-side then launches the paged kernel.
 
     Diagnostic path (default): ``v_h`` and the score are freshly allocated.
     Graph-safe path: ``scratch_v`` / ``scratch_qsel`` / ``channel_selection_i64``
-    (the int64 layer mask) build ``v_h`` allocation-free, and ``out`` receives the
-    score in place — so after warmup the call grows no caching-allocator counter.
+    (the int64 layer mask) / ``scratch_q`` (the fp32 query cast scratch) build
+    ``v_h`` allocation-free, and ``out`` receives the score in place — so after
+    warmup the call grows no caching-allocator counter.
     """
     if (
         scratch_v is not None
         and scratch_qsel is not None
         and channel_selection_i64 is not None
+        and scratch_q is not None
     ):
         from .absorbed_latent import absorbed_latent_v_into
 
@@ -368,6 +371,7 @@ def absorbed_latent_score_logical_paged(
             channel_selection_i64,
             channel_weights,
             scratch_qsel=scratch_qsel,
+            scratch_q=scratch_q,
         )
     else:
         from .absorbed_latent import absorbed_latent_v

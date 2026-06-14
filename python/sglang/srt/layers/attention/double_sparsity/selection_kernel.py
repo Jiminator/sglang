@@ -1669,6 +1669,7 @@ def retrieve_topk_graph_safe(
     scratch_absorbed_v: Optional[torch.Tensor] = None,  # fp32 [max_bs, H, kv_lora_rank]
     scratch_absorbed_qsel: Optional[torch.Tensor] = None,  # fp32 [max_bs, H, label_dim]
     scratch_absorbed_sel_i64: Optional[torch.Tensor] = None,  # int64 [H, label_dim]
+    scratch_absorbed_q: Optional[torch.Tensor] = None,  # fp32 [max_bs, H, nope_dim]
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Capture-safe retrieve_topk that writes results into caller-owned buffers.
 
@@ -1829,14 +1830,27 @@ def retrieve_topk_graph_safe(
             "table_free graph-safe selection requires the resident fp8 latent "
             "(absorbed_latent_fp8, absorbed_latent_scales)."
         )
+        # Fail closed: the absorbed scratch MUST be present before the CUDA fast
+        # path runs. A None here would make absorbed_latent_score_logical_paged
+        # fall back to the ALLOCATING absorbed_latent_v (breaking the graph-safe
+        # zero-alloc contract) instead of building v_h in place.
+        assert (
+            scratch_absorbed_v is not None
+            and scratch_absorbed_qsel is not None
+            and scratch_absorbed_sel_i64 is not None
+            and scratch_absorbed_q is not None
+        ), (
+            "table_free graph-safe selection requires the preallocated absorbed "
+            "scratch (scratch_absorbed_v, scratch_absorbed_qsel, "
+            "scratch_absorbed_sel_i64, scratch_absorbed_q); one is None, which "
+            "would silently route through the allocating fallback."
+        )
         from sglang.srt.layers.attention.double_sparsity.absorbed_latent_kernel import (
             absorbed_latent_score_logical_paged,
         )
 
-        sel_i64 = None
-        if scratch_absorbed_sel_i64 is not None:
-            scratch_absorbed_sel_i64.copy_(sel_layer)
-            sel_i64 = scratch_absorbed_sel_i64
+        scratch_absorbed_sel_i64.copy_(sel_layer)
+        sel_i64 = scratch_absorbed_sel_i64
         torch.cuda.nvtx.range_push("ds_absorbed_score")
         absorbed_latent_score_logical_paged(
             queries,
@@ -1855,6 +1869,7 @@ def retrieve_topk_graph_safe(
             scratch_v=scratch_absorbed_v,
             scratch_qsel=scratch_absorbed_qsel,
             channel_selection_i64=sel_i64,
+            scratch_q=scratch_absorbed_q,
         )
         torch.cuda.nvtx.range_pop()
     else:

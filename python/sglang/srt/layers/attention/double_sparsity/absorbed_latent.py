@@ -122,25 +122,34 @@ def absorbed_latent_v_into(
     channel_weights: torch.Tensor,
     *,
     scratch_qsel: torch.Tensor,
+    scratch_q: torch.Tensor,
 ) -> torch.Tensor:
     """Allocation-free :func:`absorbed_latent_v` — writes ``v_h`` into a caller-owned
     ``out[:bs]`` (fp32 ``[bs_buf, H, kv_lora_rank]``) for the graph-safe path.
 
     Same value as :func:`absorbed_latent_v`: ``v_h[b,h,l] = Σ_d (w_c·q_c)·w_sel[h,d,l]``.
-    Every step writes into caller-owned scratch (``gather(out=)``, ``mul_``, then a
-    head-batched ``bmm(out=)`` over a transposed view of ``out``), so after warmup the
-    caching-allocator counter does not grow — CUDA-graph safe. ``scratch_qsel`` is
-    fp32 ``[bs_buf, H, label_dim]`` for the weighted-gather; ``channel_selection`` must
-    be int64 here (the caller pre-copies the int32 layer mask into an int64 scratch so
-    ``gather`` does no per-step ``.long()`` allocation).
+    Every step writes into caller-owned scratch (an in-place fp32 cast of ``queries``,
+    ``gather(out=)``, ``mul_``, then a head-batched ``bmm(out=)`` over a transposed
+    view of ``out``), so after warmup the caching-allocator counter does not grow —
+    CUDA-graph safe. ``scratch_qsel`` is fp32 ``[bs_buf, H, label_dim]`` for the
+    weighted-gather; ``scratch_q`` is fp32 ``[bs_buf, H, qk_nope_head_dim]`` that the
+    bf16/fp16 served ``queries`` are cast into in place (``copy_`` does the dtype cast
+    with no allocation), so the hot path never calls ``queries.to(torch.float32)``.
+    ``channel_selection`` must be int64 here (the caller pre-copies the int32 layer
+    mask into an int64 scratch so ``gather`` does no per-step ``.long()`` allocation).
     """
     bs = queries.shape[0]
     out_v = out[:bs]  # [bs, H, lora]
     label_dim = int(channel_selection.shape[1])
     q_sel = scratch_qsel[:bs, :, :label_dim]  # [bs, H, label_dim]
+    # Cast the served bf16/fp16 query into the fp32 scratch in place (copy_ does
+    # the dtype conversion without allocating), so the gather reads fp32 without a
+    # per-step queries.to(torch.float32).
+    q_f32 = scratch_q[:bs, :, : queries.shape[2]]  # [bs, H, qk_nope_head_dim]
+    q_f32.copy_(queries)
     # weighted query at the selected channels: w_c · q_{S_h}  -> [bs, H, label_dim].
     torch.gather(
-        queries.to(torch.float32),
+        q_f32,
         2,
         channel_selection.unsqueeze(0).expand(bs, -1, -1),
         out=q_sel,
