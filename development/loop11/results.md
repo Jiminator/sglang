@@ -1,11 +1,18 @@
 # Loop 11 Results — Authoritative Current State
 
 > Maintained rewrite-over-append: this document always reflects the loop's current state.
-> Last regenerated: Round 10, 2026-06-14. HEAD at round start: `df6ac1aeb`.
+> Last regenerated: Round 11, 2026-06-14. HEAD at round start: `776f3e613`.
 
 ## 1. Current state summary
 
-- **M0 COMPLETE (Rounds 0–4); M1 (task3 + task4) COMPLETE + VERIFIED (R9 review). M2 STARTED (R10).**
+- **M0 COMPLETE (Rounds 0–4); M1 (task3 + task4) COMPLETE + VERIFIED (R9 review). M2 task5 IN PROGRESS (R10–R11).**
+- **R11 — task5 logical-domain + real-`kv_b_proj` + fp8 oracle.** Added `build_absorbed_projection`
+  (bind-time W_UK from the real block-fp8 `kv_b_proj`) and `absorbed_latent_score_logical` (paged
+  over `req_to_token` with seq-len/unwritten masking, mirroring the production logical scorer).
+  Equivalence now proven in the **production logical domain**: absorbed top-k EXACTLY matches the
+  LIVE `retrieve_topk_via_labels` logical mode on a multi-request fixture (non-contiguous slots,
+  holes, unequal seq_lens); plus an fp8-latent overlap oracle (≥0.9). Remaining: GPU Triton kernel,
+  serving recall@2048, written-slot validity (§10).
 - **R10 — M2 task5 absorbed-latent score-only prototype (in progress).** Proved the load-bearing
   identity (signature = `channel_select(W_UK·c_kv)`, weights query-side) and landed a CPU reference
   `absorbed_latent.py` (`absorbed_latent_score`) computing `score = max_h v_h·c_kv` directly from the
@@ -405,7 +412,7 @@ descriptor, not the gate. Admission/capacity is met.
 
 M1 is VERIFIED COMPLETE (R9 review). M2 task5 STARTED (§10).
 
-## 10. M2 task5: absorbed-latent score-only prototype — IN PROGRESS (R10)
+## 10. M2 task5: absorbed-latent score-only prototype — IN PROGRESS (R10–R11)
 
 The structural fix (DEC-2): replace the materialized signature table with scores read directly from
 the resident fp8 KV latent. **Load-bearing identity (proven, code-cited):** today's
@@ -415,16 +422,22 @@ applied on the query side (`dsa_backend.py:1696-1733` + `token_label_write.py:80
 `selection_kernel.project_query_onto_channels`). Substituting collapses the score to
 `max_h (v_h · c_kv)` with `v_h = Σ_{c∈S_h} w_c·q_c·W_UK[h][c,:]` — the table is unnecessary.
 
-**Landed R10 (CPU reference + equivalence gate):** `double_sparsity/absorbed_latent.py`
-(`absorbed_latent_v`, `absorbed_latent_score`), fp32, `scorer_norm="off"`. 3 unit tests
-(`TestAbsorbedLatentScore`): (1) exact fp32 match vs the hand-derived label score; (2) **≥0.99 top-k
-overlap at K=2048 vs the LIVE `retrieve_topk_via_labels`** (production scorer, fp16 label table); (3)
-head_agg="mean" parity. This is the selection-equivalence proof the plan gates on before any
-selector-ABI change. No ABI change / no table deletion yet (task6).
+**Landed R10–R11 (`double_sparsity/absorbed_latent.py`, fp32, `scorer_norm="off"`):**
+- R10: `absorbed_latent_v` / `absorbed_latent_score` + `TestAbsorbedLatentScore` (3): exact fp32
+  match vs the hand-derived label score; ≥0.99 top-k overlap vs the LIVE `retrieve_topk_via_labels`;
+  head_agg mean parity.
+- R11: `build_absorbed_projection` (bind-time W_UK from the REAL `kv_b_proj` — `block_quant_dequant`
+  or `.float()`, reshape, slice K-noPE rows) + `absorbed_latent_score_logical` (LOGICAL-domain paged
+  reference mirroring `_compute_logical_token_scores`: req_to_token gather, unwritten-then-seq_len
+  masking). `TestAbsorbedLatentLogical` (4): builder shapes + block-fp8 dequant parity vs
+  `block_quant_dequant`; **logical-domain equivalence — absorbed top-k EXACTLY matches the LIVE
+  `retrieve_topk_via_labels` logical mode** on a multi-request fixture (non-contiguous slots, holes,
+  unequal seq_lens); fp8-latent overlap oracle (quantized-vs-full-precision latent top-k overlap
+  ≥0.9 — the value-affecting CPU regression oracle). 419 DS tests pass.
 
-**Remaining for task5** (subsequent rounds): the GPU paged score kernel (walks `req_to_token`,
+**Remaining for task5** (next rounds): the **GPU Triton paged score kernel** (walks `req_to_token`,
 in-kernel fp8 latent dequant with the per-128-block scales, fp32 accumulation, ≤ ~23.5k µs/window
-budget); the serving NIAH recall@2048 gate vs frozen `recall_baseline.json` (±0.5pp fail-closed —
-the fp8-latent value-affecting delta); and the written-slot validity-invariant analysis (scored
-slots == KV-written slots vs the `written` bitmap). Then task6 swaps the selector ABI to the latent
-binding and DELETES `token_label_table.py`/`token_label_write.py` (DEC-2).
+budget — CPU reference above is its oracle); the **serving NIAH recall@2048 gate** vs frozen
+`recall_baseline.json` (±0.5pp fail-closed); and the **written-slot validity-invariant analysis**
+(scored slots == KV-written slots; ordering vs `out_cache_loc`/radix reuse). Then task6 swaps the
+selector ABI to the latent binding and DELETES `token_label_table.py`/`token_label_write.py` (DEC-2).

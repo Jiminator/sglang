@@ -12247,5 +12247,188 @@ class TestAbsorbedLatentScore(unittest.TestCase):
         torch.testing.assert_close(absorbed, label, atol=1e-2, rtol=1e-3)
 
 
+class TestAbsorbedLatentLogical(unittest.TestCase):
+    """task5 R11: bind-time projection from real kv_b_proj, the logical-domain paged
+    reference (req_to_token/seq_len masking) vs the LIVE table path, and the
+    fp8-latent value-affecting overlap oracle. scorer_norm='off'."""
+
+    @staticmethod
+    def _overlap(a, b, k):
+        bs = a.shape[0]
+        tot = 0.0
+        for i in range(bs):
+            sa = {int(x) for x in a[i].tolist() if x >= 0}
+            sb = {int(x) for x in b[i].tolist() if x >= 0}
+            tot += len(sa & sb) / max(len(sa), len(sb), 1)
+        return tot / bs
+
+    def test_build_absorbed_projection_shapes_and_slice(self):
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
+            build_absorbed_projection,
+        )
+
+        H, qk_nope, v_head, lora = 3, 8, 6, 16
+        g = torch.Generator().manual_seed(1)
+        # [out, in] = H*(qk_nope+v_head) x kv_lora_rank
+        w = torch.randn(H * (qk_nope + v_head), lora, generator=g)
+        w_kc = build_absorbed_projection(
+            w, num_heads=H, qk_nope_head_dim=qk_nope, v_head_dim=v_head
+        )
+        self.assertEqual(tuple(w_kc.shape), (H, qk_nope, lora))
+        # equals the manual reshape + K-noPE slice (rope/value rows excluded)
+        expected = w.view(H, qk_nope + v_head, lora)[:, :qk_nope, :]
+        torch.testing.assert_close(w_kc, expected)
+
+    def test_build_absorbed_projection_block_fp8_dequant(self):
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
+            build_absorbed_projection,
+        )
+        from sglang.srt.layers.quantization.fp8_utils import block_quant_dequant
+
+        H, qk_nope, v_head, lora = 2, 4, 4, 8  # out=16, in=8 < block 128 -> 1x1 scale
+        g = torch.Generator().manual_seed(2)
+        w_q = torch.randn(H * (qk_nope + v_head), lora, generator=g).to(
+            torch.float8_e4m3fn
+        )
+        w_s = torch.rand(1, 1, generator=g) + 0.5
+        w_kc = build_absorbed_projection(
+            w_q,
+            num_heads=H,
+            qk_nope_head_dim=qk_nope,
+            v_head_dim=v_head,
+            weight_scale_inv=w_s,
+            weight_block_size=[128, 128],
+        )
+        deq = block_quant_dequant(w_q, w_s, [128, 128], torch.float32)
+        expected = deq.view(H, qk_nope + v_head, lora)[:, :qk_nope, :]
+        torch.testing.assert_close(w_kc, expected)
+
+    def _logical_fixture(self, *, H=2, nope=8, lora=16, label_dim=4, seed=0):
+        g = torch.Generator().manual_seed(seed)
+        max_tokens = 32
+        seq_lens = torch.tensor([3, 5, 4], dtype=torch.int32)
+        bs = seq_lens.numel()
+        max_seq_len = int(seq_lens.max())
+        # non-contiguous physical slots per request (distinct, within [0, max_tokens))
+        slots = [[7, 3, 11], [20, 1, 15, 8, 25], [2, 30, 17, 9]]
+        req_to_token = torch.zeros(bs, max_seq_len, dtype=torch.int32)
+        for r, s in enumerate(slots):
+            req_to_token[r, : len(s)] = torch.tensor(s, dtype=torch.int32)
+        req_pool_indices = torch.arange(bs, dtype=torch.int32)
+        c_kv = torch.randn(max_tokens, lora, generator=g)
+        w_kc = torch.randn(H, nope, lora, generator=g)
+        # sel: [H, label_dim] distinct channels per head
+        sel = torch.stack(
+            [torch.randperm(nope, generator=g)[:label_dim] for _ in range(H)]
+        ).to(torch.int32)
+        weights = torch.randn(H, label_dim, generator=g)
+        queries = torch.randn(bs, H, nope, generator=g)
+        # signature = channel_select(W_UK·c_kv) at each physical slot (fp32, exact)
+        k_nope = torch.einsum("hcl,tl->thc", w_kc, c_kv)  # [max_tokens,H,nope]
+        signatures = torch.gather(
+            k_nope, 2, sel.long().unsqueeze(0).expand(max_tokens, -1, -1)
+        )  # [max_tokens,H,label_dim]
+        written = torch.zeros(max_tokens, dtype=torch.bool)
+        for s in slots:
+            for slot in s:
+                written[slot] = True
+        return dict(
+            c_kv=c_kv,
+            w_kc=w_kc,
+            sel=sel,
+            weights=weights,
+            queries=queries,
+            signatures=signatures,
+            written=written,
+            req_pool_indices=req_pool_indices,
+            req_to_token=req_to_token,
+            seq_lens=seq_lens,
+            max_seq_len=max_seq_len,
+        )
+
+    def test_logical_equivalence_vs_live_table_path(self):
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
+            absorbed_latent_score_logical,
+        )
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            retrieve_topk_via_labels,
+            select_topk_sequence_order,
+        )
+
+        f = self._logical_fixture()
+        top_k = 2
+        idx_label, _ = retrieve_topk_via_labels(
+            queries=f["queries"],
+            token_signatures=f["signatures"].unsqueeze(0),  # [1,max_tokens,H,label_dim]
+            written=f["written"].unsqueeze(0),  # [1,max_tokens]
+            channel_selection=f["sel"].unsqueeze(0),  # [1,H,label_dim]
+            channel_weights=f["weights"].unsqueeze(0),
+            layer_id=0,
+            max_top_k=top_k,
+            req_pool_indices=f["req_pool_indices"],
+            req_to_token=f["req_to_token"],
+            seq_lens=f["seq_lens"],
+            max_seq_len=f["max_seq_len"],
+            scorer_norm="off",
+        )
+        scores = absorbed_latent_score_logical(
+            f["queries"],
+            f["c_kv"],
+            f["w_kc"],
+            f["sel"],
+            f["weights"],
+            f["req_pool_indices"],
+            f["req_to_token"],
+            f["seq_lens"],
+            f["max_seq_len"],
+            written=f["written"],
+        )
+        idx_absorbed, _ = select_topk_sequence_order(scores, top_k)
+        # fp32 algebra-exact -> identical logical winners (per request)
+        self.assertEqual(self._overlap(idx_label, idx_absorbed, top_k), 1.0)
+
+    def test_fp8_latent_overlap_oracle(self):
+        # The serving value-affecting delta: absorbed score from the fp8-quantized
+        # latent vs from the original full-precision latent. Records overlap.
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
+            absorbed_latent_score,
+        )
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            select_topk_sequence_order,
+        )
+
+        g = torch.Generator().manual_seed(7)
+        T, H, nope, lora, label_dim, bs, top_k = 4096, 4, 16, 512, 8, 4, 2048
+        c_kv = torch.randn(T, lora, generator=g)
+        w_kc = torch.randn(H, nope, lora, generator=g)
+        sel = torch.stack(
+            [torch.randperm(nope, generator=g)[:label_dim] for _ in range(H)]
+        ).to(torch.int32)
+        weights = torch.randn(H, label_dim, generator=g)
+        queries = torch.randn(bs, H, nope, generator=g)
+        # per-128-block fp8 quant/dequant (matches the pool's MLA latent scheme)
+        c_kv_fp8 = c_kv.clone()
+        fp8_max = torch.finfo(torch.float8_e4m3fn).max
+        for b0 in range(0, lora, 128):
+            tile = c_kv[:, b0 : b0 + 128]
+            s = tile.abs().amax(dim=1, keepdim=True) / fp8_max  # [T,1] per-128 block
+            q = torch.clamp(tile / s, -fp8_max, fp8_max).to(torch.float8_e4m3fn)
+            c_kv_fp8[:, b0 : b0 + 128] = q.to(torch.float32) * s
+        idx_orig, _ = select_topk_sequence_order(
+            absorbed_latent_score(queries, c_kv, w_kc, sel, weights), top_k
+        )
+        idx_fp8, _ = select_topk_sequence_order(
+            absorbed_latent_score(queries, c_kv_fp8, w_kc, sel, weights), top_k
+        )
+        overlap = self._overlap(idx_orig, idx_fp8, top_k)
+        # fp8-e4m3 per-128-block scaled latent keeps selection close (CPU oracle;
+        # the binding recall@2048 gate is the serving sweep, a later task5 slice).
+        self.assertGreaterEqual(
+            overlap,
+            0.9,
+            f"fp8-latent vs full-precision top-{top_k} overlap {overlap:.4f}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -95,3 +95,97 @@ def absorbed_latent_score(
     if head_agg == "mean":
         return dots.mean(dim=1)
     return dots.amax(dim=1)
+
+
+def build_absorbed_projection(
+    kv_b_proj_weight: torch.Tensor,
+    *,
+    num_heads: int,
+    qk_nope_head_dim: int,
+    v_head_dim: int,
+    weight_scale_inv: torch.Tensor = None,
+    weight_block_size=None,
+) -> torch.Tensor:
+    """Bind-time absorbed projection: dequantize the real ``kv_b_proj`` weight and
+    return ``W_UK = w_kc`` as ``[H, qk_nope_head_dim, kv_lora_rank]`` fp32.
+
+    Mirrors the model's own ``w_kc`` extraction (deepseek_weight_loader): the
+    block-fp8 ``[out, in]`` weight (``out = H·(qk_nope+v_head)``, ``in =
+    kv_lora_rank``) is dequantized with the SAME block-fp8 semantics attention
+    uses, reshaped to ``[H, qk_nope+v_head, lora]``, and sliced to the K-noPE rows
+    ``[:qk_nope_head_dim]`` (rope dims are excluded by construction). Built once at
+    bind; the per-token signature then IS the resident latent. The per-mask-channel
+    gather is fused into :func:`absorbed_latent_v` at score time.
+    """
+    if weight_scale_inv is not None and weight_block_size is not None:
+        from sglang.srt.layers.quantization.fp8_utils import block_quant_dequant
+
+        w = block_quant_dequant(
+            kv_b_proj_weight, weight_scale_inv, list(weight_block_size), torch.float32
+        )
+    else:
+        w = kv_b_proj_weight.to(torch.float32)
+    out, lora = w.shape
+    head_width = qk_nope_head_dim + v_head_dim
+    assert (
+        out == num_heads * head_width
+    ), f"kv_b_proj out {out} != num_heads*(qk_nope+v_head) {num_heads * head_width}"
+    # [H, qk_nope+v_head, lora] -> slice the K-noPE rows -> W_UK [H, qk_nope, lora]
+    return w.view(num_heads, head_width, lora)[:, :qk_nope_head_dim, :].contiguous()
+
+
+def absorbed_latent_score_logical(
+    queries: torch.Tensor,
+    c_kv: torch.Tensor,
+    w_kc: torch.Tensor,
+    channel_selection: torch.Tensor,
+    channel_weights: torch.Tensor,
+    req_pool_indices: torch.Tensor,
+    req_to_token: torch.Tensor,
+    seq_lens: torch.Tensor,
+    max_seq_len: int,
+    written: torch.Tensor = None,
+    head_agg: str = "max",
+) -> torch.Tensor:
+    """Logical-domain paged absorbed score — mirrors ``_compute_logical_token_scores``
+    but reads the resident latent instead of materialized signatures.
+
+    For each request, walks logical positions ``0..max_seq_len`` through
+    ``req_to_token[pool, pos] -> physical slot``, gathers ``c_kv`` at the physical
+    slot, scores ``agg_h (v_h · c_kv[slot])``, and masks unwritten slots (if
+    ``written`` given) then positions ``>= seq_len`` to ``-inf`` — same order as
+    the production logical scorer. Returns ``[bs, max_seq_len]`` fp32 logical scores
+    (feed to ``select_topk_sequence_order``).
+
+    Args:
+        queries: ``[bs, H, qk_nope_head_dim]``.
+        c_kv: ``[max_tokens, kv_lora_rank]`` physical-slot latent (dequantized).
+        w_kc: ``[H, qk_nope_head_dim, kv_lora_rank]`` (from :func:`build_absorbed_projection`).
+        req_pool_indices: ``[bs]`` int; req_to_token: ``[num_pools, max_seqlen]`` int;
+        seq_lens: ``[bs]`` int; written: optional ``[max_tokens]`` bool.
+    """
+    bs = queries.shape[0]
+    device = queries.device
+    if max_seq_len <= 0:
+        return torch.full((bs, 1), float("-inf"), dtype=torch.float32, device=device)
+    v = absorbed_latent_v(
+        queries, w_kc, channel_selection, channel_weights
+    )  # [bs,H,lora]
+    safe_pool = req_pool_indices.clamp(0, max(req_to_token.shape[0] - 1, 0)).long()
+    logical_positions = (
+        torch.arange(max_seq_len, device=device).unsqueeze(0).expand(bs, -1)
+    )
+    safe_positions = logical_positions.clamp(0, max(req_to_token.shape[1] - 1, 0))
+    pool_expanded = safe_pool.unsqueeze(1).expand(-1, max_seq_len)
+    physical_slots = req_to_token[
+        pool_expanded, safe_positions.long()
+    ]  # [bs, max_seq_len]
+    max_tokens = c_kv.shape[0]
+    safe_phys = physical_slots.long().clamp(0, max(max_tokens - 1, 0))
+    gathered = c_kv[safe_phys].to(torch.float32)  # [bs, max_seq_len, lora]
+    dots = torch.einsum("bhl,bil->bih", v, gathered)  # [bs, max_seq_len, H]
+    scores = dots.mean(dim=-1) if head_agg == "mean" else dots.amax(dim=-1)
+    if written is not None:
+        scores = scores.masked_fill(~written[safe_phys], float("-inf"))
+    seq_len_mask = logical_positions < seq_lens.unsqueeze(1).to(device)
+    return scores.masked_fill(~seq_len_mask, float("-inf"))
