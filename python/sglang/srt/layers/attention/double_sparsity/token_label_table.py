@@ -65,7 +65,8 @@ class TokenLabelTable:
         return self.scales is not None
 
     def bytes_per_rank(self) -> int:
-        """Total HBM footprint of the table on a single rank (signatures + scales)."""
+        """Total HBM footprint of the table on a single rank: signatures + (int8)
+        scales + the ``written`` bitmap."""
         elem_size = torch.tensor([], dtype=self.dtype).element_size()
         total = (
             self.num_layers_local
@@ -76,6 +77,7 @@ class TokenLabelTable:
         )
         if self.scales is not None:
             total += self.scales.numel() * self.scales.element_size()
+        total += self.written.numel() * self.written.element_size()
         return total
 
 
@@ -190,10 +192,13 @@ def estimate_hbm_bytes(
     dtype: torch.dtype = torch.float16,
     scale_dtype: torch.dtype = torch.float16,
 ) -> int:
-    """Worst-case HBM footprint without allocating (signatures + compact scales)."""
+    """Worst-case HBM footprint without allocating: signatures + (int8) compact
+    scales + the ``written`` bitmap (bool [L, T])."""
     elem_size = torch.tensor([], dtype=dtype).element_size()
     total = num_layers_local * max_tokens * num_heads_local * label_dim * elem_size
     if dtype == torch.int8:
         scale_elem = torch.tensor([], dtype=scale_dtype).element_size()
         total += num_layers_local * max_tokens * num_heads_local * scale_elem
+    # `written` bitmap: bool [L, T] = 1 byte per (layer, token).
+    total += num_layers_local * max_tokens
     return total

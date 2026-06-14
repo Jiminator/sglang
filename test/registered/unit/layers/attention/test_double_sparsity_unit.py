@@ -1360,6 +1360,29 @@ class TestTokenLabelTableLifecycle(unittest.TestCase):
             label_dim=16, dtype=torch.float16,
         )
         self.assertEqual(self.table.bytes_per_rank(), expected)
+        # Independent FULL-table footprint: signatures + the `written` bitmap
+        # (fp16 path has no scales) = 2*32*4*16*2 + 2*32 (the written term must
+        # not silently drop out of the accounting).
+        self.assertEqual(self.table.bytes_per_rank(), 2 * 32 * 4 * 16 * 2 + 2 * 32)
+
+    def test_bytes_per_rank_int8_includes_scales_and_written(self):
+        from sglang.srt.layers.attention.double_sparsity.token_label_table import (
+            allocate_token_label_table,
+        )
+        t = allocate_token_label_table(
+            num_layers_local=2,
+            max_tokens=32,
+            num_heads_local=4,
+            label_dim=16,
+            page_size=64,
+            dtype=torch.int8,
+            device=torch.device("cpu"),
+        )
+        # int8 signatures (1B) + fp16 scales [L,T,H] (2B) + `written` [L,T] (1B).
+        self.assertEqual(
+            t.bytes_per_rank(),
+            2 * 32 * 4 * 16 * 1 + 2 * 32 * 4 * 2 + 2 * 32,
+        )
 
     def test_estimate_hbm_bytes(self):
         from sglang.srt.layers.attention.double_sparsity.token_label_table import (
@@ -9374,10 +9397,16 @@ class TestCompactInt8Signatures(unittest.TestCase):
             estimate_hbm_bytes,
         )
         dims = dict(num_layers_local=2, max_tokens=64, num_heads_local=4, label_dim=16)
+        # The 0.5625 compact-path saving is the SIGNATURE-storage ratio (int8
+        # signatures + fp16 scales vs fp16 signatures); the dtype-independent
+        # `written` bitmap is excluded from the ratio.
+        written = dims["num_layers_local"] * dims["max_tokens"]
         b_fp16 = estimate_hbm_bytes(dtype=torch.float16, **dims)
         b_int8 = estimate_hbm_bytes(dtype=torch.int8, **dims)
-        self.assertAlmostEqual(b_int8 / b_fp16, 0.5625, places=6)
-        # bytes_per_rank (allocated) agrees with estimate_hbm_bytes for both.
+        self.assertAlmostEqual(
+            (b_int8 - written) / (b_fp16 - written), 0.5625, places=6
+        )
+        # bytes_per_rank (allocated, full table incl. written) agrees with estimate.
         self.assertEqual(self._alloc(torch.float16).bytes_per_rank(), b_fp16)
         self.assertEqual(self._alloc(torch.int8).bytes_per_rank(), b_int8)
 

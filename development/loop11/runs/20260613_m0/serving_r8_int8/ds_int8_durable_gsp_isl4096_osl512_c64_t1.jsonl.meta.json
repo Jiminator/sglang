@@ -1,12 +1,12 @@
 {
-  "commit_sha": "229de484bcbede30a9891b0249eab213522e3c04",
+  "commit_sha": "cc8d1775bb7287b15e4e3e783406b7552faa4cee",
   "mode": "ds_int8_durable",
   "concurrency": 64,
   "seed": 31234,
   "num_prompts": 64,
   "isl_total_tokens": 4096,
   "osl_tokens": 512,
-  "timestamp_utc": "2026-06-14T00:00:44Z",
+  "timestamp_utc": "2026-06-14T01:43:34Z",
   "chunked_prefill_size": 8192,
   "warmup_requests": null,
   "warmup_seconds": 60.0,
@@ -457,7 +457,7 @@
     "enable_quant_communications": false,
     "msprobe_dump_config": null,
     "status": "ready",
-    "max_total_num_tokens": 342336,
+    "max_total_num_tokens": 344064,
     "max_req_input_len": 202746,
     "internal_states": [
       {
@@ -910,8 +910,8 @@
         "last_gen_throughput": 0.0,
         "memory_usage": {
           "weight": 89.24,
-          "kvcache": 16.32,
-          "token_capacity": 342336,
+          "kvcache": 16.4,
+          "token_capacity": 344064,
           "graph": 0.76
         },
         "effective_max_running_requests_per_dp": 64

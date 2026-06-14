@@ -1,14 +1,22 @@
 # Loop 11 Results — Authoritative Current State
 
 > Maintained rewrite-over-append: this document always reflects the loop's current state.
-> Last regenerated: Round 8, 2026-06-14. HEAD at round start: `229de484b`.
+> Last regenerated: Round 9, 2026-06-14. HEAD at round start: `cc8d1775b`.
 
 ## 1. Current state summary
 
-- **M0 COMPLETE (Rounds 0–4); M1: task3 COMPLETE (R6); task4 repaired in R8 (pending R8
-  verification).** task0/task1/task2 done with durable evidence. **task3 (indexer-cache gate)
-  COMPLETE R6** (§8); **task4 (int8 served config + table-aware pool sizing)** landed R7, with R7
-  review gaps closed in R8 (§9) — cap lifted bs30→**bs74 ≥ 64** at mem 0.8; decode batch reaches 63.
+- **M0 COMPLETE (Rounds 0–4); M1 (task3 + task4) COMPLETE pending R9 verification.**
+  task0/task1/task2 done with durable evidence. **task3 (indexer-cache gate) COMPLETE R6** (§8);
+  **task4 (int8 served config + table-aware pool sizing)** landed R7, R7/R8-review gaps closed R8/R9
+  (§9) — cap lifted bs30→**bs74 ≥ 64** at mem 0.8; decode batch reaches 63. **Owner ratified
+  (R9) the admission-based AC-1.1 conc-64 gate** (decode `#running-req` peak ≥ 61 AND DS agg ≥ DSA at
+  matched config — DS meets both); the Little's-law "achieved concurrency" field is a descriptor, not
+  the gate.
+- **R9 — task4 verification repair.** Put the DS admission proof in the TRACKED evidence
+  (`r8_durable_int8_evidence.txt`: `max_decode_running_req=63`, `ac1_1_conc64_gate=PASS`); folded the
+  `written` bitmap into `TokenLabelTable.bytes_per_rank()`/`estimate_hbm_bytes()` + the boot log
+  (now `6.82 GB/rank`, full table) + a unit test; fixed the Little's-law arithmetic. Owner ratified
+  the AC-1.1 gate. M1 complete pending R9 verification.
 - **R8 — task4 R7-review repair.** (1) the DURABLE launcher `serve_double_sparsity.sh` now defaults
   to the served config (int8 / mem 0.8 / right-sized envelope, explicit flags); stale fp16/mem0.6/
   Loop-7 comments removed. (2) AC-1.1 conc-64 **admission isolated**: DS decode `#running-req` reaches
@@ -338,7 +346,7 @@ builds (8.45 GB/rank, `layer_first`), `max_total_num_tokens=410,560` unchanged, 
 smoke ("Paris…") — the guard is correctly skipped for the non-gated DSA pool. The served DSA default
 (no HiCache) never constructs `DSAIndexerPoolHost` and is untouched by this round's diff.
 
-## 9. M1 task4: int8 served config + table-aware pool sizing — landed R7, R7-review gaps closed R8 (pending R8 verification)
+## 9. M1 task4: int8 served config + table-aware pool sizing — COMPLETE (R7 land + R8/R9 repair; owner-ratified AC-1.1 gate), pending R9 verification
 
 The root-cause fix for the fp16-0.8 instability: the per-token `TokenLabelTable` footprint is now
 **reserved deliberately** in the DS pool-sizing equation instead of being carved from accidental
@@ -356,14 +364,15 @@ post-capture headroom. Production code (DS-only, default byte-compatible):
   `CUDA_GRAPH_MAX_BS=64` (explicit flags); stale fp16/mem0.6/Loop-7 comments removed. Env overrides
   preserve fp16 diagnostics. radix-OFF (radix-on = task7).
 
-**AC-1.1 capacity** (R8 from the durable launcher, `r8_durable_int8_evidence.txt`): DS int8 @0.8 rs →
-`max_total_num_tokens` **342,336 → bs_cap 74 ≥ 64**, graph capture OK, coherent smoke, int8
-`token_label_table` 6.77 GB/rank, **22.33 GB available post-capture** (sustainable). Reserved bytes
-match the allocation (now incl. `written`).
+**AC-1.1 capacity** (R9 durable-launcher re-run, `r8_durable_int8_evidence.txt`): DS int8 @0.8 rs →
+`max_total_num_tokens` **344,064 → bs_cap 74 ≥ 64**, graph capture OK, coherent smoke; int8
+`token_label_table` **6.82 GB/rank** (R9 `bytes_per_rank` now reports the FULL table — signatures +
+int8 scales + `written` bitmap), **22.29 GB available post-capture** (sustainable). The cell-size
+reservation includes `written` (R8) and the helper/log now agree (R9).
 
-**AC-1.1 conc-64 admission — isolated (R8).** The bs30 cap is gone: DS decode `#running-req` reaches
-**63** (≈ nominal 64). At conc-64 radix-OFF, DS vs the apples-to-apples DSA radix-OFF (`r8_dsa08_
-radixoff_conc64_evidence.txt`):
+**AC-1.1 conc-64 admission — isolated, tracked, OWNER-RATIFIED (R9).** The bs30 cap is gone: the
+tracked evidence now records `max_decode_running_req=63` and `ac1_1_conc64_gate=PASS`. At conc-64
+radix-OFF, DS vs the apples-to-apples DSA radix-OFF (`r8_dsa08_radixoff_conc64_evidence.txt`):
 | conc-64 radix-OFF | DS int8 | DSA radix-off |
 |---|---|---|
 | completed | **320** | 256 |
@@ -374,11 +383,11 @@ radixoff_conc64_evidence.txt`):
 | "achieved concurrency" (Little's law) | 47.91 | 63.98 |
 
 DS **outperforms** DSA radix-off on every real metric. The benchmark "achieved concurrency" field is
-`request_throughput × mean_e2e_latency` (Little's law — verified to the decimal: DS 1.519×20.76→…
-=47.91; DSA 1.300×49.21=63.98), so it reads LOWER for the FASTER DS and is **not** an admission
-signal. Admission/capacity is met; the literal Little's-law gate is confounded → proposed AC-1.1
-wording correction (owner item): gate conc-64 on decode `#running-req` peak ≥ ~61 AND DS agg ≥ DSA at
-the matched config, not the Little's-law concurrency field.
+`request_throughput × mean_e2e_latency` (Little's law — verified to the decimal: DS 1.519 × 31.54 s =
+47.91; DSA 1.300 × 49.21 s = 63.98), so it reads LOWER for the FASTER DS and is **not** an admission
+signal. **Owner ruling (R9):** AC-1.1 conc-64 is gated on decode `#running-req` peak ≥ 61 AND DS agg ≥
+DSA at the matched config (DS meets both: 63; 777.7 ≥ 665.6) — the Little's-law concurrency field is a
+descriptor, not the gate. Admission/capacity is met.
 
 **AC-5 int8 quality:** int8-vs-fp16 top-2048 selection overlap ≥ 0.99 (unit gate passes).
 
@@ -386,8 +395,9 @@ the matched config, not the Little's-law concurrency field.
 142,208 unchanged; DSA @0.8 radix-ON = 410,560 (radix confirmed on) coherent; DSA @0.8 radix-off =
 410,560 coherent. The DS-only sizing change perturbs no DSA surface.
 
-Next: **M1 close-out pending R8 verification** (task4 durable config + AC-1.1 admission isolation +
-full AC-7), then **M2 task5** — absorbed-latent score-only prototype kernel (paged over
-`req_to_token`, bind-time W_UK dequant, live label-path selection/score equivalence + oracle
-recall), which makes the table disappear entirely (DEC-2). Then task6 integration, task7 radix-on,
-task8 bs64 tax, task9 locked AC-11 sweep. Do NOT start task5 until R8 reconciles task4/M1.
+Next: **M1 is complete pending R9 verification** (task4 durable config + tracked admission proof +
+full AC-7 + owner-ratified AC-1.1 gate), then **M2 task5** — absorbed-latent score-only prototype
+kernel (paged over `req_to_token`, bind-time W_UK dequant, live label-path selection/score
+equivalence + oracle recall), which makes the table disappear entirely (DEC-2). Then task6
+integration, task7 radix-on, task8 bs64 tax, task9 locked AC-11 sweep. Do NOT start task5 until R9
+verifies task4/M1.
