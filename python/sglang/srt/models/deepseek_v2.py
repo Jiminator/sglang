@@ -2323,7 +2323,15 @@ class DeepseekV2AttentionMLA(
                         _sw_backend = _sw_backend.primary
                     _slot_written = getattr(_sw_backend, "_ds_slot_written", None)
                     if _slot_written is not None:
-                        _slot_written[layer_id, _out_cache_loc.long()] = False
+                        # Device-scalar RHS (not Python `False`) so the indexed
+                        # invalidate stays a pure device-side copy — a CPU `False`
+                        # would copy CPU->CUDA, illegal under CUDA-graph capture.
+                        _slot_false = getattr(
+                            _sw_backend, "_ds_slot_written_false", None
+                        )
+                        _slot_written[layer_id, _out_cache_loc.long()] = (
+                            _slot_false if _slot_false is not None else False
+                        )
                 # Use projected Q-noPE for DS selector when available; fall back
                 # to latent q_lora only for the placeholder path (unit tests).
                 queries_for_ds = q_nope if q_nope is not None else q_lora

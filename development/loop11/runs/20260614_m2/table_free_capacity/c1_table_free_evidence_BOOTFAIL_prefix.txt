@@ -1,0 +1,42 @@
+probe=c1_table_free status=BOOT_FAIL rc_wait=2
+--- error/traceback tail ---
+2607:    _capture_one_stream()
+2608:  File "/sgl-workspace/sglang/python/sglang/srt/model_executor/cuda_graph_runner.py", line 961, in _capture_one_stream
+2609:    ) = self.capture_one_batch_size(
+2611:  File "/sgl-workspace/sglang/python/sglang/srt/model_executor/cuda_graph_runner.py", line 1267, in capture_one_batch_size
+2612:    out = self._capture_graph(
+2614:  File "/sgl-workspace/sglang/python/sglang/srt/model_executor/cuda_graph_runner.py", line 1027, in _capture_graph
+2615:    out = captured_fn()
+2676:RuntimeError: Cannot copy between CPU and CUDA tensors during CUDA graph capture unless the CPU tensor is pinned. Please use tensor.pin_memory() or allocate the tensor with pin_memory=True.
+2680:Traceback (most recent call last):
+2704:    raise Exception(
+2705:Exception: Capture cuda graph failed: Cannot copy between CPU and CUDA tensors during CUDA graph capture unless the CPU tensor is pinned. Please use tensor.pin_memory() or allocate the tensor with pin_memory=True.
+2715:--- Logging error ---
+2716:[2026-06-14 22:35:05 TP6] Scheduler hit an exception: Traceback (most recent call last):
+2718:    self.capture()
+2719:  File "/sgl-workspace/sglang/python/sglang/srt/model_executor/cuda_graph_runner.py", line 983, in capture
+2720:    _capture_one_stream()
+2721:  File "/sgl-workspace/sglang/python/sglang/srt/model_executor/cuda_graph_runner.py", line 961, in _capture_one_stream
+2722:    ) = self.capture_one_batch_size(
+2724:  File "/sgl-workspace/sglang/python/sglang/srt/model_executor/cuda_graph_runner.py", line 1267, in capture_one_batch_size
+2725:    out = self._capture_graph(
+2727:  File "/sgl-workspace/sglang/python/sglang/srt/model_executor/cuda_graph_runner.py", line 1027, in _capture_graph
+2728:    out = captured_fn()
+2789:RuntimeError: Cannot copy between CPU and CUDA tensors during CUDA graph capture unless the CPU tensor is pinned. Please use tensor.pin_memory() or allocate the tensor with pin_memory=True.
+2793:Traceback (most recent call last):
+2817:    raise Exception(
+2818:Exception: Capture cuda graph failed: Cannot copy between CPU and CUDA tensors during CUDA graph capture unless the CPU tensor is pinned. Please use tensor.pin_memory() or allocate the tensor with pin_memory=True.
+2828:[2026-06-14 22:35:05 TP3] Scheduler hit an exception: Traceback (most recent call last):
+2830:    self.capture()
+2831:  File "/sgl-workspace/sglang/python/sglang/srt/model_executor/cuda_graph_runner.py", line 983, in capture
+2832:    _capture_one_stream()
+2833:  File "/sgl-workspace/sglang/python/sglang/srt/model_executor/cuda_graph_runner.py", line 961, in _capture_one_stream
+2834:    ) = self.capture_one_batch_size(
+2836:  File "/sgl-workspace/sglang/python/sglang/srt/model_executor/cuda_graph_runner.py", line 1267, in capture_one_batch_size
+2837:    out = self._capture_graph(
+2839:  File "/sgl-workspace/sglang/python/sglang/srt/model_executor/cuda_graph_runner.py", line 1027, in _capture_graph
+2840:    out = captured_fn()
+2901:RuntimeError: Cannot copy between CPU and CUDA tensors during CUDA graph capture unless the CPU tensor is pinned. Please use tensor.pin_memory() or allocate the tensor with pin_memory=True.
+2905:Traceback (most recent call last):
+2929:    raise Exception(
+2930:Exception: Capture cuda graph failed: Cannot copy between CPU and CUDA tensors during CUDA graph capture unless the CPU tensor is pinned. Please use tensor.pin_memory() or allocate the tensor with pin_memory=True.

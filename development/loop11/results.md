@@ -5,7 +5,17 @@
 
 ## 1. Current state summary
 
-- **M0 COMPLETE (Rounds 0–4); M1 (task3+task4) COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 IN PROGRESS (R17 ABI + R18 capture-safe + R19 production-hardening).**
+- **M0 COMPLETE; M1 COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 capacity payoff + AC-7 PROVEN LIVE (R20) — only the DEC-2 table-module deletion remains.**
+- **R20 — task6 TABLE-FREE CAPACITY PAYOFF PROVEN LIVE (the loop's root-cause win) + AC-7 (DEC-5).**
+  Added a `TABLE_FREE` toggle to `serve_double_sparsity.sh` and booted DS `table_free=true` at the GLM-5.1
+  / mem-0.8 op-point. **`max_total_num_tokens` 344064 → 504640 (+160,576 tokens ≈ the freed ~6.8 GB/rank
+  table); derived decode-batch cap 74 → 109 ≥ 64**; CUDA-graph capture succeeded on all 8 TP ranks +
+  both selector-width buckets; TokenLabelTable NOT allocated. conc-64 admission **decode #running-req
+  peak = 63 ≥ 61** (R9 gate). **AC-7 (DEC-5) PASS:** DSA default dsa08=410560 unchanged, frozen Case-2
+  dsa07=142208 MATCH, radix-ON DSA coherent. Fixed a real capture bug the first live boot exposed: the
+  `slot_written` writes used a Python-bool RHS → CPU→CUDA copy illegal under graph capture → device-
+  resident scalar True/False RHS (the unit tests run eager, missed it; the live captured boot caught it).
+  455 DS suite; default-off byte-identical. Artifact `runs/20260614_m2/table_free_capacity/`. (§11)
 - **R19 — task6: production table-free capture hardened + the validity guard (Codex R18 defects 1–3; owner DEC-5/DEC-6).**
   D1: publish `_ds_channel_selection`/`_ds_qk_nope_head_dim` unconditionally (was table-only branch, so
   the served table_free path got `ds_label_dim=0` → allocating fallback); dsa_backend fails closed if
@@ -705,8 +715,24 @@ with the capacity boot), relying intra-round on the unit-proven byte-identicalit
 per-round blocker for default-off slices. **DEC-6** — the table-free validity guard is the tiny
 `slot_written` bitmap above (landed R19), NOT deferred to task7 (task7 radix-on validates it).
 
-**Remaining for task6** (next slice): make `table_free` the served default + DELETE
-`token_label_table.py`/`token_label_write.py` + prefill write-hook (DEC-2); the **serving capacity
-payoff @ mem 0.8** (boot readout: pool grows → bs cap ≥64, capture-all-buckets, conc-64 smoke, AC-1.2);
-the **AC-7 serving bundle** bundled with that boot (DEC-5). Then task7 (radix-on), task8 (bs64 tax),
-task9 (locked AC-11 sweep).
+**Landed R20 (TABLE-FREE CAPACITY PAYOFF PROVEN LIVE + AC-7; the loop's root-cause win):**
+`TABLE_FREE` toggle in `serve_double_sparsity.sh`; booted DS `table_free=true` at GLM-5.1 / mem 0.8 /
+int8-envelope (the task4 capacity op-point). **The table is gone → the pool grows:**
+`max_total_num_tokens` **344064 → 504640 (+160,576 KV tokens, +7.65 GB)** ≈ the freed ~6.8 GB/rank
+TokenLabelTable; **derived decode-batch cap 74 → 109 ≥ 64** (AC-1.1); CUDA-graph capture succeeded on
+all 8 TP ranks + both selector-width reduce buckets; TokenLabelTable confirmed NOT allocated;
+conc-64 admission **decode #running-req peak = 63 ≥ 61** (R9 owner-ratified gate). **AC-7 (DEC-5) PASS:**
+DSA default dsa08@0.8 `max_total_num_tokens=410560` unchanged; frozen Case-2 dsa07@0.7 `142208` MATCH;
+radix-ON DSA coherent (`disable_radix_cache=False`) — the shipped DSA default is byte-for-byte
+un-regressed. **Capture-bug fix (first live boot exposed it):** the `slot_written` validity-bitmap
+writes used a Python-bool RHS (`= True`/`= False`); under CUDA-graph capture the indexed assignment
+copies a CPU scalar into the CUDA bitmap → `Cannot copy between CPU and CUDA tensors during CUDA graph
+capture`. Fixed by caching device-resident scalar `True`/`False` on the DSA backend and using them as
+the RHS (pure device-side copy). 455 DS suite; default-off byte-identical. Artifacts:
+`runs/20260614_m2/table_free_capacity/{summary.json,c1_table_free_evidence.txt,c2_conc64_evidence.txt,
+a7_dsa_default_evidence.txt}`.
+
+**Remaining for task6** (one cleanup slice): now that table_free is serving-proven (capacity + AC-7),
+DELETE `token_label_table.py` + `token_label_write.py` + the prefill label-write plumbing (DEC-2) and
+make `table_free` the durable served default. Then task7 (radix-on fixtures/recall), task8 (bs64
+captured tax), task9 (locked AC-11 sweep).

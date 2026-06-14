@@ -605,6 +605,8 @@ class DeepseekSparseAttnBackend(
         # the table path leaves it None (byte-identical). Indexed by GLOBAL
         # layer_id, like the table's `written` and `_ds_channel_selection`.
         self._ds_slot_written: Optional[torch.Tensor] = None
+        self._ds_slot_written_true: Optional[torch.Tensor] = None
+        self._ds_slot_written_false: Optional[torch.Tensor] = None
         if self.ds_table_free:
             _num_local_layers = int(self._ds_channel_selection.shape[0])
             _num_kv_slots = self.token_to_kv_pool.size + self.token_to_kv_pool.page_size
@@ -612,6 +614,17 @@ class DeepseekSparseAttnBackend(
                 (_num_local_layers, _num_kv_slots),
                 dtype=torch.bool,
                 device=self.device,
+            )
+            # Device-resident scalar `True`/`False` for the slot_written bitmap
+            # writes (mark-after-write True here; invalidate-before-select False in
+            # deepseek_v2). A Python bool RHS materializes as a CPU scalar, which the
+            # indexed copy moves CPU->CUDA — illegal under CUDA-graph capture. Cached
+            # device scalars keep both writes pure device-side copies (graph-safe).
+            self._ds_slot_written_true = torch.ones(
+                (), dtype=torch.bool, device=self.device
+            )
+            self._ds_slot_written_false = torch.zeros(
+                (), dtype=torch.bool, device=self.device
             )
             # Publish so the model layer's selector path (deepseek_v2) can resolve
             # it through the ForwardContext-published attention backend.
@@ -1752,7 +1765,12 @@ class DeepseekSparseAttnBackend(
         # TokenLabelTable, so it returns here after the mark.
         if self._ds_token_label_table is None:
             if self._ds_slot_written is not None:
-                self._ds_slot_written[layer.layer_id, cache_loc.long()] = True
+                # Device-scalar RHS (not Python `True`) so the indexed mark stays a
+                # pure device-side copy — a CPU `True` would copy CPU->CUDA, which
+                # is illegal under CUDA-graph capture.
+                self._ds_slot_written[layer.layer_id, cache_loc.long()] = (
+                    self._ds_slot_written_true
+                )
             return
         if self._ds_channel_selection is None:
             return

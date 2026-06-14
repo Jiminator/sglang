@@ -1,0 +1,75 @@
+{
+  "run": "loop11_m2_table_free_capacity",
+  "date_utc": "2026-06-14",
+  "head": "08a310a72",
+  "model": "GLM-5.1-FP8 (models--zai-org--GLM-5.1-FP8)",
+  "channel_mask": "/models/glm51-fp8-channel-mask-s256.safetensors",
+  "envelope": {
+    "mem_fraction_static": 0.8,
+    "signature_dtype": "int8",
+    "scorer_norm": "off",
+    "max_running_requests": 64,
+    "cuda_graph_max_bs": 64,
+    "page_size": 64,
+    "kv_cache_dtype": "fp8_e4m3"
+  },
+  "boot_fix": {
+    "summary": "table_free slot_written bitmap writes used a Python bool RHS (True / False); under CUDA-graph capture the indexed assignment copies a CPU scalar into the CUDA bitmap, which raised 'Cannot copy between CPU and CUDA tensors during CUDA graph capture'. Fixed by caching device-resident scalar True/False on the DSA backend and using them as the RHS (pure device-side copy).",
+    "files": [
+      "python/sglang/srt/layers/attention/dsa_backend.py (alloc _ds_slot_written_true/_false; mark-after-write site _write_token_labels)",
+      "python/sglang/srt/models/deepseek_v2.py (invalidate-before-select site)"
+    ],
+    "unit_tests": "29 passed (table_free / slot_written / written), 430 deselected"
+  },
+  "C1_table_free_capacity": {
+    "status": "BOOT_OK (clean after fix)",
+    "max_total_num_tokens": 504640,
+    "kv_size_gb": 24.05,
+    "bs_cap": 109,
+    "bs_cap_ge_64": true,
+    "token_label_table_allocated": false,
+    "cuda_graph_capture": "SUCCESS all TP ranks (38.69s); both selector-width reduce buckets captured (logical W=202756 NCCL_BF16 + compact W=5120 TWO_SHOT_PULL); no capture failure",
+    "smoke": "OK:Paris. The city is located on the River Seine in the north o",
+    "baseline_table_config": {
+      "max_total_num_tokens": 344064,
+      "bs_cap": 74,
+      "token_label_table_gb_per_rank": 6.82,
+      "source": "development/loop11/runs/20260613_m0/r8_durable_int8_evidence.txt"
+    },
+    "delta_tokens": 160576,
+    "delta_kv_gb": 7.65
+  },
+  "C2_conc64_admission": {
+    "decode_running_req_peak": 63,
+    "gate": "PASS (>= 61)",
+    "achieved_conc_descriptor": 48.96,
+    "decode_tps_p50": 26.04,
+    "agg_tok_s": 809.8,
+    "ttft_p99_s": 30.99,
+    "completed": 320,
+    "recipe": "conc-64, 1 trial, 60s warmup, 180s window, 64 prompts (task4 recipe of record)"
+  },
+  "A7_dsa_default_regression": {
+    "status": "PASS — DSA default un-regressed by table_free (DS-only) changes",
+    "a_ds_off_dsa08_0.8": {
+      "max_total_num_tokens": 410560,
+      "prior_reference": 410560,
+      "match": true,
+      "smoke": "OK:Paris. Distance from London to Paris is 343 km, while direct"
+    },
+    "b_frozen_case2_dsa07_0.7": {
+      "max_total_num_tokens": 142208,
+      "frozen": 142208,
+      "match": true,
+      "smoke": "OK:Paris. Distance from London to Paris is 343 km, while direct"
+    },
+    "c_radix_on_dsa08_0.8": {
+      "max_total_num_tokens": 410560,
+      "disable_radix_cache": false,
+      "radix_on": true,
+      "smoke": "OK:Paris. Distance from London to Paris is 343 km, while direct"
+    }
+  },
+  "cleanup": "all sglang.launch_server / scheduler processes killed; all 8 GPUs 0 MiB; shm cleaned",
+  "verdict": "C1 PASS (capacity payoff +160576 tokens, bs cap 74->109), C2 PASS (decode #running-req peak 63>=61), A7 PASS (DSA default unchanged)"
+}

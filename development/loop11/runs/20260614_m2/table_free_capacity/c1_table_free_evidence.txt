@@ -1,0 +1,40 @@
+probe=c1_table_free (serve_double_sparsity.sh TABLE_FREE=1, GLM int8/0.8/rs) status=OK
+table_free  max_total_num_tokens=504640  bs_cap=109
+baseline    max_total_num_tokens=344064  bs_cap=74  (task4 durable_int8, table-config)
+delta_tokens=160576  bs_cap_ge_64=YES
+smoke=OK:Paris. The city is located on the River Seine in the north o
+effective launcher args:
+>>> effective double_sparsity_config = {"top_k": 2048, "page_size": 64, "channel_mask_path": "/models/glm51-fp8-channel-mask-s256.safetensors", "device_buffer_size": 4096, "signature_dtype": "int8", "scorer_norm": "off", "scorer_norm_hybrid_threshold": 8192, "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "recall_oracle": false, "table_free": true, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0}
+    signature_dtype  = int8
+    mem_fraction     = 0.8
+    max_running_reqs = 64
+    cuda_graph_max_bs= 64
+--- boot fields ---
+[2026-06-14 22:40:19 TP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 504640, KV size: 24.05 GB
+[2026-06-14 22:40:58 TP0] Capture cuda graph end. Time elapsed: 38.69 s. mem usage=0.70 GB. avail mem=21.48 GB.
+[2026-06-14 22:41:03 TP0] max_total_num_tokens=504640, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=64, context_len=202752, available_gpu_mem=21.48 GB
+--- table allocation (expect ABSENT for table_free) ---
+(no token_label_table line — table NOT allocated, as expected)
+--- CUDA-graph capture / selector-width buckets ---
+[2026-06-14 22:40:56 TP7] double_sparsity score reduce bucket: shape=(1, 202756) dtype=torch.bfloat16 bytes=405512 weak_contiguous=True custom_ar=False algorithm=NCCL_BF16
+[2026-06-14 22:40:56 TP1] double_sparsity score reduce bucket: shape=(1, 202756) dtype=torch.bfloat16 bytes=405512 weak_contiguous=True custom_ar=False algorithm=NCCL_BF16
+[2026-06-14 22:40:56 TP2] double_sparsity score reduce bucket: shape=(1, 202756) dtype=torch.bfloat16 bytes=405512 weak_contiguous=True custom_ar=False algorithm=NCCL_BF16
+[2026-06-14 22:40:56 TP5] double_sparsity score reduce bucket: shape=(1, 202756) dtype=torch.bfloat16 bytes=405512 weak_contiguous=True custom_ar=False algorithm=NCCL_BF16
+[2026-06-14 22:40:57 TP5] double_sparsity score reduce bucket: shape=(1, 5120) dtype=torch.bfloat16 bytes=10240 weak_contiguous=True custom_ar=True algorithm=TWO_SHOT_PULL
+[2026-06-14 22:40:57 TP7] double_sparsity score reduce bucket: shape=(1, 5120) dtype=torch.bfloat16 bytes=10240 weak_contiguous=True custom_ar=True algorithm=TWO_SHOT_PULL
+[2026-06-14 22:40:57 TP0] double_sparsity score reduce bucket: shape=(1, 5120) dtype=torch.bfloat16 bytes=10240 weak_contiguous=True custom_ar=True algorithm=TWO_SHOT_PULL
+[2026-06-14 22:40:57 TP3] double_sparsity score reduce bucket: shape=(1, 5120) dtype=torch.bfloat16 bytes=10240 weak_contiguous=True custom_ar=True algorithm=TWO_SHOT_PULL
+[2026-06-14 22:40:57 TP1] double_sparsity score reduce bucket: shape=(1, 5120) dtype=torch.bfloat16 bytes=10240 weak_contiguous=True custom_ar=True algorithm=TWO_SHOT_PULL
+[2026-06-14 22:40:57 TP4] double_sparsity score reduce bucket: shape=(1, 5120) dtype=torch.bfloat16 bytes=10240 weak_contiguous=True custom_ar=True algorithm=TWO_SHOT_PULL
+[2026-06-14 22:40:57 TP6] double_sparsity score reduce bucket: shape=(1, 5120) dtype=torch.bfloat16 bytes=10240 weak_contiguous=True custom_ar=True algorithm=TWO_SHOT_PULL
+[2026-06-14 22:40:57 TP2] double_sparsity score reduce bucket: shape=(1, 5120) dtype=torch.bfloat16 bytes=10240 weak_contiguous=True custom_ar=True algorithm=TWO_SHOT_PULL
+[2026-06-14 22:40:58 TP4] Capture cuda graph end. Time elapsed: 38.69 s. mem usage=0.70 GB. avail mem=21.39 GB.
+[2026-06-14 22:40:58 TP7] Capture cuda graph end. Time elapsed: 38.69 s. mem usage=0.70 GB. avail mem=21.86 GB.
+[2026-06-14 22:40:58 TP0] Capture cuda graph end. Time elapsed: 38.69 s. mem usage=0.70 GB. avail mem=21.48 GB.
+[2026-06-14 22:40:58 TP3] Capture cuda graph end. Time elapsed: 38.69 s. mem usage=0.70 GB. avail mem=21.39 GB.
+[2026-06-14 22:40:58 TP6] Capture cuda graph end. Time elapsed: 38.69 s. mem usage=0.70 GB. avail mem=21.39 GB.
+[2026-06-14 22:40:58 TP5] Capture cuda graph end. Time elapsed: 38.70 s. mem usage=0.70 GB. avail mem=21.39 GB.
+[2026-06-14 22:40:58 TP2] Capture cuda graph end. Time elapsed: 38.70 s. mem usage=0.70 GB. avail mem=21.39 GB.
+[2026-06-14 22:40:58 TP1] Capture cuda graph end. Time elapsed: 38.70 s. mem usage=0.70 GB. avail mem=21.39 GB.
+--- any capture failure ---
+(no capture failure)

@@ -78,6 +78,11 @@ ANCHOR_BUDGET="${ANCHOR_BUDGET:-0}"
 # (--disable-cuda-graph), which the validator requires.
 RECALL_ORACLE="${RECALL_ORACLE:-0}"                        # 0 | 1
 if [[ "${RECALL_ORACLE}" == "1" ]]; then RECALL_ORACLE_JSON=true; else RECALL_ORACLE_JSON=false; fi
+# Table-free absorbed-latent selection (no TokenLabelTable; ~5.29 GB/rank freed to
+# the KV pool). TABLE_FREE=1 emits "table_free": true. Requires scorer_norm="off"
+# (the absorbed identity). Off => the table path (byte-identical command).
+TABLE_FREE="${TABLE_FREE:-0}"                              # 0 | 1
+if [[ "${TABLE_FREE}" == "1" ]]; then TABLE_FREE_JSON=true; else TABLE_FREE_JSON=false; fi
 # Opt-in lifted-budget decode (graph-safe production path). LIFTED_BUDGET=1 emits
 # "enable_lifted_budget_decode": true + a wider "lifted_budget_top_k" (must be
 # > top_k and a multiple of 128). The path runs UNDER CUDA graph (alloc-free
@@ -93,8 +98,8 @@ else
   LIFTED_BUDGET_JSON=false
   LIFTED_BUDGET_TOP_K=0
 fi
-DS_CONFIG=$(printf '{"top_k": %s, "page_size": %s, "channel_mask_path": "%s", "device_buffer_size": %s, "signature_dtype": "%s", "scorer_norm": "%s", "scorer_norm_hybrid_threshold": %s, "head_agg": "%s", "anchor_mode": "%s", "anchor_budget": %s, "recall_oracle": %s, "enable_lifted_budget_decode": %s, "lifted_budget_top_k": %s}' \
-  "${TOP_K}" "${PAGE_SIZE}" "${CHANNEL_MASK_PATH}" "${DEVICE_BUFFER_SIZE}" "${SIGNATURE_DTYPE}" "${SCORER_NORM}" "${SCORER_NORM_HYBRID_THRESHOLD}" "${HEAD_AGG}" "${ANCHOR_MODE}" "${ANCHOR_BUDGET}" "${RECALL_ORACLE_JSON}" "${LIFTED_BUDGET_JSON}" "${LIFTED_BUDGET_TOP_K}")
+DS_CONFIG=$(printf '{"top_k": %s, "page_size": %s, "channel_mask_path": "%s", "device_buffer_size": %s, "signature_dtype": "%s", "scorer_norm": "%s", "scorer_norm_hybrid_threshold": %s, "head_agg": "%s", "anchor_mode": "%s", "anchor_budget": %s, "recall_oracle": %s, "table_free": %s, "enable_lifted_budget_decode": %s, "lifted_budget_top_k": %s}' \
+  "${TOP_K}" "${PAGE_SIZE}" "${CHANNEL_MASK_PATH}" "${DEVICE_BUFFER_SIZE}" "${SIGNATURE_DTYPE}" "${SCORER_NORM}" "${SCORER_NORM_HYBRID_THRESHOLD}" "${HEAD_AGG}" "${ANCHOR_MODE}" "${ANCHOR_BUDGET}" "${RECALL_ORACLE_JSON}" "${TABLE_FREE_JSON}" "${LIFTED_BUDGET_JSON}" "${LIFTED_BUDGET_TOP_K}")
 echo ">>> effective double_sparsity_config = ${DS_CONFIG}"
 
 # Eager is required only for the recall-oracle diagnostic (it host-syncs). As of R9

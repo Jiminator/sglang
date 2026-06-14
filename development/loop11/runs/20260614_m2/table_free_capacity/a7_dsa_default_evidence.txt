@@ -1,0 +1,4 @@
+=== A7 AC-7 DSA-default regression ===
+(a) DS-off DSA default dsa08 @0.8: status=OK max_total_num_tokens=410560 smoke=OK:Paris. Distance from London to Paris is 343 km, while direct
+(b) frozen Case-2 dsa07 @0.7    : status=OK max_total_num_tokens=142208 vs frozen=142208 -> MATCH smoke=OK:Paris. Distance from London to Paris is 343 km, while direct
+(c) radix-ON DSA dsa08 @0.8     : status=OK max_total_num_tokens=410560 disable_radix_cache=False(expect False) smoke=OK:Paris. Distance from London to Paris is 343 km, while direct
