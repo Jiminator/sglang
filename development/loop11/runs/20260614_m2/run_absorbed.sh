@@ -51,4 +51,21 @@ SWEEP_RC=${PIPESTATUS[0]}
 teardown
 cp "$DEFAULT_SINK" "$SINK"
 echo ">>> sweep rc=$SWEEP_RC ; sink=$SINK ($(wc -l < "$SINK") records)"
-exit $SWEEP_RC
+if [[ $SWEEP_RC -ne 0 ]]; then
+  echo "!! sweep failed (rc=$SWEEP_RC); skipping gate"; exit $SWEEP_RC
+fi
+
+# Post-process: absorbed-vs-frozen-baseline recall@2048 gate (fail-closed ±0.5pp,
+# comparability-checked). Exit status IS the gate status — a passing sweep with a
+# failing/non-comparable recall is a FAIL.
+SUMMARY="$OUT/absorbed_recall_summary_${MODE}.json"
+python "$REPO/development/loop11/runs/20260614_m2/absorbed_recall_summary.py" \
+  --sink "$SINK" \
+  --baseline "$REPO/development/loop9/runs/20260610_m0/recall_baseline.json" \
+  --out "$SUMMARY"
+GATE_RC=$?
+if [[ "$MODE" == "full" ]]; then
+  cp "$SUMMARY" "$OUT/absorbed_recall_summary.json"   # canonical tracked artifact
+fi
+echo ">>> gate rc=$GATE_RC ; summary=$SUMMARY"
+exit $GATE_RC

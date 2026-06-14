@@ -5,7 +5,15 @@
 
 ## 1. Current state summary
 
-- **M0 COMPLETE (Rounds 0–4); M1 (task3 + task4) COMPLETE + VERIFIED (R9 review). M2 task5 IN PROGRESS (R10–R15).**
+- **M0 COMPLETE (Rounds 0–4); M1 (task3 + task4) COMPLETE + VERIFIED (R9 review). M2 task5 COMPLETE pending R16 verification (R10–R16); task6 unblocked.**
+- **R16 — task5 served recall@2048 gate PASS on GLM-5.1 (Codex R15 gap + 2 helper fixes).** Added the
+  comparability checks to `absorbed_recall_summary.py` (length-set + per-length sample-count equality —
+  non-comparable populations now FAIL) and made `run_absorbed.sh` post-process + exit with the gate
+  status. **`run_absorbed.sh full` at the matched GLM-5.1/fp16/mem-0.7 baseline op-point: PASS ±0.5pp**
+  — absorbed recall@2048 overall 64.781% vs baseline 64.696% (+0.085pp); per-length Δ ≤0.352pp;
+  18,720 records, 100% carry `rec["absorbed"]`, comparable population, no failures. The `recall_oracle`
+  bind fires on GLM (`GlmMoeDsaForCausalLM` ⊂ `DeepseekV2AttentionMLA`). task5's last gate is closed.
+  (§10)
 - **R15 — task5 served recall wiring + live validation (Codex R14 gap) + AC-8 ledger.** Wired the
   absorbed scorer side-by-side into the GRAPH-SAFE serving recall-oracle path (gated by `recall_oracle`,
   additive, selection unchanged); first attempt targeted the eager path — re-targeted after a live
@@ -447,7 +455,7 @@ descriptor, not the gate. Admission/capacity is met.
 
 M1 is VERIFIED COMPLETE (R9 review). M2 task5 STARTED (§10).
 
-## 10. M2 task5: absorbed-latent score-only prototype — IN PROGRESS (R10–R15)
+## 10. M2 task5: absorbed-latent score-only prototype — COMPLETE pending R16 verification (R10–R16)
 
 The structural fix (DEC-2): replace the materialized signature table with scores read directly from
 the resident fp8 KV latent. **Load-bearing identity (proven, code-cited):** today's
@@ -564,12 +572,31 @@ baseline at long contexts — the gap is the model+dtype mismatch (int8 vs fp16 
 NOT the absorbed scorer (99.88% table agreement). The absorbed-vs-frozen-baseline numbers are
 therefore NOT a valid AC-5 verdict.
 
-**Remaining for task5** (R16): the **matched-config** absorbed-vs-baseline run — `run_absorbed.sh full`
-boots the baseline op-point (GLM-5.1 / fp16 / mem 0.7) with the recall oracle, sweeps, and
-post-processes both table and `rec["absorbed"]` recall vs the frozen baseline (±0.5pp). Expected PASS
-given the 99.88% within-run agreement; prerequisite to confirm GLM-5.1 routes attention through
-`DeepseekV2AttentionMLA` so the bind fires. **Gate interpretation surfaced for owner/Codex** (see the
-R15 summary Goal Tracker Update Request): the binding absorbed gate is absorbed-vs-table (the
-fp8-latent delta, PASS), while the matched-config vs-baseline run confirms the served absolute recall.
-Then task6 swaps the selector ABI to the latent binding and DELETES
-`token_label_table.py`/`token_label_write.py` (DEC-2).
+**Landed R16 (matched-config served NIAH recall@2048 gate — PASS; Codex R15 gap + 2 helper fixes):**
+the absorbed-vs-frozen-baseline gate now runs on the BASELINE op-point. The gate helper
+`absorbed_recall_summary.py` gained the comparability checks it was missing (length-set equality +
+per-length sample-count equality vs the baseline, mirroring `oracle_recall_summary.py` — a
+non-comparable population now FAILs instead of silently passing); `run_absorbed.sh` now post-processes
+the sink through the gate and exits with the gate status (canonical `absorbed_recall_summary.json` on
+`full`). **`run_absorbed.sh full` on GLM-5.1-FP8 / fp16 / mem 0.7 (the baseline op-point): PASS ±0.5pp.**
+Smoke: GLM-5.1 boots, 624/624 records carry `rec["absorbed"]` (the `recall_oracle` bind fires on
+`GlmMoeDsaForCausalLM` via its `DeepseekV2AttentionMLA` inheritance), 0 errors. Full (18,720 records,
+6,240/length, 100% carry `rec["absorbed"]`, comparable population, `problems[]` empty):
+
+| length | absorbed recall@2048 | baseline | Δ (pp) |
+|--------|----------------------|----------|--------|
+| 1024   | 100.000% | 100.0  | +0.000 |
+| 4096   | 58.397%  | 58.045 | +0.352 |
+| 16384  | 35.946%  | 36.042 | −0.096 |
+| overall| 64.781%  | 64.696 | +0.085 |
+
+The fp8-latent absorbed scorer reproduces the frozen DSA/label recall baseline on the served GLM-5.1
+op-point (overall +0.085pp, ≤0.352pp per length) — the declared value-affecting change is within bar.
+`runs/20260614_m2/recall_absorbed/{absorbed_recall_summary.json,FINDINGS.md}`. Config comment fixed
+(recall_oracle disables graph CAPTURE but the selector still runs the graph-safe path eagerly).
+
+**task5 COMPLETE (pending R16 verification):** CPU equivalence (R10–12) + GPU paged kernel & budget PASS
+(R13–14) + written-slot validity (R13) + served recall@2048 PASS (R15 wiring + R16 GLM gate). **task6
+now UNBLOCKED:** swap the selector ABI to the latent binding, graph scratch for `v_h`, reject
+cosine/hybrid, DELETE `token_label_table.py`/`token_label_write.py` (DEC-2), capacity payoff @0.8,
+same-round AC-7.

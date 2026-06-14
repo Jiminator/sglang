@@ -121,6 +121,28 @@ def main() -> int:
             "(absorbed wiring did not emit on every sample)"
         )
 
+    # Comparability gate (mirror oracle_recall_summary.py): a recall% comparison is
+    # only valid against the SAME workload — identical length set AND matching
+    # per-length sample counts. A different model/dtype/length population (e.g.
+    # 14,640 vs the baseline's 18,720 samples) must FAIL here, not silently pass.
+    b_lengths = baseline.get("lengths", {})
+    a_lengths = absorbed.get("lengths", {})
+    if sorted(b_lengths) != sorted(a_lengths):
+        problems.append(
+            f"length sets differ: baseline {sorted(b_lengths)} vs absorbed "
+            f"{sorted(a_lengths)} — workload/op-point not comparable"
+        )
+    for length in sorted(b_lengths):
+        if (
+            length in a_lengths
+            and b_lengths[length]["samples"] != a_lengths[length]["samples"]
+        ):
+            problems.append(
+                f"length {length}: sample counts differ "
+                f"({b_lengths[length]['samples']} baseline vs "
+                f"{a_lengths[length]['samples']} absorbed) — not comparable"
+            )
+
     b_overall = baseline["overall"]["recall_at_2048_pct"]
     a_overall = absorbed["overall"]["recall_at_2048_pct"]
     if abs(a_overall - b_overall) > args.max_delta_pp:
@@ -128,7 +150,6 @@ def main() -> int:
             f"absorbed overall recall@2048 {a_overall} vs baseline {b_overall} "
             f"= {a_overall - b_overall:+.3f}pp, bound ±{args.max_delta_pp}pp"
         )
-    b_lengths = baseline.get("lengths", {})
     for length in sorted(b_lengths):
         if length not in absorbed["lengths"]:
             problems.append(f"length {length} missing from absorbed summary")

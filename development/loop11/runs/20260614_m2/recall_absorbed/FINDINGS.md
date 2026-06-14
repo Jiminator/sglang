@@ -29,11 +29,23 @@ mismatch (int8 vs fp16 signature precision), **NOT** the absorbed scorer (which 
 99.88%). The absorbed-vs-baseline deltas in `absorbed_recall_summary.json` are therefore invalid for
 the literal AC-5 gate.
 
-## Remaining: matched-config absorbed-vs-baseline run (R16)
+## Matched-config absorbed-vs-baseline gate (R16) — PASS
 
-`run_absorbed.sh full` boots the baseline op-point (GLM-5.1 / fp16 / mem 0.7, via `_env.sh`) with the
-recall oracle, runs the sweep, and post-processes both the table and `rec["absorbed"]` recall via
-`absorbed_recall_summary.py`. That run produces the apples-to-apples absorbed-vs-frozen-baseline
-number (expected PASS: absorbed≈table≈baseline given the 99.88% within-run agreement). Prerequisite to
-confirm: GLM-5.1 routes attention through `DeepseekV2AttentionMLA` so the recall_oracle-gated bind in
-`deepseek_v2.py` fires (it does for DSv3.2 — 244/244 records here).
+`run_absorbed.sh full` booted the baseline op-point (GLM-5.1-FP8 / fp16 / mem 0.7, via `_env.sh`) with
+the recall oracle and ran the sweep + `absorbed_recall_summary.py` gate vs the frozen baseline. The
+`recall_oracle`-gated bind fires on GLM-5.1 (`GlmMoeDsaForCausalLM` inherits `DeepseekV2AttentionMLA`):
+smoke = 624/624 records carry `rec["absorbed"]`, 0 errors. The full matched-population gate
+(18,720 records, 6,240/length, all carry `rec["absorbed"]`) **PASSES ±0.5pp** (`absorbed_recall_summary.json`):
+
+| length | absorbed recall@2048 | baseline | Δ (pp) |
+|--------|----------------------|----------|--------|
+| 1024   | 100.000% | 100.0   | +0.000 |
+| 4096   | 58.397%  | 58.045  | +0.352 |
+| 16384  | 35.946%  | 36.042  | −0.096 |
+| overall| 64.781%  | 64.696  | +0.085 |
+
+Comparability OK (length set + per-length sample counts match the baseline exactly); `problems[]`
+empty; no hard failures; table-path sanity overall 64.706% (also within tolerance). **task5's served
+recall gate is closed**: the fp8-latent absorbed scorer reproduces the frozen recall baseline on the
+served GLM-5.1-FP8 op-point. (The R15 DSv3.2+int8 numbers above remain documented as the confounded run
+that motivated the matched-config re-run.)

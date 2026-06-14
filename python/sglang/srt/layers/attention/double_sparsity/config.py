@@ -61,8 +61,10 @@ _ALLOWED_FIELDS = {
 # anchor_budget: how many anchor positions to force-include; 0 disables.
 # recall_oracle: config-borne enable for the fail-closed NIAH recall-oracle
 #   diagnostic (off by default; byte-identical selection). Config-borne so it
-#   reaches TP workers; forces the eager selector path and requires
-#   --disable-cuda-graph (the hook does host syncs illegal under graph capture).
+#   reaches TP workers; requires --disable-cuda-graph (the hook does host syncs
+#   illegal under graph capture). NOTE: this disables graph CAPTURE, but the
+#   selector still runs the graph-safe path (retrieve_topk_graph_safe) eagerly —
+#   the oracle hook lives there, not in the eager retrieve_topk_via_labels path.
 # selection_capture: config-borne enable for the per-(layer, decode-step)
 #   selection dump (selected_indices + valid_lengths). When on, the graph state
 #   allocates per-layer capture buffers, the selector mirrors every layer's

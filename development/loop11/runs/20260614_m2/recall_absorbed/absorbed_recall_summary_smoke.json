@@ -1,0 +1,57 @@
+{
+  "sink": "/sgl-workspace/sglang/development/loop11/runs/20260614_m2/recall_absorbed/sink_smoke.jsonl",
+  "n_records": 624,
+  "n_with_absorbed": 624,
+  "failure_markers": {
+    "span_out_of_range": 0,
+    "exception": 0
+  },
+  "table": {
+    "lengths": {
+      "1024": {
+        "samples": 624,
+        "recall_at_2048_hits": 624,
+        "recall_at_2048_pct": 100.0
+      }
+    },
+    "overall": {
+      "samples": 624,
+      "recall_at_2048_hits": 624,
+      "recall_at_2048_pct": 100.0
+    }
+  },
+  "absorbed": {
+    "lengths": {
+      "1024": {
+        "samples": 624,
+        "recall_at_2048_hits": 624,
+        "recall_at_2048_pct": 100.0
+      }
+    },
+    "overall": {
+      "samples": 624,
+      "recall_at_2048_hits": 624,
+      "recall_at_2048_pct": 100.0
+    }
+  },
+  "baseline": {
+    "path": "/sgl-workspace/sglang/development/loop9/runs/20260610_m0/recall_baseline.json",
+    "overall_pct": 64.696,
+    "lengths_pct": {
+      "1024": 100.0,
+      "4096": 58.045,
+      "16384": 36.042
+    }
+  },
+  "gate": {
+    "max_delta_pp": 0.5,
+    "verdict": "FAIL",
+    "problems": [
+      "length sets differ: baseline ['1024', '16384', '4096'] vs absorbed ['1024'] \u2014 workload/op-point not comparable",
+      "length 1024: sample counts differ (6240 baseline vs 624 absorbed) \u2014 not comparable",
+      "absorbed overall recall@2048 100.0 vs baseline 64.696 = +35.304pp, bound \u00b10.5pp",
+      "length 16384 missing from absorbed summary",
+      "length 4096 missing from absorbed summary"
+    ]
+  }
+}
