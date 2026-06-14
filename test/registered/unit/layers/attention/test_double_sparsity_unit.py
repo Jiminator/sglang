@@ -12148,19 +12148,21 @@ class TestAbsorbedLatentScore(unittest.TestCase):
     label-path score/selection for scorer_norm='off' — the proof that the
     TokenLabelTable can be eliminated exactly (only fp32 reassociation, and in
     serving the fp8-quantized latent, distinguish them). Score-only diagnostic;
-    no selector-ABI change here."""
+    no selector-ABI change here. `w_sel` is the bind-time-selected W_UK rows
+    `[H, label_dim, lora]`; signature = `w_sel @ c_kv`."""
 
     def _fixture(self, *, T=512, H=4, nope=16, lora=32, label_dim=8, bs=4, seed=0):
         g = torch.Generator().manual_seed(seed)
         c_kv = torch.randn(T, lora, generator=g)
-        w_kc = torch.randn(H, nope, lora, generator=g)  # W_UK: k_nope[h] = w_kc[h]·c_kv
+        # bind-time-selected W_UK rows: signature[t,h,d] = w_sel[h,d,:]·c_kv[t]
+        w_sel = torch.randn(H, label_dim, lora, generator=g)
         queries = torch.randn(bs, H, nope, generator=g)
-        # sel: [H, label_dim] distinct channels per head
+        # sel: [H, label_dim] distinct query channels per head
         sel = torch.stack(
             [torch.randperm(nope, generator=g)[:label_dim] for _ in range(H)]
         ).to(torch.int32)
         weights = torch.randn(H, label_dim, generator=g)
-        return c_kv, w_kc, queries, sel, weights
+        return c_kv, w_sel, queries, sel, weights
 
     @staticmethod
     def _overlap(a, b, k):
@@ -12174,7 +12176,7 @@ class TestAbsorbedLatentScore(unittest.TestCase):
 
     def test_absorbed_score_matches_label_score(self):
         # Algebraic equivalence: absorbed `max_h v_h·c_kv` == label-path
-        # `max_h q_proj·channel_select(W_UK·c_kv)` (same real arithmetic, fp32).
+        # `max_h q_proj·signature` (signature = w_sel @ c_kv), same fp32 arithmetic.
         from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
             absorbed_latent_score,
         )
@@ -12182,15 +12184,11 @@ class TestAbsorbedLatentScore(unittest.TestCase):
             project_query_onto_channels,
         )
 
-        c_kv, w_kc, queries, sel, weights = self._fixture()
-        T = c_kv.shape[0]
-        k_nope = torch.einsum("hcl,tl->thc", w_kc.float(), c_kv.float())  # [T,H,nope]
-        signature = torch.gather(
-            k_nope, 2, sel.long().unsqueeze(0).expand(T, -1, -1)
-        )  # [T,H,label_dim] = channel_select(W_UK·c_kv)
+        c_kv, w_sel, queries, sel, weights = self._fixture()
+        signature = torch.einsum("hdl,tl->thd", w_sel.float(), c_kv.float())
         q_proj = project_query_onto_channels(queries, sel, weights)  # [bs,H,label_dim]
         label = torch.einsum("bhd,thd->bht", q_proj.float(), signature).amax(dim=1)
-        absorbed = absorbed_latent_score(queries, c_kv, w_kc, sel, weights)
+        absorbed = absorbed_latent_score(queries, c_kv, w_sel, sel, weights)
         torch.testing.assert_close(absorbed, label, atol=1e-2, rtol=1e-3)
 
     def test_absorbed_topk_matches_live_label_path(self):
@@ -12204,12 +12202,11 @@ class TestAbsorbedLatentScore(unittest.TestCase):
             select_topk_sequence_order,
         )
 
-        c_kv, w_kc, queries, sel, weights = self._fixture(T=4096, label_dim=8)
+        c_kv, w_sel, queries, sel, weights = self._fixture(T=4096, label_dim=8)
         T, top_k = c_kv.shape[0], 2048
-        k_nope = torch.einsum("hcl,tl->thc", w_kc.float(), c_kv.float())
-        signature = torch.gather(
-            k_nope, 2, sel.long().unsqueeze(0).expand(T, -1, -1)
-        ).to(torch.float16)
+        signature = torch.einsum("hdl,tl->thd", w_sel.float(), c_kv.float()).to(
+            torch.float16
+        )
         idx_label, _ = retrieve_topk_via_labels(
             queries=queries.to(torch.float16),
             token_signatures=signature.unsqueeze(0),  # [1,T,H,label_dim]
@@ -12220,7 +12217,7 @@ class TestAbsorbedLatentScore(unittest.TestCase):
             max_top_k=top_k,
             scorer_norm="off",
         )
-        absorbed = absorbed_latent_score(queries, c_kv, w_kc, sel, weights)
+        absorbed = absorbed_latent_score(queries, c_kv, w_sel, sel, weights)
         idx_absorbed, _ = select_topk_sequence_order(absorbed, top_k)
         overlap = self._overlap(idx_label, idx_absorbed, top_k)
         self.assertGreaterEqual(
@@ -12235,22 +12232,21 @@ class TestAbsorbedLatentScore(unittest.TestCase):
             project_query_onto_channels,
         )
 
-        c_kv, w_kc, queries, sel, weights = self._fixture(seed=3)
-        T = c_kv.shape[0]
-        k_nope = torch.einsum("hcl,tl->thc", w_kc.float(), c_kv.float())
-        signature = torch.gather(k_nope, 2, sel.long().unsqueeze(0).expand(T, -1, -1))
+        c_kv, w_sel, queries, sel, weights = self._fixture(seed=3)
+        signature = torch.einsum("hdl,tl->thd", w_sel.float(), c_kv.float())
         q_proj = project_query_onto_channels(queries, sel, weights)
         label = torch.einsum("bhd,thd->bht", q_proj.float(), signature).mean(dim=1)
         absorbed = absorbed_latent_score(
-            queries, c_kv, w_kc, sel, weights, head_agg="mean"
+            queries, c_kv, w_sel, sel, weights, head_agg="mean"
         )
         torch.testing.assert_close(absorbed, label, atol=1e-2, rtol=1e-3)
 
 
 class TestAbsorbedLatentLogical(unittest.TestCase):
-    """task5 R11: bind-time projection from real kv_b_proj, the logical-domain paged
-    reference (req_to_token/seq_len masking) vs the LIVE table path, and the
-    fp8-latent value-affecting overlap oracle. scorer_norm='off'."""
+    """Bind-time selected projection from the real kv_b_proj, the logical-domain
+    paged reference (req_to_token / seq_len / unwritten masking) checked for EXACT
+    score parity vs the LIVE production scorer, and the fp8-latent overlap oracle
+    on the real pool byte layout. scorer_norm='off'."""
 
     @staticmethod
     def _overlap(a, b, k):
@@ -12262,22 +12258,36 @@ class TestAbsorbedLatentLogical(unittest.TestCase):
             tot += len(sa & sb) / max(len(sa), len(sb), 1)
         return tot / bs
 
-    def test_build_absorbed_projection_shapes_and_slice(self):
+    @staticmethod
+    def _wsel_from_full(w, *, num_heads, qk_nope, v_head, sel, lora):
+        w_kc = w.view(num_heads, qk_nope + v_head, lora)[:, :qk_nope, :]
+        return torch.gather(w_kc, 1, sel.long().unsqueeze(-1).expand(-1, -1, lora))
+
+    def test_build_absorbed_projection_selects_rows(self):
         from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
             build_absorbed_projection,
         )
 
-        H, qk_nope, v_head, lora = 3, 8, 6, 16
+        H, qk_nope, v_head, lora, label_dim = 3, 8, 6, 16, 4
         g = torch.Generator().manual_seed(1)
         # [out, in] = H*(qk_nope+v_head) x kv_lora_rank
         w = torch.randn(H * (qk_nope + v_head), lora, generator=g)
-        w_kc = build_absorbed_projection(
-            w, num_heads=H, qk_nope_head_dim=qk_nope, v_head_dim=v_head
+        sel = torch.stack(
+            [torch.randperm(qk_nope, generator=g)[:label_dim] for _ in range(H)]
+        ).to(torch.int32)
+        w_sel = build_absorbed_projection(
+            w,
+            num_heads=H,
+            qk_nope_head_dim=qk_nope,
+            v_head_dim=v_head,
+            channel_selection=sel,
         )
-        self.assertEqual(tuple(w_kc.shape), (H, qk_nope, lora))
-        # equals the manual reshape + K-noPE slice (rope/value rows excluded)
-        expected = w.view(H, qk_nope + v_head, lora)[:, :qk_nope, :]
-        torch.testing.assert_close(w_kc, expected)
+        self.assertEqual(tuple(w_sel.shape), (H, label_dim, lora))
+        # reshape + K-noPE slice (rope/value rows excluded) + gather mask channels
+        expected = self._wsel_from_full(
+            w, num_heads=H, qk_nope=qk_nope, v_head=v_head, sel=sel, lora=lora
+        )
+        torch.testing.assert_close(w_sel, expected)
 
     def test_build_absorbed_projection_block_fp8_dequant(self):
         from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
@@ -12285,23 +12295,29 @@ class TestAbsorbedLatentLogical(unittest.TestCase):
         )
         from sglang.srt.layers.quantization.fp8_utils import block_quant_dequant
 
-        H, qk_nope, v_head, lora = 2, 4, 4, 8  # out=16, in=8 < block 128 -> 1x1 scale
+        H, qk_nope, v_head, lora, label_dim = 2, 4, 4, 8, 2
         g = torch.Generator().manual_seed(2)
         w_q = torch.randn(H * (qk_nope + v_head), lora, generator=g).to(
             torch.float8_e4m3fn
         )
         w_s = torch.rand(1, 1, generator=g) + 0.5
-        w_kc = build_absorbed_projection(
+        sel = torch.stack(
+            [torch.randperm(qk_nope, generator=g)[:label_dim] for _ in range(H)]
+        ).to(torch.int32)
+        w_sel = build_absorbed_projection(
             w_q,
             num_heads=H,
             qk_nope_head_dim=qk_nope,
             v_head_dim=v_head,
+            channel_selection=sel,
             weight_scale_inv=w_s,
             weight_block_size=[128, 128],
         )
         deq = block_quant_dequant(w_q, w_s, [128, 128], torch.float32)
-        expected = deq.view(H, qk_nope + v_head, lora)[:, :qk_nope, :]
-        torch.testing.assert_close(w_kc, expected)
+        expected = self._wsel_from_full(
+            deq, num_heads=H, qk_nope=qk_nope, v_head=v_head, sel=sel, lora=lora
+        )
+        torch.testing.assert_close(w_sel, expected)
 
     def _logical_fixture(self, *, H=2, nope=8, lora=16, label_dim=4, seed=0):
         g = torch.Generator().manual_seed(seed)
@@ -12309,32 +12325,34 @@ class TestAbsorbedLatentLogical(unittest.TestCase):
         seq_lens = torch.tensor([3, 5, 4], dtype=torch.int32)
         bs = seq_lens.numel()
         max_seq_len = int(seq_lens.max())
-        # non-contiguous physical slots per request (distinct, within [0, max_tokens))
-        slots = [[7, 3, 11], [20, 1, 15, 8, 25], [2, 30, 17, 9]]
+        # non-contiguous physical slots; req0 logical pos 1 -> physical slot 5 is an
+        # in-range UNWRITTEN hole (must mask to -inf despite a high latent norm).
+        slots = [[7, 5, 11], [20, 1, 15, 8, 25], [2, 30, 17, 9]]
+        hole_req, hole_pos, hole_slot = 0, 1, 5
         req_to_token = torch.zeros(bs, max_seq_len, dtype=torch.int32)
         for r, s in enumerate(slots):
             req_to_token[r, : len(s)] = torch.tensor(s, dtype=torch.int32)
         req_pool_indices = torch.arange(bs, dtype=torch.int32)
         c_kv = torch.randn(max_tokens, lora, generator=g)
-        w_kc = torch.randn(H, nope, lora, generator=g)
-        # sel: [H, label_dim] distinct channels per head
+        c_kv[hole_slot] *= 10.0  # would win if not masked by `written`
+        w_sel = torch.randn(H, label_dim, lora, generator=g)
         sel = torch.stack(
             [torch.randperm(nope, generator=g)[:label_dim] for _ in range(H)]
         ).to(torch.int32)
         weights = torch.randn(H, label_dim, generator=g)
         queries = torch.randn(bs, H, nope, generator=g)
-        # signature = channel_select(W_UK·c_kv) at each physical slot (fp32, exact)
-        k_nope = torch.einsum("hcl,tl->thc", w_kc, c_kv)  # [max_tokens,H,nope]
-        signatures = torch.gather(
-            k_nope, 2, sel.long().unsqueeze(0).expand(max_tokens, -1, -1)
+        # signature = w_sel @ c_kv at each physical slot (fp32, exact)
+        signatures = torch.einsum(
+            "hdl,tl->thd", w_sel, c_kv
         )  # [max_tokens,H,label_dim]
         written = torch.zeros(max_tokens, dtype=torch.bool)
         for s in slots:
             for slot in s:
                 written[slot] = True
+        written[hole_slot] = False  # the in-range unwritten hole
         return dict(
             c_kv=c_kv,
-            w_kc=w_kc,
+            w_sel=w_sel,
             sel=sel,
             weights=weights,
             queries=queries,
@@ -12344,6 +12362,8 @@ class TestAbsorbedLatentLogical(unittest.TestCase):
             req_to_token=req_to_token,
             seq_lens=seq_lens,
             max_seq_len=max_seq_len,
+            hole_req=hole_req,
+            hole_pos=hole_pos,
         )
 
     def test_logical_equivalence_vs_live_table_path(self):
@@ -12351,20 +12371,21 @@ class TestAbsorbedLatentLogical(unittest.TestCase):
             absorbed_latent_score_logical,
         )
         from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            _compute_logical_token_scores,
             retrieve_topk_via_labels,
             select_topk_sequence_order,
         )
 
         f = self._logical_fixture()
         top_k = 2
-        idx_label, _ = retrieve_topk_via_labels(
+        # EXACT score parity vs the live production logical scorer (same masking).
+        label_scores = _compute_logical_token_scores(
             queries=f["queries"],
-            token_signatures=f["signatures"].unsqueeze(0),  # [1,max_tokens,H,label_dim]
-            written=f["written"].unsqueeze(0),  # [1,max_tokens]
-            channel_selection=f["sel"].unsqueeze(0),  # [1,H,label_dim]
+            token_signatures=f["signatures"].unsqueeze(0),
+            written=f["written"].unsqueeze(0),
+            channel_selection=f["sel"].unsqueeze(0),
             channel_weights=f["weights"].unsqueeze(0),
             layer_id=0,
-            max_top_k=top_k,
             req_pool_indices=f["req_pool_indices"],
             req_to_token=f["req_to_token"],
             seq_lens=f["seq_lens"],
@@ -12374,7 +12395,7 @@ class TestAbsorbedLatentLogical(unittest.TestCase):
         scores = absorbed_latent_score_logical(
             f["queries"],
             f["c_kv"],
-            f["w_kc"],
+            f["w_sel"],
             f["sel"],
             f["weights"],
             f["req_pool_indices"],
@@ -12383,13 +12404,66 @@ class TestAbsorbedLatentLogical(unittest.TestCase):
             f["max_seq_len"],
             written=f["written"],
         )
+        torch.testing.assert_close(scores, label_scores, atol=1e-2, rtol=1e-3)
+        # the in-range UNWRITTEN hole is masked to -inf despite its large latent norm
+        hole = scores[f["hole_req"], f["hole_pos"]]
+        self.assertTrue(torch.isneginf(hole), f"unwritten hole not masked: {hole}")
+        # top-k equivalence vs the LIVE logical table path; hole excluded
+        idx_label, _ = retrieve_topk_via_labels(
+            queries=f["queries"],
+            token_signatures=f["signatures"].unsqueeze(0),
+            written=f["written"].unsqueeze(0),
+            channel_selection=f["sel"].unsqueeze(0),
+            channel_weights=f["weights"].unsqueeze(0),
+            layer_id=0,
+            max_top_k=top_k,
+            req_pool_indices=f["req_pool_indices"],
+            req_to_token=f["req_to_token"],
+            seq_lens=f["seq_lens"],
+            max_seq_len=f["max_seq_len"],
+            scorer_norm="off",
+        )
         idx_absorbed, _ = select_topk_sequence_order(scores, top_k)
-        # fp32 algebra-exact -> identical logical winners (per request)
         self.assertEqual(self._overlap(idx_label, idx_absorbed, top_k), 1.0)
+        self.assertNotIn(
+            f["hole_pos"], [int(x) for x in idx_absorbed[f["hole_req"]].tolist()]
+        )
 
-    def test_fp8_latent_overlap_oracle(self):
-        # The serving value-affecting delta: absorbed score from the fp8-quantized
-        # latent vs from the original full-precision latent. Records overlap.
+    @staticmethod
+    def _pack_pool_fp8(c_kv):
+        # [T, 512] fp32 -> [T, 528] uint8 = [512 fp8 bytes | 4 fp32 scales], the
+        # exact MLATokenToKVPool nope layout.
+        T, D = c_kv.shape
+        fp8_max = torch.finfo(torch.float8_e4m3fn).max
+        n_blk = D // 128
+        scales = torch.zeros(T, n_blk, dtype=torch.float32)
+        fp8 = torch.zeros(T, D, dtype=torch.float8_e4m3fn)
+        for bi in range(n_blk):
+            tile = c_kv[:, bi * 128 : (bi + 1) * 128]
+            s = tile.abs().amax(dim=1) / fp8_max  # [T] per-128 block
+            scales[:, bi] = s
+            fp8[:, bi * 128 : (bi + 1) * 128] = torch.clamp(
+                tile / s.unsqueeze(1), -fp8_max, fp8_max
+            ).to(torch.float8_e4m3fn)
+        return torch.cat([fp8.view(torch.uint8), scales.view(torch.uint8)], dim=1)
+
+    @staticmethod
+    def _unpack_pool_fp8(packed):
+        # read [512 fp8 | 4 fp32 scales] back to [T, 512] fp32 from the byte layout.
+        fp8 = packed[:, :512].contiguous().view(torch.float8_e4m3fn).to(torch.float32)
+        scales = packed[:, 512:528].contiguous().view(torch.float32)  # [T, 4]
+        out = torch.empty_like(fp8)
+        for bi in range(4):
+            out[:, bi * 128 : (bi + 1) * 128] = fp8[
+                :, bi * 128 : (bi + 1) * 128
+            ] * scales[:, bi].unsqueeze(1)
+        return out
+
+    def test_fp8_pool_layout_overlap_oracle(self):
+        # Value-affecting delta read from the REAL pool byte layout: pack each token
+        # as [512 fp8 | 4 fp32 scales], unpack/dequant from those bytes, score, and
+        # compare top-k vs the full-precision latent. Proves the scorer can consume
+        # the resident pool layout (binding recall@2048 gate is the serving sweep).
         from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
             absorbed_latent_score,
         )
@@ -12400,33 +12474,24 @@ class TestAbsorbedLatentLogical(unittest.TestCase):
         g = torch.Generator().manual_seed(7)
         T, H, nope, lora, label_dim, bs, top_k = 4096, 4, 16, 512, 8, 4, 2048
         c_kv = torch.randn(T, lora, generator=g)
-        w_kc = torch.randn(H, nope, lora, generator=g)
+        w_sel = torch.randn(H, label_dim, lora, generator=g)
         sel = torch.stack(
             [torch.randperm(nope, generator=g)[:label_dim] for _ in range(H)]
         ).to(torch.int32)
         weights = torch.randn(H, label_dim, generator=g)
         queries = torch.randn(bs, H, nope, generator=g)
-        # per-128-block fp8 quant/dequant (matches the pool's MLA latent scheme)
-        c_kv_fp8 = c_kv.clone()
-        fp8_max = torch.finfo(torch.float8_e4m3fn).max
-        for b0 in range(0, lora, 128):
-            tile = c_kv[:, b0 : b0 + 128]
-            s = tile.abs().amax(dim=1, keepdim=True) / fp8_max  # [T,1] per-128 block
-            q = torch.clamp(tile / s, -fp8_max, fp8_max).to(torch.float8_e4m3fn)
-            c_kv_fp8[:, b0 : b0 + 128] = q.to(torch.float32) * s
+        c_kv_deq = self._unpack_pool_fp8(self._pack_pool_fp8(c_kv))
         idx_orig, _ = select_topk_sequence_order(
-            absorbed_latent_score(queries, c_kv, w_kc, sel, weights), top_k
+            absorbed_latent_score(queries, c_kv, w_sel, sel, weights), top_k
         )
         idx_fp8, _ = select_topk_sequence_order(
-            absorbed_latent_score(queries, c_kv_fp8, w_kc, sel, weights), top_k
+            absorbed_latent_score(queries, c_kv_deq, w_sel, sel, weights), top_k
         )
         overlap = self._overlap(idx_orig, idx_fp8, top_k)
-        # fp8-e4m3 per-128-block scaled latent keeps selection close (CPU oracle;
-        # the binding recall@2048 gate is the serving sweep, a later task5 slice).
         self.assertGreaterEqual(
             overlap,
             0.9,
-            f"fp8-latent vs full-precision top-{top_k} overlap {overlap:.4f}",
+            f"fp8 pool-layout vs full-precision top-{top_k} overlap {overlap:.4f}",
         )
 
 

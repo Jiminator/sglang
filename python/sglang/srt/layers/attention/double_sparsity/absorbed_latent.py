@@ -15,86 +15,21 @@ to an inner product against the resident latent::
                = max_h ( v_h[b] · c_kv[t] )                         # scorer_norm="off"
 
 so the per-token signature IS the latent: the ``v_h`` projection (a few MACs per
-head per step) is built query-side and the key side is the fp8 latent the KV pool
-already stores. The TokenLabelTable, the prefill label-write hook, and its
-GB/rank disappear exactly — only fp32 reassociation and (in serving) the
-fp8-quantized latent vs the bf16-pre-quant label distinguish the two, which is a
-declared value-affecting change gated by recall@2048 (±0.5pp) + selection
-equivalence, NOT a bit-identity claim.
+head per step) is built query-side from the bind-time-selected ``W_UK`` rows, and
+the key side is the fp8 latent the KV pool already stores. The TokenLabelTable,
+the prefill label-write hook, and its GB/rank disappear exactly — only fp32
+reassociation and (in serving) the fp8-quantized latent vs the bf16-pre-quant
+label distinguish the two, a declared value-affecting change gated by recall@2048
+(±0.5pp) + selection equivalence, NOT a bit-identity claim.
 
-This module is the score-only DIAGNOSTIC reference (``scorer_norm="off"`` only).
-It does not change the selector ABI or delete the table — that is task6. It backs
-the live-path equivalence + recall gates that must pass before the swap.
+This module is the score-only DIAGNOSTIC reference (``scorer_norm="off"`` only). It
+does not change the selector ABI or delete the table; that integration is a later
+step. It backs the live-path equivalence + recall gates that precede the swap.
 """
 
 from __future__ import annotations
 
 import torch
-
-
-def absorbed_latent_v(
-    queries: torch.Tensor,
-    w_kc: torch.Tensor,
-    channel_selection: torch.Tensor,
-    channel_weights: torch.Tensor,
-) -> torch.Tensor:
-    """Build the per-head query-side latent projection ``v_h`` (the absorbed score
-    query). All math in fp32 to match the production ``_logical_score`` accumulation.
-
-    Args:
-        queries: ``[bs, H, qk_nope_head_dim]`` — the no-PE query, BEFORE channel
-            projection (same input as ``project_query_onto_channels``).
-        w_kc: ``[H, qk_nope_head_dim, kv_lora_rank]`` — the K-noPE up-projection
-            (``W_UK``; ``k_nope[h] = w_kc[h] · c_kv``), per local head.
-        channel_selection: ``[H, label_dim]`` int — mask channel indices into
-            ``qk_nope_head_dim``.
-        channel_weights: ``[H, label_dim]`` float — the per-channel weights ``w_c``.
-
-    Returns:
-        ``[bs, H, kv_lora_rank]`` fp32 — ``v_h[b] = Σ_{c∈S_h} w_c·q_c · W_UK[h][c,:]``.
-    """
-    bs = queries.shape[0]
-    lora = w_kc.shape[-1]
-    sel = channel_selection.long()  # [H, label_dim]
-    # weighted query at the selected channels: w_c · q_{S_h}  -> [bs, H, label_dim]
-    q_sel = torch.gather(
-        queries.to(torch.float32), 2, sel.unsqueeze(0).expand(bs, -1, -1)
-    ) * channel_weights.to(torch.float32).unsqueeze(0)
-    # the W_UK rows at the selected channels: [H, label_dim, lora]
-    w_sel = torch.gather(
-        w_kc.to(torch.float32), 1, sel.unsqueeze(-1).expand(-1, -1, lora)
-    )
-    # v_h = Σ_{c∈S_h} (w_c·q_c) · W_UK[h][c, :]  -> [bs, H, lora]
-    return torch.einsum("bhd,hdl->bhl", q_sel, w_sel)
-
-
-def absorbed_latent_score(
-    queries: torch.Tensor,
-    c_kv: torch.Tensor,
-    w_kc: torch.Tensor,
-    channel_selection: torch.Tensor,
-    channel_weights: torch.Tensor,
-    head_agg: str = "max",
-) -> torch.Tensor:
-    """Per-(query, token) selection score computed from the latent, no table.
-
-    ``score[b, t] = agg_h ( v_h[b] · c_kv[t] )`` for ``scorer_norm="off"``.
-
-    Args:
-        queries: ``[bs, H, qk_nope_head_dim]``.
-        c_kv: ``[T, kv_lora_rank]`` — the resident MLA KV latent (dequantized).
-        w_kc, channel_selection, channel_weights: see :func:`absorbed_latent_v`.
-        head_agg: ``"max"`` (default) or ``"mean"`` — matches the scorer's
-            cross-head aggregation.
-
-    Returns:
-        ``[bs, T]`` fp32 scores.
-    """
-    v = absorbed_latent_v(queries, w_kc, channel_selection, channel_weights)
-    dots = torch.einsum("bhl,tl->bht", v, c_kv.to(torch.float32))  # [bs, H, T]
-    if head_agg == "mean":
-        return dots.mean(dim=1)
-    return dots.amax(dim=1)
 
 
 def build_absorbed_projection(
@@ -103,19 +38,31 @@ def build_absorbed_projection(
     num_heads: int,
     qk_nope_head_dim: int,
     v_head_dim: int,
+    channel_selection: torch.Tensor,
     weight_scale_inv: torch.Tensor = None,
     weight_block_size=None,
 ) -> torch.Tensor:
     """Bind-time absorbed projection: dequantize the real ``kv_b_proj`` weight and
-    return ``W_UK = w_kc`` as ``[H, qk_nope_head_dim, kv_lora_rank]`` fp32.
+    return the SELECTED ``W_UK`` rows ``[H, label_dim, kv_lora_rank]`` (fp32).
 
     Mirrors the model's own ``w_kc`` extraction (deepseek_weight_loader): the
     block-fp8 ``[out, in]`` weight (``out = H·(qk_nope+v_head)``, ``in =
     kv_lora_rank``) is dequantized with the SAME block-fp8 semantics attention
-    uses, reshaped to ``[H, qk_nope+v_head, lora]``, and sliced to the K-noPE rows
-    ``[:qk_nope_head_dim]`` (rope dims are excluded by construction). Built once at
-    bind; the per-token signature then IS the resident latent. The per-mask-channel
-    gather is fused into :func:`absorbed_latent_v` at score time.
+    uses, reshaped to ``[H, qk_nope+v_head, lora]``, sliced to the K-noPE rows
+    ``[:qk_nope_head_dim]`` (rope dims excluded by construction), then GATHERED at
+    each head's mask channels ``S_h``. Built once at bind; the result is exactly
+    the per-mask-channel ``W_UK`` rows the absorbed score consumes, so the
+    per-token signature then IS the resident latent.
+
+    Args:
+        kv_b_proj_weight: ``[H·(qk_nope+v_head), kv_lora_rank]``.
+        channel_selection: ``[H, label_dim]`` int — mask channel indices into
+            ``qk_nope_head_dim``.
+        weight_scale_inv / weight_block_size: block-fp8 dequant inputs; when both
+            present, dequantize via ``block_quant_dequant``, else ``.float()``.
+
+    Returns:
+        ``[H, label_dim, kv_lora_rank]`` fp32 — ``W_UK[h][S_h[d], :]``.
     """
     if weight_scale_inv is not None and weight_block_size is not None:
         from sglang.srt.layers.quantization.fp8_utils import block_quant_dequant
@@ -130,14 +77,75 @@ def build_absorbed_projection(
     assert (
         out == num_heads * head_width
     ), f"kv_b_proj out {out} != num_heads*(qk_nope+v_head) {num_heads * head_width}"
-    # [H, qk_nope+v_head, lora] -> slice the K-noPE rows -> W_UK [H, qk_nope, lora]
-    return w.view(num_heads, head_width, lora)[:, :qk_nope_head_dim, :].contiguous()
+    # [H, qk_nope+v_head, lora] -> K-noPE rows -> W_UK [H, qk_nope, lora]
+    w_kc = w.view(num_heads, head_width, lora)[:, :qk_nope_head_dim, :]
+    # gather the mask channels per head -> [H, label_dim, lora]
+    sel = channel_selection.long()
+    return torch.gather(w_kc, 1, sel.unsqueeze(-1).expand(-1, -1, lora)).contiguous()
+
+
+def absorbed_latent_v(
+    queries: torch.Tensor,
+    w_sel: torch.Tensor,
+    channel_selection: torch.Tensor,
+    channel_weights: torch.Tensor,
+) -> torch.Tensor:
+    """Per-head query-side latent projection ``v_h`` (the absorbed score query),
+    fp32 to match the production ``_logical_score`` accumulation.
+
+    Args:
+        queries: ``[bs, H, qk_nope_head_dim]`` — no-PE query, BEFORE channel
+            projection (same input as ``project_query_onto_channels``).
+        w_sel: ``[H, label_dim, kv_lora_rank]`` — the bind-time-selected ``W_UK``
+            rows from :func:`build_absorbed_projection`.
+        channel_selection: ``[H, label_dim]`` int — the query channels ``S_h``.
+        channel_weights: ``[H, label_dim]`` float — the per-channel weights ``w_c``.
+
+    Returns:
+        ``[bs, H, kv_lora_rank]`` fp32 — ``v_h[b] = Σ_{c∈S_h} w_c·q_c · W_UK[h][c,:]``.
+    """
+    bs = queries.shape[0]
+    sel = channel_selection.long()
+    # weighted query at the selected channels: w_c · q_{S_h}  -> [bs, H, label_dim]
+    q_sel = torch.gather(
+        queries.to(torch.float32), 2, sel.unsqueeze(0).expand(bs, -1, -1)
+    ) * channel_weights.to(torch.float32).unsqueeze(0)
+    # v_h = Σ_d (w_c·q_c) · w_sel[h, d, :]  -> [bs, H, lora]
+    return torch.einsum("bhd,hdl->bhl", q_sel, w_sel.to(torch.float32))
+
+
+def absorbed_latent_score(
+    queries: torch.Tensor,
+    c_kv: torch.Tensor,
+    w_sel: torch.Tensor,
+    channel_selection: torch.Tensor,
+    channel_weights: torch.Tensor,
+    head_agg: str = "max",
+) -> torch.Tensor:
+    """Per-(query, token) selection score from the latent, no table.
+
+    ``score[b, t] = agg_h ( v_h[b] · c_kv[t] )`` for ``scorer_norm="off"``.
+
+    Args:
+        queries: ``[bs, H, qk_nope_head_dim]``.
+        c_kv: ``[T, kv_lora_rank]`` — the resident MLA KV latent (dequantized).
+        w_sel, channel_selection, channel_weights: see :func:`absorbed_latent_v`.
+        head_agg: ``"max"`` (default) or ``"mean"``.
+
+    Returns:
+        ``[bs, T]`` fp32 scores.
+    """
+    v = absorbed_latent_v(queries, w_sel, channel_selection, channel_weights)
+    dots = torch.einsum("bhl,tl->bht", v, c_kv.to(torch.float32))  # [bs, H, T]
+    if head_agg == "mean":
+        return dots.mean(dim=1)
+    return dots.amax(dim=1)
 
 
 def absorbed_latent_score_logical(
     queries: torch.Tensor,
     c_kv: torch.Tensor,
-    w_kc: torch.Tensor,
+    w_sel: torch.Tensor,
     channel_selection: torch.Tensor,
     channel_weights: torch.Tensor,
     req_pool_indices: torch.Tensor,
@@ -154,13 +162,13 @@ def absorbed_latent_score_logical(
     ``req_to_token[pool, pos] -> physical slot``, gathers ``c_kv`` at the physical
     slot, scores ``agg_h (v_h · c_kv[slot])``, and masks unwritten slots (if
     ``written`` given) then positions ``>= seq_len`` to ``-inf`` — same order as
-    the production logical scorer. Returns ``[bs, max_seq_len]`` fp32 logical scores
-    (feed to ``select_topk_sequence_order``).
+    the production logical scorer. Returns ``[bs, max_seq_len]`` fp32 (feed to
+    ``select_topk_sequence_order``).
 
     Args:
         queries: ``[bs, H, qk_nope_head_dim]``.
         c_kv: ``[max_tokens, kv_lora_rank]`` physical-slot latent (dequantized).
-        w_kc: ``[H, qk_nope_head_dim, kv_lora_rank]`` (from :func:`build_absorbed_projection`).
+        w_sel: ``[H, label_dim, kv_lora_rank]`` (from :func:`build_absorbed_projection`).
         req_pool_indices: ``[bs]`` int; req_to_token: ``[num_pools, max_seqlen]`` int;
         seq_lens: ``[bs]`` int; written: optional ``[max_tokens]`` bool.
     """
@@ -168,18 +176,14 @@ def absorbed_latent_score_logical(
     device = queries.device
     if max_seq_len <= 0:
         return torch.full((bs, 1), float("-inf"), dtype=torch.float32, device=device)
-    v = absorbed_latent_v(
-        queries, w_kc, channel_selection, channel_weights
-    )  # [bs,H,lora]
+    v = absorbed_latent_v(queries, w_sel, channel_selection, channel_weights)
     safe_pool = req_pool_indices.clamp(0, max(req_to_token.shape[0] - 1, 0)).long()
     logical_positions = (
         torch.arange(max_seq_len, device=device).unsqueeze(0).expand(bs, -1)
     )
     safe_positions = logical_positions.clamp(0, max(req_to_token.shape[1] - 1, 0))
     pool_expanded = safe_pool.unsqueeze(1).expand(-1, max_seq_len)
-    physical_slots = req_to_token[
-        pool_expanded, safe_positions.long()
-    ]  # [bs, max_seq_len]
+    physical_slots = req_to_token[pool_expanded, safe_positions.long()]
     max_tokens = c_kv.shape[0]
     safe_phys = physical_slots.long().clamp(0, max(max_tokens - 1, 0))
     gathered = c_kv[safe_phys].to(torch.float32)  # [bs, max_seq_len, lora]

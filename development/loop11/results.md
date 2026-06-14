@@ -5,7 +5,14 @@
 
 ## 1. Current state summary
 
-- **M0 COMPLETE (Rounds 0–4); M1 (task3 + task4) COMPLETE + VERIFIED (R9 review). M2 task5 IN PROGRESS (R10–R11).**
+- **M0 COMPLETE (Rounds 0–4); M1 (task3 + task4) COMPLETE + VERIFIED (R9 review). M2 task5 IN PROGRESS (R10–R12).**
+- **R12 — task5 CPU proof hardened to contract (Codex R11 repairs).** `build_absorbed_projection` now
+  returns the bind-time **selected** rows `[H, label_dim, kv_lora_rank]` and the score helpers consume
+  them. Logical equivalence strengthened from top-k to **EXACT score-tensor parity**
+  (`torch.testing.assert_close`) vs the LIVE `_compute_logical_token_scores`, with an **in-range
+  unwritten hole** proven masked to `-inf` and excluded. The fp8 oracle now reads the **real pool byte
+  layout** `[512 fp8 | 4 fp32 scales]` (not a hand-rolled dequant). 7 absorbed tests + full DS suite
+  pass (§10).
 - **R11 — task5 logical-domain + real-`kv_b_proj` + fp8 oracle.** Added `build_absorbed_projection`
   (bind-time W_UK from the real block-fp8 `kv_b_proj`) and `absorbed_latent_score_logical` (paged
   over `req_to_token` with seq-len/unwritten masking, mirroring the production logical scorer).
@@ -412,7 +419,7 @@ descriptor, not the gate. Admission/capacity is met.
 
 M1 is VERIFIED COMPLETE (R9 review). M2 task5 STARTED (§10).
 
-## 10. M2 task5: absorbed-latent score-only prototype — IN PROGRESS (R10–R11)
+## 10. M2 task5: absorbed-latent score-only prototype — IN PROGRESS (R10–R12)
 
 The structural fix (DEC-2): replace the materialized signature table with scores read directly from
 the resident fp8 KV latent. **Load-bearing identity (proven, code-cited):** today's
@@ -429,11 +436,19 @@ applied on the query side (`dsa_backend.py:1696-1733` + `token_label_write.py:80
 - R11: `build_absorbed_projection` (bind-time W_UK from the REAL `kv_b_proj` — `block_quant_dequant`
   or `.float()`, reshape, slice K-noPE rows) + `absorbed_latent_score_logical` (LOGICAL-domain paged
   reference mirroring `_compute_logical_token_scores`: req_to_token gather, unwritten-then-seq_len
-  masking). `TestAbsorbedLatentLogical` (4): builder shapes + block-fp8 dequant parity vs
-  `block_quant_dequant`; **logical-domain equivalence — absorbed top-k EXACTLY matches the LIVE
-  `retrieve_topk_via_labels` logical mode** on a multi-request fixture (non-contiguous slots, holes,
-  unequal seq_lens); fp8-latent overlap oracle (quantized-vs-full-precision latent top-k overlap
-  ≥0.9 — the value-affecting CPU regression oracle). 419 DS tests pass.
+  masking). First logical-domain equivalence (top-k overlap) + a first fp8-latent overlap oracle.
+- R12 (hardened to contract, Codex R11 repairs 1–5): `build_absorbed_projection` now takes
+  `channel_selection` and returns the bind-time **selected** rows `[H, label_dim, kv_lora_rank]`
+  (dequant → reshape → K-noPE slice → gather mask channels); `absorbed_latent_v`/`_score`/
+  `_score_logical` consume the pre-gathered rows (query side still gathers `channel_selection`).
+  `TestAbsorbedLatentLogical` now proves **EXACT logical score parity** (the score TENSOR via
+  `torch.testing.assert_close`, not only top-k) against the LIVE `_compute_logical_token_scores`,
+  plus top-k equivalence vs `retrieve_topk_via_labels`; an **in-range UNWRITTEN hole** (logical pos
+  mapped through `req_to_token` to a slot with a deliberately 10× latent norm) is asserted masked to
+  `-inf` and excluded from top-k. The fp8 oracle now packs/reads the **real pool byte layout**
+  `[512 fp8 bytes | 4 fp32 per-128-block scales]` (`packed[:, :512].view(float8_e4m3fn)`,
+  `packed[:, 512:528].view(float32)`), dequants block-by-block, and records ≥0.9 top-k overlap vs
+  the full-precision latent (value-affecting CPU oracle). 7 absorbed-latent tests + full DS suite pass.
 
 **Remaining for task5** (next rounds): the **GPU Triton paged score kernel** (walks `req_to_token`,
 in-kernel fp8 latent dequant with the per-128-block scales, fp32 accumulation, ≤ ~23.5k µs/window
