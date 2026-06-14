@@ -12495,5 +12495,219 @@ class TestAbsorbedLatentLogical(unittest.TestCase):
         )
 
 
+@unittest.skipUnless(
+    torch.cuda.is_available(), "absorbed-latent paged kernel needs CUDA"
+)
+class TestAbsorbedLatentPagedGPU(unittest.TestCase):
+    """GPU paged fp8-latent absorbed-score kernel vs the CPU logical reference (the
+    oracle). The kernel reads the resident fp8 latent + per-128-block scales,
+    dequants in-register, and scores `max_h v_h·c_kv` paged over `req_to_token` with
+    written/seq_len masking — value-for-value the same as
+    `absorbed_latent_score_logical` fed the dequantized latent (only fp32 summation
+    order reassociates). `scorer_norm="off"`."""
+
+    @staticmethod
+    def _overlap(a, b, k):
+        bs = a.shape[0]
+        tot = 0.0
+        for i in range(bs):
+            sa = {int(x) for x in a[i].tolist() if x >= 0}
+            sb = {int(x) for x in b[i].tolist() if x >= 0}
+            tot += len(sa & sb) / max(len(sa), len(sb), 1)
+        return tot / bs
+
+    def _fixture(self, *, H=4, nope=16, lora=512, label_dim=8, seed=0):
+        g = torch.Generator().manual_seed(seed)
+        max_tokens = 48
+        seq_lens = torch.tensor([3, 5, 4], dtype=torch.int32)
+        bs = seq_lens.numel()
+        max_seq_len = int(seq_lens.max())
+        # non-contiguous slots; req0 logical pos 1 -> physical slot 5 is an in-range
+        # UNWRITTEN hole given a deliberately 10x latent norm.
+        slots = [[7, 5, 11], [20, 1, 15, 8, 25], [2, 30, 17, 9]]
+        hole_req, hole_pos, hole_slot = 0, 1, 5
+        req_to_token = torch.zeros(bs, max_seq_len, dtype=torch.int32)
+        for r, s in enumerate(slots):
+            req_to_token[r, : len(s)] = torch.tensor(s, dtype=torch.int32)
+        req_pool_indices = torch.arange(bs, dtype=torch.int32)
+        c_kv = torch.randn(max_tokens, lora, generator=g)
+        c_kv[hole_slot] *= 10.0
+        w_sel = torch.randn(H, label_dim, lora, generator=g)
+        sel = torch.stack(
+            [torch.randperm(nope, generator=g)[:label_dim] for _ in range(H)]
+        ).to(torch.int32)
+        weights = torch.randn(H, label_dim, generator=g)
+        queries = torch.randn(bs, H, nope, generator=g)
+        written = torch.zeros(max_tokens, dtype=torch.bool)
+        for s in slots:
+            for slot in s:
+                written[slot] = True
+        written[hole_slot] = False
+        return dict(
+            c_kv=c_kv,
+            w_sel=w_sel,
+            sel=sel,
+            weights=weights,
+            queries=queries,
+            written=written,
+            req_pool_indices=req_pool_indices,
+            req_to_token=req_to_token,
+            seq_lens=seq_lens,
+            max_seq_len=max_seq_len,
+            hole_req=hole_req,
+            hole_pos=hole_pos,
+        )
+
+    def _cpu_reference(self, f, fp8, scales, head_agg="max"):
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
+            absorbed_latent_score_logical,
+        )
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent_kernel import (
+            dequantize_latent_fp8,
+        )
+
+        c_kv_deq = dequantize_latent_fp8(fp8.cpu(), scales.cpu())
+        return absorbed_latent_score_logical(
+            f["queries"],
+            c_kv_deq,
+            f["w_sel"],
+            f["sel"],
+            f["weights"],
+            f["req_pool_indices"],
+            f["req_to_token"],
+            f["seq_lens"],
+            f["max_seq_len"],
+            written=f["written"],
+            head_agg=head_agg,
+        )
+
+    def _run_gpu(self, f, fp8, scales, head_agg="max"):
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent_kernel import (
+            absorbed_latent_score_logical_paged,
+        )
+
+        dev = torch.device("cuda")
+        return absorbed_latent_score_logical_paged(
+            f["queries"].to(dev),
+            fp8.to(dev),
+            scales.to(dev),
+            f["w_sel"].to(dev),
+            f["sel"].to(dev),
+            f["weights"].to(dev),
+            f["req_pool_indices"].to(dev),
+            f["req_to_token"].to(dev),
+            f["seq_lens"].to(dev),
+            f["max_seq_len"],
+            written=f["written"].to(dev),
+            head_agg=head_agg,
+        ).cpu()
+
+    def test_paged_gpu_matches_cpu_reference(self):
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent_kernel import (
+            quantize_latent_fp8,
+        )
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            select_topk_sequence_order,
+        )
+
+        f = self._fixture()
+        fp8, scales = quantize_latent_fp8(f["c_kv"])
+        cpu = self._cpu_reference(f, fp8, scales)
+        gpu = self._run_gpu(f, fp8, scales)
+        # identical mask + dequant values -> only fp32 reassociation differs
+        finite = torch.isfinite(cpu)
+        self.assertTrue(bool((torch.isinf(cpu) == torch.isinf(gpu)).all()))
+        torch.testing.assert_close(gpu[finite], cpu[finite], atol=1e-3, rtol=1e-4)
+        # oracle recall: identical logical winners per request
+        top_k = 2
+        idx_cpu, _ = select_topk_sequence_order(cpu, top_k)
+        idx_gpu, _ = select_topk_sequence_order(gpu, top_k)
+        self.assertEqual(self._overlap(idx_cpu, idx_gpu, top_k), 1.0)
+
+    def test_paged_gpu_unwritten_hole_masked(self):
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent_kernel import (
+            quantize_latent_fp8,
+        )
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            select_topk_sequence_order,
+        )
+
+        f = self._fixture()
+        fp8, scales = quantize_latent_fp8(f["c_kv"])
+        gpu = self._run_gpu(f, fp8, scales)
+        hole = gpu[f["hole_req"], f["hole_pos"]]
+        self.assertTrue(torch.isneginf(hole), f"unwritten hole not masked: {hole}")
+        idx_gpu, _ = select_topk_sequence_order(gpu, 2)
+        self.assertNotIn(
+            f["hole_pos"], [int(x) for x in idx_gpu[f["hole_req"]].tolist()]
+        )
+
+    def test_paged_gpu_consumes_pool_byte_layout(self):
+        # The kernel inputs (fp8 tensor + per-block scales) are exactly what the MLA
+        # pool exposes after unpacking its `[512 fp8 | 4 fp32 scales]` bytes.
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent_kernel import (
+            absorbed_latent_score_logical_paged,
+            quantize_latent_fp8,
+        )
+
+        f = self._fixture()
+        dev = torch.device("cuda")
+        fp8, scales = quantize_latent_fp8(f["c_kv"])
+        packed = torch.cat([fp8.view(torch.uint8), scales.view(torch.uint8)], dim=1).to(
+            dev
+        )
+        fp8_v = packed[:, :512].contiguous().view(torch.float8_e4m3fn)
+        scales_v = packed[:, 512:528].contiguous().view(torch.float32)
+        common = dict(
+            queries=f["queries"].to(dev),
+            w_sel=f["w_sel"].to(dev),
+            sel=f["sel"].to(dev),
+            weights=f["weights"].to(dev),
+            rpi=f["req_pool_indices"].to(dev),
+            rtt=f["req_to_token"].to(dev),
+            sl=f["seq_lens"].to(dev),
+            written=f["written"].to(dev),
+        )
+        from_layout = absorbed_latent_score_logical_paged(
+            common["queries"],
+            fp8_v,
+            scales_v,
+            common["w_sel"],
+            common["sel"],
+            common["weights"],
+            common["rpi"],
+            common["rtt"],
+            common["sl"],
+            f["max_seq_len"],
+            written=common["written"],
+        )
+        direct = absorbed_latent_score_logical_paged(
+            common["queries"],
+            fp8.to(dev),
+            scales.to(dev),
+            common["w_sel"],
+            common["sel"],
+            common["weights"],
+            common["rpi"],
+            common["rtt"],
+            common["sl"],
+            f["max_seq_len"],
+            written=common["written"],
+        )
+        torch.testing.assert_close(from_layout, direct, equal_nan=True)
+
+    def test_paged_gpu_head_agg_mean(self):
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent_kernel import (
+            quantize_latent_fp8,
+        )
+
+        f = self._fixture(seed=3)
+        fp8, scales = quantize_latent_fp8(f["c_kv"])
+        cpu = self._cpu_reference(f, fp8, scales, head_agg="mean")
+        gpu = self._run_gpu(f, fp8, scales, head_agg="mean")
+        finite = torch.isfinite(cpu)
+        torch.testing.assert_close(gpu[finite], cpu[finite], atol=1e-3, rtol=1e-4)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,11 +1,21 @@
 # Loop 11 Results — Authoritative Current State
 
 > Maintained rewrite-over-append: this document always reflects the loop's current state.
-> Last regenerated: Round 11, 2026-06-14. HEAD at round start: `776f3e613`.
+> Last regenerated: Round 13, 2026-06-14. HEAD at round start: `4bf62430f` (R12).
 
 ## 1. Current state summary
 
-- **M0 COMPLETE (Rounds 0–4); M1 (task3 + task4) COMPLETE + VERIFIED (R9 review). M2 task5 IN PROGRESS (R10–R12).**
+- **M0 COMPLETE (Rounds 0–4); M1 (task3 + task4) COMPLETE + VERIFIED (R9 review). M2 task5 IN PROGRESS (R10–R13).**
+- **R13 — task5 GPU paged kernel + budget + validity (Codex R12 gap 1) + AC-8 ledger repair (gap 2).**
+  New `absorbed_latent_kernel.py`: a Triton paged fp8-latent score kernel mirroring `_logical_score_kernel`,
+  reading the resident `[512 fp8 | 4 fp32 scales]` latent with in-register dequant. CPU-vs-GPU equivalence
+  vs the R12 reference (the oracle): finite-score parity (~7.6e-6), identical `-inf` mask, **oracle recall
+  = 1.0**, unwritten hole masked, pool-byte-layout consumption (`TestAbsorbedLatentPagedGPU`, 4 CUDA tests).
+  **Captured-replay budget measured: best 82 µs/call ≈ 64.0k µs/window — OVER_BUDGET (~2.8× the 23.1k
+  landed / 20k target), an HONEST measured miss** (plan's flagged H×512-vs-H×32 compute risk; keeps task5
+  active, no move to task6). Written-slot validity invariant documented (§10). Ledger metadata/status
+  corrected (header Round 13 / R12 HEAD; task4 VERIFIED review R9). Served NIAH recall@2048 is a task6
+  serving-gate (needs the scorer in the loop). full DS suite + 4 GPU tests pass (§10).
 - **R12 — task5 CPU proof hardened to contract (Codex R11 repairs).** `build_absorbed_projection` now
   returns the bind-time **selected** rows `[H, label_dim, kv_lora_rank]` and the score helpers consume
   them. Logical equivalence strengthened from top-k to **EXACT score-tensor parity**
@@ -368,7 +378,7 @@ builds (8.45 GB/rank, `layer_first`), `max_total_num_tokens=410,560` unchanged, 
 smoke ("Paris…") — the guard is correctly skipped for the non-gated DSA pool. The served DSA default
 (no HiCache) never constructs `DSAIndexerPoolHost` and is untouched by this round's diff.
 
-## 9. M1 task4: int8 served config + table-aware pool sizing — COMPLETE (R7 land + R8/R9 repair; owner-ratified AC-1.1 gate), pending R9 verification
+## 9. M1 task4: int8 served config + table-aware pool sizing — VERIFIED COMPLETE (R7 land + R8/R9 repair; owner-ratified AC-1.1 gate; review R9 verified)
 
 The root-cause fix for the fp16-0.8 instability: the per-token `TokenLabelTable` footprint is now
 **reserved deliberately** in the DS pool-sizing equation instead of being carved from accidental
@@ -419,7 +429,7 @@ descriptor, not the gate. Admission/capacity is met.
 
 M1 is VERIFIED COMPLETE (R9 review). M2 task5 STARTED (§10).
 
-## 10. M2 task5: absorbed-latent score-only prototype — IN PROGRESS (R10–R12)
+## 10. M2 task5: absorbed-latent score-only prototype — IN PROGRESS (R10–R13)
 
 The structural fix (DEC-2): replace the materialized signature table with scores read directly from
 the resident fp8 KV latent. **Load-bearing identity (proven, code-cited):** today's
@@ -450,9 +460,55 @@ applied on the query side (`dsa_backend.py:1696-1733` + `token_label_write.py:80
   `packed[:, 512:528].view(float32)`), dequants block-by-block, and records ≥0.9 top-k overlap vs
   the full-precision latent (value-affecting CPU oracle). 7 absorbed-latent tests + full DS suite pass.
 
-**Remaining for task5** (next rounds): the **GPU Triton paged score kernel** (walks `req_to_token`,
-in-kernel fp8 latent dequant with the per-128-block scales, fp32 accumulation, ≤ ~23.5k µs/window
-budget — CPU reference above is its oracle); the **serving NIAH recall@2048 gate** vs frozen
-`recall_baseline.json` (±0.5pp fail-closed); and the **written-slot validity-invariant analysis**
-(scored slots == KV-written slots; ordering vs `out_cache_loc`/radix reuse). Then task6 swaps the
-selector ABI to the latent binding and DELETES `token_label_table.py`/`token_label_write.py` (DEC-2).
+**Landed R13 (`double_sparsity/absorbed_latent_kernel.py`, GPU; Codex R12 gap 1):**
+- **GPU paged Triton kernel** `_absorbed_score_kernel` + wrappers `absorbed_score_paged_fp8` /
+  `absorbed_latent_score_logical_paged`. Mirrors the production `_logical_score_kernel`
+  persistent-worker topology (static `(bs, WORKERS)` grid, per-worker live-block stride, loop bound =
+  device-computed live block count, written-then-`seq_len` masking in production order). It reads the
+  **resident fp8 latent** `[max_tokens, 512]` + per-128-block fp32 scales `[max_tokens, 4]`, dequants
+  **in-register per element** (`fp8.to(f32) · scale_b`), and reduces `max_h Σ_l v_h[b,h,l]·latent_deq`
+  — `v_h` precomputed host-side via `absorbed_latent_v`. `quantize_latent_fp8`/`dequantize_latent_fp8`
+  helpers reproduce the pool's per-128-block fp8 scheme.
+- **CPU-vs-GPU equivalence** (`TestAbsorbedLatentPagedGPU`, 4, CUDA-guarded): the GPU scores match
+  `absorbed_latent_score_logical` fed the dequantized latent value-for-value — finite-score
+  `torch.testing.assert_close` (max abs diff measured ~7.6e-6, pure fp32 summation reassociation),
+  identical `-inf` mask, **oracle recall = 1.0** (top-k selection overlap), the in-range UNWRITTEN
+  hole masked to `-inf` and excluded, a pool-byte-layout (`[512 fp8 | 4 fp32 scales]` pack→view→feed)
+  consumption test, and head_agg mean parity. The CPU reference is the kernel's oracle (BL-20260614).
+- **Budget (captured-replay, the binding number — BL-20260602/BL-20260611):**
+  `runs/20260614_m2/absorbed_kernel_budget.{py,json}` at the logical-score op point (bs=29, H=8,
+  width=5120, seq=4608, lora=512), CUDA-graph replay median × 780 calls/window. **Best tb=32:
+  82.0 µs/call ≈ 64.0k µs/window — OVER_BUDGET vs the ~23.1k landed logical-score bucket / 20k
+  target (~2.8×).** This is the plan's flagged measured risk realized: the absorbed read is H×512
+  MACs/token vs the label kernel's H×32 (16×), done as per-head vector dot-reductions, not a
+  tensor-core matmul; tb≥64 spills the `[TOKEN_BLOCK,512]` tile (1.4–2.0 ms/call). The miss keeps
+  task5 active and does NOT advance to task6 (per the contract / Codex R12). Optimization path (plan
+  task5 design space, next slice): reformulate the per-block reduction as a `tl.dot` tensor-core
+  matmul `v[H,512] @ latent_deqᵀ[512,TB] → [H,TB]` then head-max; block-scale reassociation (apply the
+  4 scales to per-block partial dots instead of dequantizing 512 elements/token); optional fp8 `v_h`
+  for fp8 tensor-core dots (additionally value-affecting, gate separately).
+
+**Written-slot validity invariant (R13 analysis, Codex R12 gap-1 item 4):** the table path masks
+unwritten label slots via the `written` bitmap; the latent path must score **exactly the slots the KV
+cache has written**. The invariant the kernel enforces, mirroring `_compute_logical_token_scores`: a
+logical position `pos` of request `r` is scored iff (a) `pos < seq_lens[r]` AND (b)
+`written[ req_to_token[req_pool_indices[r], pos] ]` — else `-inf`, in that order. Ordering rationale
+on the served path: during decode the scheduler allocates `out_cache_loc` and writes the KV/latent
+for the new token BEFORE the next step's selection reads it, so at selection time every `pos <
+seq_lens[r]` maps through `req_to_token` to a physical slot whose latent is already resident — the
+`written` bit is the belt-and-suspenders guard for the transient where a slot index exists in
+`req_to_token` but the latent write has not landed (and for radix-reuse / partial-hit slots that are
+allocated but not yet written this sequence). Unlike the table path, the latent has no separate
+write-hook to fall out of sync: the latent IS what attention reads, so "scored == written" reduces to
+"scored == KV-resident", which is structurally true under the decode allocate→write→select order. The
+fp8 quantization is applied at KV-write time (`set_mla_kv_buffer`), so a written slot always carries
+valid fp8+scales. (The serving-time confirmation of this ordering on real traffic is a task6 item,
+once the latent scorer is in the loop.)
+
+**Remaining for task5** (next rounds): **kernel budget optimization** (tensor-core `tl.dot`
+reformulation + block-scale reassociation to bring ≤ ~23.5k µs/window, or record the floor); the
+**served NIAH recall@2048 gate** vs frozen `recall_baseline.json` (±0.5pp fail-closed) — which
+requires the absorbed scorer wired INTO serving, i.e. the **task6** selector-ABI swap, so it is an
+AC-5 serving gate on the integrated path, not a standalone task5 slice (plan_v2.md:191/195). Then
+task6 swaps the selector ABI to the latent binding and DELETES
+`token_label_table.py`/`token_label_write.py` (DEC-2).
