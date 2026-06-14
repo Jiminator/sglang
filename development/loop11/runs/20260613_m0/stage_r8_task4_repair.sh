@@ -68,7 +68,7 @@ if [[ "$PHASE" == "durable_int8" ]]; then
   GATE=$(python3 -c "
 ach=float('$ACH'); run=int('${RUN:-0}'); ds=float('$DS_AGG'); dsa=float('$DSA_AGG')
 if ach>=60.8: print('PASS(achieved_conc>=60.8)')
-elif run>=61 and (dsa==0 or ds>=dsa): print('PASS(admission_isolated: decode #running-req=%d>=61 AND DS agg=%.1f>=DSA agg=%.1f)'%(run,ds,dsa))
+elif run>=61 and dsa>0 and ds>=dsa: print('PASS(admission_isolated: decode #running-req=%d>=61 AND DS agg=%.1f>=DSA agg=%.1f)'%(run,ds,dsa))
 else: print('FAIL')")
   {
     echo "probe=durable_int8 (serve_double_sparsity.sh GLM int8/0.8/rs) cap=$CAP bs_cap=$(( CAP / 4608 )) smoke=$SMK"

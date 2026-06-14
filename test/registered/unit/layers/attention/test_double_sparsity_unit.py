@@ -12143,5 +12143,109 @@ class TestDSIndexerCacheGate(unittest.TestCase):
         )
 
 
+class TestAbsorbedLatentScore(unittest.TestCase):
+    """Absorbed-latent score (`score = max_h v_h·c_kv`) reproduces the materialized
+    label-path score/selection for scorer_norm='off' — the proof that the
+    TokenLabelTable can be eliminated exactly (only fp32 reassociation, and in
+    serving the fp8-quantized latent, distinguish them). Score-only diagnostic;
+    no selector-ABI change here."""
+
+    def _fixture(self, *, T=512, H=4, nope=16, lora=32, label_dim=8, bs=4, seed=0):
+        g = torch.Generator().manual_seed(seed)
+        c_kv = torch.randn(T, lora, generator=g)
+        w_kc = torch.randn(H, nope, lora, generator=g)  # W_UK: k_nope[h] = w_kc[h]·c_kv
+        queries = torch.randn(bs, H, nope, generator=g)
+        # sel: [H, label_dim] distinct channels per head
+        sel = torch.stack(
+            [torch.randperm(nope, generator=g)[:label_dim] for _ in range(H)]
+        ).to(torch.int32)
+        weights = torch.randn(H, label_dim, generator=g)
+        return c_kv, w_kc, queries, sel, weights
+
+    @staticmethod
+    def _overlap(a, b, k):
+        bs = a.shape[0]
+        tot = 0.0
+        for i in range(bs):
+            sa = {int(x) for x in a[i].tolist() if x >= 0}
+            sb = {int(x) for x in b[i].tolist() if x >= 0}
+            tot += len(sa & sb) / max(len(sa), len(sb), 1)
+        return tot / bs
+
+    def test_absorbed_score_matches_label_score(self):
+        # Algebraic equivalence: absorbed `max_h v_h·c_kv` == label-path
+        # `max_h q_proj·channel_select(W_UK·c_kv)` (same real arithmetic, fp32).
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
+            absorbed_latent_score,
+        )
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            project_query_onto_channels,
+        )
+
+        c_kv, w_kc, queries, sel, weights = self._fixture()
+        T = c_kv.shape[0]
+        k_nope = torch.einsum("hcl,tl->thc", w_kc.float(), c_kv.float())  # [T,H,nope]
+        signature = torch.gather(
+            k_nope, 2, sel.long().unsqueeze(0).expand(T, -1, -1)
+        )  # [T,H,label_dim] = channel_select(W_UK·c_kv)
+        q_proj = project_query_onto_channels(queries, sel, weights)  # [bs,H,label_dim]
+        label = torch.einsum("bhd,thd->bht", q_proj.float(), signature).amax(dim=1)
+        absorbed = absorbed_latent_score(queries, c_kv, w_kc, sel, weights)
+        torch.testing.assert_close(absorbed, label, atol=1e-2, rtol=1e-3)
+
+    def test_absorbed_topk_matches_live_label_path(self):
+        # Live-path selection equivalence: absorbed top-2048 matches the production
+        # retrieve_topk_via_labels winners on a fp16-signature label table.
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
+            absorbed_latent_score,
+        )
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            retrieve_topk_via_labels,
+            select_topk_sequence_order,
+        )
+
+        c_kv, w_kc, queries, sel, weights = self._fixture(T=4096, label_dim=8)
+        T, top_k = c_kv.shape[0], 2048
+        k_nope = torch.einsum("hcl,tl->thc", w_kc.float(), c_kv.float())
+        signature = torch.gather(
+            k_nope, 2, sel.long().unsqueeze(0).expand(T, -1, -1)
+        ).to(torch.float16)
+        idx_label, _ = retrieve_topk_via_labels(
+            queries=queries.to(torch.float16),
+            token_signatures=signature.unsqueeze(0),  # [1,T,H,label_dim]
+            written=torch.ones(1, T, dtype=torch.bool),
+            channel_selection=sel.unsqueeze(0),  # [1,H,label_dim]
+            channel_weights=weights.unsqueeze(0),
+            layer_id=0,
+            max_top_k=top_k,
+            scorer_norm="off",
+        )
+        absorbed = absorbed_latent_score(queries, c_kv, w_kc, sel, weights)
+        idx_absorbed, _ = select_topk_sequence_order(absorbed, top_k)
+        overlap = self._overlap(idx_label, idx_absorbed, top_k)
+        self.assertGreaterEqual(
+            overlap, 0.99, f"absorbed vs live-label top-{top_k} overlap {overlap:.4f}"
+        )
+
+    def test_head_agg_mean_matches_label(self):
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
+            absorbed_latent_score,
+        )
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            project_query_onto_channels,
+        )
+
+        c_kv, w_kc, queries, sel, weights = self._fixture(seed=3)
+        T = c_kv.shape[0]
+        k_nope = torch.einsum("hcl,tl->thc", w_kc.float(), c_kv.float())
+        signature = torch.gather(k_nope, 2, sel.long().unsqueeze(0).expand(T, -1, -1))
+        q_proj = project_query_onto_channels(queries, sel, weights)
+        label = torch.einsum("bhd,thd->bht", q_proj.float(), signature).mean(dim=1)
+        absorbed = absorbed_latent_score(
+            queries, c_kv, w_kc, sel, weights, head_agg="mean"
+        )
+        torch.testing.assert_close(absorbed, label, atol=1e-2, rtol=1e-3)
+
+
 if __name__ == "__main__":
     unittest.main()
