@@ -80,7 +80,7 @@ def build_absorbed_projection(
     # [H, qk_nope+v_head, lora] -> K-noPE rows -> W_UK [H, qk_nope, lora]
     w_kc = w.view(num_heads, head_width, lora)[:, :qk_nope_head_dim, :]
     # gather the mask channels per head -> [H, label_dim, lora]
-    sel = channel_selection.long()
+    sel = channel_selection.long().to(w_kc.device)
     return torch.gather(w_kc, 1, sel.unsqueeze(-1).expand(-1, -1, lora)).contiguous()
 
 

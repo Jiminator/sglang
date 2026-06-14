@@ -1,0 +1,20 @@
+{
+  "op_point": "DSv3.2 TP=8 fp8 eager recall_oracle; signature_dtype=int8 served",
+  "samples": 14640,
+  "absorbed_recall_at_2048_pct": {
+    "1024": 100.0,
+    "4096": 45.10245901639344,
+    "16384": 22.09016393442623
+  },
+  "absorbed_overall_pct": 55.73087431693989,
+  "baseline_overall_pct": 64.696,
+  "per_length_delta_pp": {
+    "1024": 0.0,
+    "4096": -12.942540983606563,
+    "16384": -13.951836065573772
+  },
+  "overall_delta_pp": -8.965125683060108,
+  "absorbed_vs_table_agreement_pct": 99.88387978142076,
+  "gate_pass": false,
+  "max_delta_pp": 0.5
+}

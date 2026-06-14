@@ -1309,6 +1309,8 @@ def _maybe_record_recall_oracle(
     max_top_k: int,
     process_group=None,
     recall_oracle: bool = False,
+    absorbed_scores: Optional[torch.Tensor] = None,
+    absorbed_indices: Optional[torch.Tensor] = None,
 ) -> None:
     """Record one recall-oracle sample for the active NIAH trial, if enabled.
 
@@ -1400,6 +1402,17 @@ def _maybe_record_recall_oracle(
             stride=1,
             index_topk=int(max_top_k),
         )
+        # Side-by-side absorbed-latent payload (score-only diagnostic). Shares the
+        # one record + sample index — do NOT advance next_sample_index again — so
+        # the table and absorbed rows compare at the same (layer, decode_step).
+        if absorbed_scores is not None and absorbed_indices is not None:
+            payload["absorbed"] = oracle_payload_for_row(
+                absorbed_scores[0],
+                needle,
+                selected_indices_row=absorbed_indices[0],
+                stride=1,
+                index_topk=int(max_top_k),
+            )
         _sink.record_oracle_sample(
             request_id=trial.request_id,
             trial_id=trial.trial_id,
@@ -1553,6 +1566,9 @@ def retrieve_topk_graph_safe(
     hybrid_threshold: int = 8192,
     anchor_mode: str = "off",
     anchor_budget: int = 0,
+    absorbed_latent_fp8: Optional[torch.Tensor] = None,
+    absorbed_latent_scales: Optional[torch.Tensor] = None,
+    absorbed_w_sel: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Capture-safe retrieve_topk that writes results into caller-owned buffers.
 
@@ -1811,6 +1827,47 @@ def retrieve_topk_graph_safe(
     # off by default, so production decode is unaffected. Records only in eager
     # decode (under graph replay this Python does not re-run).
     if not torch.cuda.is_current_stream_capturing():
+        # Side-by-side absorbed-latent recall diagnostic (score-only). When the
+        # oracle is on AND the bind path supplied the absorbed projection + this
+        # layer's resident fp8 latent, score the SAME logical positions straight
+        # from the latent (no table), all-reduce identically, and select with the
+        # same top-K — then hand both rows to the oracle so each sample carries a
+        # table vs absorbed comparison. The selection decode consumes
+        # (``out_indices``) is UNTOUCHED: this is diagnostic-only. All three
+        # inputs are None on the shipped path, so this block is skipped.
+        absorbed_scores = None
+        absorbed_indices = None
+        if (
+            recall_oracle
+            and absorbed_w_sel is not None
+            and absorbed_latent_fp8 is not None
+        ):
+            from sglang.srt.layers.attention.double_sparsity.absorbed_latent_kernel import (
+                absorbed_latent_score_logical_paged,
+            )
+
+            absorbed_scores = absorbed_latent_score_logical_paged(
+                queries,
+                absorbed_latent_fp8,
+                absorbed_latent_scales,
+                absorbed_w_sel,
+                channel_selection[layer_id],
+                channel_weights[layer_id],
+                req_pool_indices,
+                req_to_token,
+                seq_lens,
+                max_seq_len,
+                written=written[layer_id],
+                head_agg=head_agg,
+            )
+            absorbed_scores = reduce_token_scores(
+                absorbed_scores,
+                process_group=process_group,
+                reduce_ca=reduce_ca,
+                use_bf16=score_reduce_bf16,
+            )
+            absorbed_indices, _ = select_topk_sequence_order(absorbed_scores, max_top_k)
+
         _maybe_record_recall_oracle(
             scores_view,
             out_indices[:bs],
@@ -1818,6 +1875,8 @@ def retrieve_topk_graph_safe(
             max_top_k,
             process_group=process_group,
             recall_oracle=recall_oracle,
+            absorbed_scores=absorbed_scores,
+            absorbed_indices=absorbed_indices,
         )
 
     return out_indices, out_lengths

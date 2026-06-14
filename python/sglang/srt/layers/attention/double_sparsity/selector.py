@@ -98,6 +98,10 @@ class DoubleSparsitySelector:
 
         self.token_label_table: Optional["TokenLabelTable"] = None
         self.channel_mask: Optional["ChannelMask"] = None
+        # Bind-time absorbed-latent projection [H, label_dim, kv_lora_rank], built
+        # by deepseek_v2's bind path ONLY when recall_oracle is on; otherwise None
+        # and the side-by-side absorbed diagnostic stays inert.
+        self.absorbed_w_sel: Optional[torch.Tensor] = None
         self.process_group = None
         # Custom all-reduce communicator for the score reduce (the attention-TP
         # coordinator's ca_comm under plain TP); None falls back to NCCL on the

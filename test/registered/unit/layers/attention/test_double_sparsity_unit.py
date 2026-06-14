@@ -12772,5 +12772,100 @@ class TestAbsorbedLatentPagedGPU(unittest.TestCase):
         self.assertEqual(self._overlap(idx_cpu, idx_gpu, 2), 1.0)
 
 
+class TestSideBySideAbsorbedOracleRecord(unittest.TestCase):
+    """Side-by-side absorbed-latent recall diagnostic emission.
+
+    The selector hook hands BOTH the table-path and the absorbed-path scores +
+    selections to ``_maybe_record_recall_oracle``; the single emitted record must
+    carry a ``payload["absorbed"]`` sub-dict (recall fields) keyed at the same
+    (layer, decode_step) as the table payload. With the absorbed args omitted (the
+    shipped path), the record must have NO ``absorbed`` key — the byte-identical-off
+    guarantee. Score-only: this exercises only the emission contract on tiny
+    fixtures, so it runs on CPU."""
+
+    def setUp(self):
+        from sglang.srt.layers.attention.double_sparsity import (
+            oracle_artifact_sink as sink_mod,
+        )
+
+        self._sink_mod = sink_mod
+        self._prev = os.environ.get("SGLANG_DS_RECALL_ORACLE")
+        sink_mod.reset_sink_for_testing(None)
+        sink_mod.clear_active_trial()
+
+    def tearDown(self):
+        if self._prev is None:
+            os.environ.pop("SGLANG_DS_RECALL_ORACLE", None)
+        else:
+            os.environ["SGLANG_DS_RECALL_ORACLE"] = self._prev
+        self._sink_mod.reset_sink_for_testing(None)
+        self._sink_mod.clear_active_trial()
+
+    def _record(self, *, with_absorbed: bool):
+        from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
+            _maybe_record_recall_oracle,
+            select_topk_sequence_order,
+        )
+
+        sink_mod = self._sink_mod
+        os.environ["SGLANG_DS_RECALL_ORACLE"] = "1"
+        sink_mod.reset_sink_for_testing(None)
+        # needle at logical positions 1 and 4; bs=1, max_tokens=8.
+        sink_mod.set_active_trial("req-sxs", 7, [1, 4])
+        max_top_k = 4
+        # Table scores rank the needle well; absorbed scores DELIBERATELY differ
+        # (needle pushed down) so the two payloads diverge — proving the absorbed
+        # sub-dict reflects its OWN ranking, not a copy of the table's.
+        table_scores = torch.tensor(
+            [[0.1, 9.0, 0.2, 0.3, 8.0, 0.4, 0.5, 0.6]], dtype=torch.float32
+        )
+        absorbed_scores = torch.tensor(
+            [[9.0, 0.1, 8.0, 7.0, 0.2, 6.0, 5.0, 4.0]], dtype=torch.float32
+        )
+        table_idx, _ = select_topk_sequence_order(table_scores, max_top_k)
+        absorbed_idx, _ = select_topk_sequence_order(absorbed_scores, max_top_k)
+        kwargs = dict(process_group=None, recall_oracle=True)
+        if with_absorbed:
+            kwargs["absorbed_scores"] = absorbed_scores
+            kwargs["absorbed_indices"] = absorbed_idx
+        _maybe_record_recall_oracle(
+            table_scores, table_idx, 0, max_top_k, **kwargs
+        )
+        recs = sink_mod.get_sink().records
+        self.assertEqual(len(recs), 1)
+        return recs[0]
+
+    def test_absorbed_subdict_present_and_self_consistent(self):
+        rec = self._record(with_absorbed=True)
+        # Table payload fields still present at the top level.
+        self.assertIn("needle_worst_rank", rec)
+        self.assertIn("recall_at_k", rec)
+        # Absorbed sub-dict present with its own recall fields.
+        self.assertIn("absorbed", rec)
+        absorbed = rec["absorbed"]
+        self.assertIn("needle_worst_rank", absorbed)
+        self.assertIn("recall_at_k", absorbed)
+        self.assertEqual(absorbed["needle_span"], [1, 4])
+        # The absorbed scores buried the needle (positions 1 and 4 score low), so
+        # its worst rank exceeds the table's — i.e. the sub-dict is its OWN
+        # ranking, not a clone of the table payload.
+        self.assertGreater(
+            absorbed["needle_worst_rank"], rec["needle_worst_rank"]
+        )
+
+    def test_absorbed_key_absent_when_off(self):
+        # Shipped path: absorbed args omitted -> record has NO 'absorbed' key.
+        rec = self._record(with_absorbed=False)
+        self.assertNotIn("absorbed", rec)
+        self.assertIn("needle_worst_rank", rec)
+
+    def test_single_record_shared_sample_index(self):
+        # The absorbed payload must NOT advance next_sample_index a second time:
+        # one record, one decode_step for the (table, absorbed) pair.
+        rec = self._record(with_absorbed=True)
+        self.assertEqual(rec["decode_step"], 0)
+        self.assertEqual(len(self._sink_mod.get_sink().records), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

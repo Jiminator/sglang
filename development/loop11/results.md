@@ -1,11 +1,20 @@
 # Loop 11 Results — Authoritative Current State
 
 > Maintained rewrite-over-append: this document always reflects the loop's current state.
-> Last regenerated: Round 13, 2026-06-14. HEAD at round start: `4bf62430f` (R12).
+> Last regenerated: Round 15, 2026-06-14. HEAD at round start: `08a310a72` (R14).
 
 ## 1. Current state summary
 
-- **M0 COMPLETE (Rounds 0–4); M1 (task3 + task4) COMPLETE + VERIFIED (R9 review). M2 task5 IN PROGRESS (R10–R14).**
+- **M0 COMPLETE (Rounds 0–4); M1 (task3 + task4) COMPLETE + VERIFIED (R9 review). M2 task5 IN PROGRESS (R10–R15).**
+- **R15 — task5 served recall wiring + live validation (Codex R14 gap) + AC-8 ledger.** Wired the
+  absorbed scorer side-by-side into the GRAPH-SAFE serving recall-oracle path (gated by `recall_oracle`,
+  additive, selection unchanged); first attempt targeted the eager path — re-targeted after a live
+  boot+sweep proved the oracle rides graph-safe; fixed a bind device bug. **Live (DeepSeek-V3.2, eager,
+  recall_oracle): 244/244 records carry `payload["absorbed"]`; absorbed↔table agreement 99.88%,
+  recall@2048 Δ vs table ~0.02pp** → the fp8-latent scorer reproduces the table's selection on real
+  NIAH traffic. The absorbed-vs-FROZEN-baseline numbers are CONFOUNDED (ran DSv3.2+int8; baseline is
+  GLM-5.1+fp16 — table sits equally low), so the matched-config run (`run_absorbed.sh full`, GLM/fp16)
+  is R16. 443 DS+oracle tests pass. (§10)
 - **R14 — task5 GPU kernel budget optimization (Codex R13 gap 1 + wrapper bug).** Rewrote the kernel
   to block-scale reassociation with a `tl.dot` tensor-core MMA (no `[TOKEN_BLOCK,512]` spill); fixed
   the wrapper default (token_block 64→128, exposed; harness uses the public path); tuned `num_warps=2,
@@ -22,8 +31,9 @@
   **Captured-replay budget measured: best 82 µs/call ≈ 64.0k µs/window — OVER_BUDGET (~2.8× the 23.1k
   landed / 20k target), an HONEST measured miss** (plan's flagged H×512-vs-H×32 compute risk; keeps task5
   active, no move to task6). Written-slot validity invariant documented (§10). Ledger metadata/status
-  corrected (header Round 13 / R12 HEAD; task4 VERIFIED review R9). Served NIAH recall@2048 is a task6
-  serving-gate (needs the scorer in the loop). full DS suite + 4 GPU tests pass (§10).
+  corrected (header / task4 VERIFIED review R9). Served NIAH recall@2048 is the remaining **task5**
+  gate (R13 review REJECTED folding it into task6) — wired + run in R15. full DS suite + 4 GPU tests
+  pass (§10).
 - **R12 — task5 CPU proof hardened to contract (Codex R11 repairs).** `build_absorbed_projection` now
   returns the bind-time **selected** rows `[H, label_dim, kv_lora_rank]` and the score helpers consume
   them. Logical equivalence strengthened from top-k to **EXACT score-tensor parity**
@@ -437,7 +447,7 @@ descriptor, not the gate. Admission/capacity is met.
 
 M1 is VERIFIED COMPLETE (R9 review). M2 task5 STARTED (§10).
 
-## 10. M2 task5: absorbed-latent score-only prototype — IN PROGRESS (R10–R14)
+## 10. M2 task5: absorbed-latent score-only prototype — IN PROGRESS (R10–R15)
 
 The structural fix (DEC-2): replace the materialized signature table with scores read directly from
 the resident fp8 KV latent. **Load-bearing identity (proven, code-cited):** today's
@@ -530,11 +540,36 @@ not byte-identical) and confirms parity + selection. 5 GPU tests; full DS suite 
 (R14): keep the less-lossy tf32 path, tune without fp8 `v_h` — the fp8-`v_h` tensor-core variant stays
 documented but unused (additionally value-affecting). Budget slice CLOSED at budget.
 
-**Remaining for task5** (next round): the **served NIAH recall@2048 gate** vs frozen
-`development/loop9/runs/20260610_m0/recall_baseline.json` (±0.5pp fail-closed) — Codex R13 rejected
-folding this wholly into task6. It needs a LIVE TP=8 GLM-5.1 server (`loop7/niah_oracle_sweep.py`
-issues HTTP `/generate`; cannot run in-process) with the absorbed scorer wired SIDE-BY-SIDE into the
-serving recall-oracle hook (`selection_kernel._maybe_record_recall_oracle`), then
-`loop9/oracle_recall_summary.py` vs the frozen baseline. That is the R15 slice; **task6 stays blocked
-until it passes.** Then task6 swaps the selector ABI to the latent binding and DELETES
+**Landed R15 (served NIAH recall@2048 — side-by-side absorbed diagnostic wiring + live validation):**
+the absorbed scorer is wired SIDE-BY-SIDE into the **graph-safe** serving path
+(`retrieve_topk_graph_safe` → `_maybe_record_recall_oracle`), gated by `recall_oracle`, additive
+(shipped/DS-non-oracle path byte-identical), selection-output unchanged (table still drives decode).
+The first R15 attempt wired the EAGER `retrieve_topk_via_labels`, but a live boot+sweep proved the
+oracle rides the graph-safe path even under `--disable-cuda-graph` — re-targeted (and a real bind
+device bug fixed: `build_absorbed_projection` gathered a CPU index against a CUDA weight). Bind builds
+`absorbed_w_sel` per layer (`channel_selection[self.layer_id]`); the per-step graph-safe call reads
+this layer's resident fp8 nope latent + per-128-block scales off the MLA pool and scores
+`absorbed_latent_score_logical_paged` → all-reduce → top-k, emitting `payload["absorbed"]`.
+**Live validation (DeepSeek-V3.2, TP=8, fp8, eager, recall_oracle): 244/244 records carried
+`payload["absorbed"]`; absorbed↔table selection agreement 99.88% (14,623/14,640), recall@2048 Δ vs the
+same run's table ~0.02pp** — the fp8-latent value-affecting change reproduces the table's selection on
+real NIAH traffic (AC-5 value-affecting gate evidence). `+TestSideBySideAbsorbedOracleRecord`; 443 DS
++ oracle tests pass. `runs/20260614_m2/recall_absorbed/` (FINDINGS.md, absorbed_recall_summary.json),
+`run_absorbed.sh`.
+
+**CONFOUND (honest):** that validation run used `serve_double_sparsity.sh` (DeepSeek-V3.2 + int8 + mem
+0.8), but the frozen baseline (64.696%) is the **GLM-5.1 + fp16 + mem 0.7** op-point
+(`profiling/runs/20260609/_env.sh`). Both table (55.7%) AND absorbed (55.7%) sit ~13pp below the
+baseline at long contexts — the gap is the model+dtype mismatch (int8 vs fp16 signature precision),
+NOT the absorbed scorer (99.88% table agreement). The absorbed-vs-frozen-baseline numbers are
+therefore NOT a valid AC-5 verdict.
+
+**Remaining for task5** (R16): the **matched-config** absorbed-vs-baseline run — `run_absorbed.sh full`
+boots the baseline op-point (GLM-5.1 / fp16 / mem 0.7) with the recall oracle, sweeps, and
+post-processes both table and `rec["absorbed"]` recall vs the frozen baseline (±0.5pp). Expected PASS
+given the 99.88% within-run agreement; prerequisite to confirm GLM-5.1 routes attention through
+`DeepseekV2AttentionMLA` so the bind fires. **Gate interpretation surfaced for owner/Codex** (see the
+R15 summary Goal Tracker Update Request): the binding absorbed gate is absorbed-vs-table (the
+fp8-latent delta, PASS), while the matched-config vs-baseline run confirms the served absolute recall.
+Then task6 swaps the selector ABI to the latent binding and DELETES
 `token_label_table.py`/`token_label_write.py` (DEC-2).

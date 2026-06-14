@@ -2094,6 +2094,39 @@ class DeepseekV2AttentionMLA(
             self.double_sparsity_selector, tp_world_size=max(attn_tp_size, 1)
         )
 
+        # Side-by-side absorbed-latent recall diagnostic (score-only): build the
+        # bind-time absorbed projection ONLY when the recall_oracle diagnostic is
+        # on. The shipped path (recall_oracle off) pays nothing — w_sel stays None
+        # and the absorbed branch in retrieve_topk_via_labels never runs. The
+        # block-fp8 kv_b_proj is dequantized with the SAME semantics as the
+        # model's own w_kc extraction (deepseek_weight_loader): weight_scale (or
+        # weight_scale_inv) + the [128, 128] weight block size.
+        if getattr(ds_parsed, "recall_oracle", False):
+            from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
+                build_absorbed_projection,
+            )
+
+            kv_b_weight = self.kv_b_proj.weight
+            weight_scale_inv = None
+            weight_block_size = None
+            if kv_b_weight.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz):
+                weight_scale_inv = getattr(self.kv_b_proj, "weight_scale", None)
+                if weight_scale_inv is None:
+                    weight_scale_inv = getattr(self.kv_b_proj, "weight_scale_inv", None)
+                weight_block_size = [128, 128]
+            # channel_selection is [num_layers, H, label_dim]; the score path
+            # slices [layer_id] (see _compute_logical_token_scores), so the
+            # bind-time projection must use THIS layer's slice to match.
+            self.double_sparsity_selector.absorbed_w_sel = build_absorbed_projection(
+                kv_b_weight,
+                num_heads=self.num_local_heads,
+                qk_nope_head_dim=self.qk_nope_head_dim,
+                v_head_dim=self.v_head_dim,
+                channel_selection=local_mask.channel_selection[self.layer_id],
+                weight_scale_inv=weight_scale_inv,
+                weight_block_size=weight_block_size,
+            )
+
     def _publish_ds_request_summary(
         self,
         *,
@@ -2360,6 +2393,42 @@ class DeepseekV2AttentionMLA(
                         _seq_lens_i32 = _ds_graph_state.scratch_seq_lens[:_bs]
                         _seq_lens_i32.copy_(_seq_lens)
 
+                    # Side-by-side absorbed-latent recall diagnostic (score-only,
+                    # recall_oracle-gated). When the oracle is on and the bind path
+                    # built the absorbed projection, read this layer's resident fp8
+                    # nope latent + per-128-block scales off the MLA KV pool and
+                    # pass them into the graph-safe selector, which scores the latent
+                    # side-by-side with the table for the oracle. Off the oracle path
+                    # all three stay None and nothing here runs (byte-identical).
+                    _absorbed_latent_fp8 = None
+                    _absorbed_latent_scales = None
+                    if (
+                        getattr(_selector.config, "recall_oracle", False)
+                        and _selector.absorbed_w_sel is not None
+                    ):
+                        from sglang.srt.model_executor.forward_context import (
+                            get_token_to_kv_pool as _get_token_to_kv_pool,
+                        )
+
+                        if _has_forward_context():
+                            _kv_pool = _get_token_to_kv_pool()
+                            # Raw uint8 KV buffer for this layer: per-slot bytes are
+                            # [lora fp8 | nblk fp32 scales | rope] as written by the
+                            # pool's quantize_k_cache_separate. Slice the fp8 latent
+                            # and the per-128-block fp32 scales off those bytes (the
+                            # exact unpack the absorbed paged kernel consumes).
+                            _nope_u8 = _kv_pool.kv_buffer[
+                                layer_id - _kv_pool.start_layer
+                            ]
+                            _lora = int(_selector.absorbed_w_sel.shape[-1])
+                            _nblk = _lora // 128
+                            _absorbed_latent_fp8 = _nope_u8[:, 0, :_lora].view(
+                                torch.float8_e4m3fn
+                            )
+                            _absorbed_latent_scales = _nope_u8[
+                                :, 0, _lora : _lora + _nblk * 4
+                            ].view(torch.float32)
+
                     retrieve_topk_graph_safe(
                         queries=queries_for_ds,
                         token_signatures=_selector.token_label_table.signatures,
@@ -2414,6 +2483,9 @@ class DeepseekV2AttentionMLA(
                         ),
                         anchor_mode=getattr(_selector.config, "anchor_mode", "off"),
                         anchor_budget=getattr(_selector.config, "anchor_budget", 0),
+                        absorbed_latent_fp8=_absorbed_latent_fp8,
+                        absorbed_latent_scales=_absorbed_latent_scales,
+                        absorbed_w_sel=_selector.absorbed_w_sel,
                     )
                     selected_indices = _ds_graph_state.selected_indices[:_bs]
                     valid_lengths = _ds_graph_state.valid_lengths[:_bs]
