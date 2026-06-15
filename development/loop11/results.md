@@ -1,11 +1,21 @@
 # Loop 11 Results — Authoritative Current State
 
 > Maintained rewrite-over-append: this document always reflects the loop's current state.
-> Last regenerated: Round 22, 2026-06-15. HEAD at round start: `d244ea4b8` (R21); R22 commit `cee132472`.
+> Last regenerated: Round 23, 2026-06-15. HEAD at round start: `a82673fe2` (R22); R23 commits `49a401a72` (gate+runbook), `4a1579cbe` (latent_capture), `d8d65d88e` (evidence).
 
 ## 1. Current state summary
 
-- **M0 COMPLETE; M1 COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 COMPLETE+VERIFIED (R21): TokenLabelTable DELETED (DEC-2), table-free is the one served default, capacity + AC-7 re-proven on the shipped path. M3 task7 IN PROGRESS (R22): the table-free radix fixture gate.**
+- **M0 COMPLETE; M1 COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 COMPLETE+VERIFIED (R21): TokenLabelTable DELETED (DEC-2), table-free is the one served default, capacity + AC-7 re-proven on the shipped path. M3 task7 IN PROGRESS (R22–R23): table-free radix fixture gate REPAIRED + cold/warm + recall + AC-7 validated live; the edge probe + final artifact remain (R24).**
+- **R23 — task7: repaired the fail-closed gate (Codex R22) + ran the table-free radix serving validation.**
+  Fixed two false-pass bugs (validator requires each probe field `is True`; `compare_tablefree_selection`
+  requires a positive `cached_tokens` + fails closed on zero/empty/short, prefix-only); updated the
+  operator runbook (table-free flow; legacy label-capture/FP8 marked non-authorizing); added the
+  config-borne `latent_capture` diagnostic (default-off, capture-safe). **SERVING on the sound gate:**
+  cold/warm SELECTION equivalence **PASS** (real radix hit `cached_tokens=3776`, comparator ok over 78
+  layers × 3776 cached-prefix positions); recall@2048 under radix-on **overall PASS** (−0.059pp); **AC-7**
+  DSA default 410560 unchanged. 384 DS suite; provenance ties evidence to `4a1579cbe`
+  (`runs/20260615_r23/`). **Remaining task7 (R24):** the eviction/partial-hit/page-boundary edge probe +
+  the final authorizing artifact (the honest this-session attestation has `edge_probe=false` → fails closed).
 - **R22 — task7 slice 1: table-free radix fixture kind + fail-closed validator gate + cold/warm comparator (CPU foundation; Codex R21 queued #1).**
   `validator.py`: new `ds_radix_fixture_state_tablefree_v1` schema; `apply_radix_fixture_artifact` REJECTS
   the legacy `ds_radix_fixture_state_v1` label-capture schema (regenerate message) + REQUIRES the table-free
