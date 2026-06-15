@@ -1,0 +1,83 @@
+{
+  "run": "loop11_r24_tablefree_radix_serving_validation_CORRECTED",
+  "date_utc": "2026-06-15",
+  "runtime_base_commit": "0a22aff868e6ce4ca796fd77b842649fb132add7",
+  "runtime_base_commit_short": "0a22aff86",
+  "committed_head": "0a22aff86",
+  "model": "GLM-5.1-FP8",
+  "envelope": "TP8 / fp8_e4m3 / page64 / mem0.8 / max-running 64 / cuda-graph-max-bs 64 (expandable_segments NEVER set)",
+  "honesty_note": "Every verdict below matches the RAW numbers. No FAIL is relabeled as PASS or 'noise'. P1 and P2 both FAIL on the corrected methodology; that is the truthful result.",
+
+  "P1_cold_warm_SELECTION_equivalence": {
+    "status": "FAIL",
+    "headline": "selected-INDEX comparison (per_layer_selected_indices), NOT latent SHA",
+    "boot": "DS radix-ON (SGLANG_DS_RADIX_OVERRIDE=1, no --disable-radix-cache), EAGER (--disable-cuda-graph), config-borne selection_capture=true",
+    "prompt": "IDENTICAL long prompt for cold and warm (same query); 3815 prompt tokens",
+    "cold_cached_tokens": 0,
+    "warm_cached_tokens": 3776,
+    "positive_radix_hit": true,
+    "ranks_compared": [0, 1, 2, 3, 4, 5, 6, 7],
+    "all_8_ranks_present": true,
+    "layers_per_rank": 78,
+    "first_decode_step_seq_len_cold": 3816,
+    "first_decode_step_seq_len_warm": 3816,
+    "compare_len_per_rank": 2048,
+    "cross_rank_identical": true,
+    "cross_rank_cold_selection_sha16": "db49741741b9d159 (identical for all 8 ranks)",
+    "cross_rank_warm_selection_sha16": "74b3e1286e7df36d (identical for all 8 ranks)",
+    "all_cold_eq_warm": false,
+    "verdict_basis": "cold selection SHA != warm selection SHA on EVERY rank; cold/warm diverge in 76/78 DS layers per rank.",
+    "per_rank": {
+      "0": {"cold_eq_warm": false, "matches_rank0": true, "layers_with_diff": 76, "layers_total": 78, "symdiff_tokens": 6360, "symdiff_pct_of_selected": 1.9907, "worst_layer_symdiff": 222, "cold_sha16": "db49741741b9d159", "warm_sha16": "74b3e1286e7df36d"},
+      "1": {"cold_eq_warm": false, "matches_rank0": true, "layers_with_diff": 76, "layers_total": 78, "symdiff_tokens": 6360, "symdiff_pct_of_selected": 1.9907, "worst_layer_symdiff": 222, "cold_sha16": "db49741741b9d159", "warm_sha16": "74b3e1286e7df36d"},
+      "2": {"cold_eq_warm": false, "matches_rank0": true, "layers_with_diff": 76, "layers_total": 78, "symdiff_tokens": 6360, "symdiff_pct_of_selected": 1.9907, "worst_layer_symdiff": 222, "cold_sha16": "db49741741b9d159", "warm_sha16": "74b3e1286e7df36d"},
+      "3": {"cold_eq_warm": false, "matches_rank0": true, "layers_with_diff": 76, "layers_total": 78, "symdiff_tokens": 6360, "symdiff_pct_of_selected": 1.9907, "worst_layer_symdiff": 222, "cold_sha16": "db49741741b9d159", "warm_sha16": "74b3e1286e7df36d"},
+      "4": {"cold_eq_warm": false, "matches_rank0": true, "layers_with_diff": 76, "layers_total": 78, "symdiff_tokens": 6360, "symdiff_pct_of_selected": 1.9907, "worst_layer_symdiff": 222, "cold_sha16": "db49741741b9d159", "warm_sha16": "74b3e1286e7df36d"},
+      "5": {"cold_eq_warm": false, "matches_rank0": true, "layers_with_diff": 76, "layers_total": 78, "symdiff_tokens": 6360, "symdiff_pct_of_selected": 1.9907, "worst_layer_symdiff": 222, "cold_sha16": "db49741741b9d159", "warm_sha16": "74b3e1286e7df36d"},
+      "6": {"cold_eq_warm": false, "matches_rank0": true, "layers_with_diff": 76, "layers_total": 78, "symdiff_tokens": 6360, "symdiff_pct_of_selected": 1.9907, "worst_layer_symdiff": 222, "cold_sha16": "db49741741b9d159", "warm_sha16": "74b3e1286e7df36d"},
+      "7": {"cold_eq_warm": false, "matches_rank0": true, "layers_with_diff": 76, "layers_total": 78, "symdiff_tokens": 6360, "symdiff_pct_of_selected": 1.9907, "worst_layer_symdiff": 222, "cold_sha16": "db49741741b9d159", "warm_sha16": "74b3e1286e7df36d"}
+    },
+    "finding": "On a REAL radix cache hit (cached_tokens=3776 > 0), the warm (radix-cached-KV) decode selects a DIFFERENT top-2048 set than the cold (freshly-prefilled-KV) decode at the SAME seq_len (3816), with the SAME query. ~2% of selected tokens flip (symmetric set difference 6360 of 2*159744), affecting 76 of 78 DS layers per rank. The flips are scattered across the whole sequence (borderline-score tokens), bit-identical across all 8 TP ranks. Selection identity is therefore NOT bit-stable across a radix cache hit. This contradicts the R23 claim of cold==warm (which compared latent SHA only, with different cold/warm suffixes). Cross-rank identity DOES hold.",
+    "comparator_example": "rank0 first divergence: per_layer_selected_indices differs at layer=2 position=224 (within cached prefix): cold=476 warm=477"
+  },
+
+  "P2_recall_radix_off_vs_on": {
+    "status": "FAIL",
+    "methodology": "apples-to-apples: SAME NIAH oracle sweep (lengths={1024,4096,16384}, num=20, decode-steps=4, random-seed 20260607) run TWICE on the SAME trial set — once radix-OFF (--disable-radix-cache), once radix-ON (SGLANG_DS_RADIX_OVERRIDE=1) — both EAGER + recall_oracle. Top-level recall_at_k IS the table-free absorbed selection's recall on this post-deletion HEAD.",
+    "samples_per_length": 6240,
+    "total_samples": 18720,
+    "samples_off": 18720,
+    "samples_on": 18720,
+    "hard_failure_markers": {"radix_off": {}, "radix_on": {}},
+    "max_delta_pp": 0.5,
+    "recall_at_2048_pct": {
+      "L1024":  {"radix_off": 100.0,  "radix_on": 100.0,  "delta_pp": 0.0,    "within_bound": true},
+      "L4096":  {"radix_off": 58.045, "radix_on": 57.196, "delta_pp": -0.849, "within_bound": false},
+      "L16384": {"radix_off": 36.362, "radix_on": 36.715, "delta_pp": 0.353,  "within_bound": true},
+      "overall":{"radix_off": 64.802, "radix_on": 64.637, "delta_pp": -0.165, "within_bound": true}
+    },
+    "helper_verdict": "FAIL",
+    "recall_radixon_passed": false,
+    "problems": ["length 4096: radix on-off delta -0.849pp exceeds ±0.5pp (off=58.045% on=57.196%)"],
+    "finding": "On the IDENTICAL trial set, radix-ON L4096 recall@2048 is 0.849pp LOWER than radix-OFF, exceeding the ±0.5pp bound. This is a REAL AC-5 finding, not noise: it is measured off-vs-on on the SAME seeds, and it is consistent with P1 (the radix-cached-KV path selects a different top-k than the freshly-prefilled-KV path, which drops L4096 recall). The verdict is the helper's real computed result; it is NOT relabeled as a pass."
+  },
+
+  "A7_dsa_default_regression": {
+    "status": "PASS",
+    "boot": "DSA default (NO --enable-double-sparsity), mem 0.8, shipped radix-default (radix cache ON by default)",
+    "max_total_num_tokens": 410560,
+    "expected": 410560,
+    "match": true,
+    "kv_ranks_logging_410560": 8,
+    "smoke": "OK:Paris. Distance from London to Paris is 343 km...",
+    "verdict": "Shipped DSA-native default un-regressed (max_total 410560 == required value), all 8 KV ranks."
+  },
+
+  "completeness": {
+    "P1": "RAN, FAIL (cold!=warm selected indices; cross-rank identical PASS)",
+    "P2": "RAN, FAIL (L4096 radix on-off -0.849pp > ±0.5pp)",
+    "A7": "RAN, PASS (410560)"
+  },
+  "cleanup": "all sglang.launch_server / scheduler processes killed; all 8 GPUs at 0 MiB after each probe; one TP=8 server at a time.",
+  "committed": false
+}

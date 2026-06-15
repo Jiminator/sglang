@@ -1,0 +1,31 @@
+{
+  "run": "loop11_r24_tablefree_radix_serving_validation_CORRECTED",
+  "date_utc": "2026-06-15",
+  "runtime_base_commit": "0a22aff868e6ce4ca796fd77b842649fb132add7",
+  "runtime_base_commit_short": "0a22aff86",
+  "model": "GLM-5.1-FP8",
+  "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
+  "channel_mask": "/models/glm51-fp8-channel-mask-s256.safetensors",
+  "envelope": "TP8 / fp8_e4m3 / page64 / mem0.8 / max-running 64 / cuda-graph-max-bs 64 (expandable_segments NEVER set)",
+  "no_new_production_code": "Uses existing selection_capture diagnostic (selection_capture.py) + recall oracle (oracle_artifact_sink.py / selection_recall_oracle.py). No production code changed this round.",
+  "corrections_vs_r23": [
+    "P1 now compares per_layer_selected_indices (the SELECTED INDICES), not latent SHA, as the headline.",
+    "P1 uses the IDENTICAL prompt for cold and warm (same query) so identical-selection is a meaningful equality.",
+    "P1 reads ALL 8 TP ranks (rank0..rank7) and asserts cross-rank bit-identity.",
+    "P2 measures recall radix-OFF vs radix-ON on the SAME seed/trial set (apples-to-apples), not vs a frozen separate-run baseline.",
+    "P2 helper verdict is the REAL computed result; per-length bin breaches are reported as FAIL, never relabeled 'noise'."
+  ],
+  "boot_commands": {
+    "P1_radix_on_eager_selcap": "SGLANG_DS_RADIX_OVERRIDE=1 python -m sglang.launch_server --model-path <GLM> --tp-size 8 --kv-cache-dtype fp8_e4m3 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --random-seed 20260607 --trust-remote-code --host 127.0.0.1 --port 30000 --mem-fraction-static 0.8 --max-running-requests 64 --cuda-graph-max-bs 64 --enable-double-sparsity --double-sparsity-config '{\"top_k\":2048,\"page_size\":64,\"channel_mask_path\":\"/models/glm51-fp8-channel-mask-s256.safetensors\",\"device_buffer_size\":4096,\"scorer_norm\":\"off\",\"head_agg\":\"max\",\"anchor_mode\":\"off\",\"anchor_budget\":0,\"recall_oracle\":false,\"selection_capture\":true,\"enable_lifted_budget_decode\":false,\"lifted_budget_top_k\":0}' --disable-cuda-graph",
+    "P2_radix_off_eager_oracle": "python -m sglang.launch_server <COMMON> --enable-double-sparsity --double-sparsity-config '{...,\"recall_oracle\":true}' --disable-cuda-graph --disable-radix-cache",
+    "P2_radix_on_eager_oracle": "SGLANG_DS_RADIX_OVERRIDE=1 python -m sglang.launch_server <COMMON> --enable-double-sparsity --double-sparsity-config '{...,\"recall_oracle\":true}' --disable-cuda-graph",
+    "A7_dsa_default": "python -m sglang.launch_server <COMMON> (NO --enable-double-sparsity; shipped radix-default)"
+  },
+  "rules_followed": [
+    "radix-ON via SGLANG_DS_RADIX_OVERRIDE=1 + drop --disable-radix-cache.",
+    "EAGER (--disable-cuda-graph) for capture/oracle host syncs.",
+    "expandable_segments NEVER set (unset PYTORCH_CUDA_ALLOC_CONF).",
+    "One TP=8 server at a time; teardown to ~0 MiB between probes.",
+    "Evidence not committed."
+  ]
+}

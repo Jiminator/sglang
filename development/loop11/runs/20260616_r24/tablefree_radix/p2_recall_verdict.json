@@ -1,0 +1,45 @@
+{
+  "probe": "P2_recall_radix_off_vs_on_corrected",
+  "max_delta_pp": 0.5,
+  "sink_off": "/sgl-workspace/sglang/development/loop11/runs/20260616_r24/tablefree_radix/recall/sink_off.jsonl",
+  "sink_on": "/sgl-workspace/sglang/development/loop11/runs/20260616_r24/tablefree_radix/recall/sink_on.jsonl",
+  "radix_off_failures": {},
+  "radix_on_failures": {},
+  "per_length": {
+    "1024": {
+      "samples_off": 6240,
+      "samples_on": 6240,
+      "radix_off_pct": 100.0,
+      "radix_on_pct": 100.0,
+      "delta_pp": 0.0,
+      "within_bound": true
+    },
+    "4096": {
+      "samples_off": 6240,
+      "samples_on": 6240,
+      "radix_off_pct": 58.045,
+      "radix_on_pct": 57.196,
+      "delta_pp": -0.849,
+      "within_bound": false
+    },
+    "16384": {
+      "samples_off": 6240,
+      "samples_on": 6240,
+      "radix_off_pct": 36.362,
+      "radix_on_pct": 36.715,
+      "delta_pp": 0.353,
+      "within_bound": true
+    }
+  },
+  "overall": {
+    "radix_off_pct": 64.802,
+    "radix_on_pct": 64.637,
+    "delta_pp": -0.165,
+    "samples_off": 18720,
+    "samples_on": 18720
+  },
+  "verdict": "FAIL",
+  "problems": [
+    "length 4096: radix on-off delta -0.849pp exceeds \u00b10.5pp (off=58.045% on=57.196%)"
+  ]
+}

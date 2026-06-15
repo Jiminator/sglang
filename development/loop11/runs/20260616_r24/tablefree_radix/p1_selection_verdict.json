@@ -1,0 +1,248 @@
+{
+  "probe": "P1_cold_warm_SELECTION_equivalence_corrected",
+  "capdir": "/sgl-workspace/sglang/.sglang_ds_selcap",
+  "prompt_chars": 15535,
+  "identical_prompt": true,
+  "expect_ranks": 8,
+  "cold_prompt_tokens": 3815,
+  "cold_cached_tokens": 0,
+  "warm_prompt_tokens": 3815,
+  "warm_cached_tokens": 3776,
+  "cold_ranks_present": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "warm_ranks_present": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "ranks_compared": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "layers_per_rank": 78,
+  "per_rank": {
+    "0": {
+      "cold_eq_warm": false,
+      "compare_len": 2048,
+      "layers": 78,
+      "cold_first_step": 30,
+      "warm_first_step": 33,
+      "cold_valid_len_range": [
+        2048,
+        2048
+      ],
+      "warm_valid_len_range": [
+        2048,
+        2048
+      ],
+      "comparator": {
+        "ok": false,
+        "divergence_kind": "selection",
+        "reason": "per_layer_selected_indices differs at layer=2 position=224 (within cached prefix): cold=476 warm=477",
+        "compared_fields": [
+          "per_layer_selected_indices"
+        ],
+        "cached_tokens": 2048
+      }
+    },
+    "1": {
+      "cold_eq_warm": false,
+      "compare_len": 2048,
+      "layers": 78,
+      "cold_first_step": 30,
+      "warm_first_step": 33,
+      "cold_valid_len_range": [
+        2048,
+        2048
+      ],
+      "warm_valid_len_range": [
+        2048,
+        2048
+      ],
+      "comparator": {
+        "ok": false,
+        "divergence_kind": "selection",
+        "reason": "per_layer_selected_indices differs at layer=2 position=224 (within cached prefix): cold=476 warm=477",
+        "compared_fields": [
+          "per_layer_selected_indices"
+        ],
+        "cached_tokens": 2048
+      },
+      "matches_rank0": true
+    },
+    "2": {
+      "cold_eq_warm": false,
+      "compare_len": 2048,
+      "layers": 78,
+      "cold_first_step": 30,
+      "warm_first_step": 33,
+      "cold_valid_len_range": [
+        2048,
+        2048
+      ],
+      "warm_valid_len_range": [
+        2048,
+        2048
+      ],
+      "comparator": {
+        "ok": false,
+        "divergence_kind": "selection",
+        "reason": "per_layer_selected_indices differs at layer=2 position=224 (within cached prefix): cold=476 warm=477",
+        "compared_fields": [
+          "per_layer_selected_indices"
+        ],
+        "cached_tokens": 2048
+      },
+      "matches_rank0": true
+    },
+    "3": {
+      "cold_eq_warm": false,
+      "compare_len": 2048,
+      "layers": 78,
+      "cold_first_step": 30,
+      "warm_first_step": 33,
+      "cold_valid_len_range": [
+        2048,
+        2048
+      ],
+      "warm_valid_len_range": [
+        2048,
+        2048
+      ],
+      "comparator": {
+        "ok": false,
+        "divergence_kind": "selection",
+        "reason": "per_layer_selected_indices differs at layer=2 position=224 (within cached prefix): cold=476 warm=477",
+        "compared_fields": [
+          "per_layer_selected_indices"
+        ],
+        "cached_tokens": 2048
+      },
+      "matches_rank0": true
+    },
+    "4": {
+      "cold_eq_warm": false,
+      "compare_len": 2048,
+      "layers": 78,
+      "cold_first_step": 30,
+      "warm_first_step": 33,
+      "cold_valid_len_range": [
+        2048,
+        2048
+      ],
+      "warm_valid_len_range": [
+        2048,
+        2048
+      ],
+      "comparator": {
+        "ok": false,
+        "divergence_kind": "selection",
+        "reason": "per_layer_selected_indices differs at layer=2 position=224 (within cached prefix): cold=476 warm=477",
+        "compared_fields": [
+          "per_layer_selected_indices"
+        ],
+        "cached_tokens": 2048
+      },
+      "matches_rank0": true
+    },
+    "5": {
+      "cold_eq_warm": false,
+      "compare_len": 2048,
+      "layers": 78,
+      "cold_first_step": 30,
+      "warm_first_step": 33,
+      "cold_valid_len_range": [
+        2048,
+        2048
+      ],
+      "warm_valid_len_range": [
+        2048,
+        2048
+      ],
+      "comparator": {
+        "ok": false,
+        "divergence_kind": "selection",
+        "reason": "per_layer_selected_indices differs at layer=2 position=224 (within cached prefix): cold=476 warm=477",
+        "compared_fields": [
+          "per_layer_selected_indices"
+        ],
+        "cached_tokens": 2048
+      },
+      "matches_rank0": true
+    },
+    "6": {
+      "cold_eq_warm": false,
+      "compare_len": 2048,
+      "layers": 78,
+      "cold_first_step": 30,
+      "warm_first_step": 33,
+      "cold_valid_len_range": [
+        2048,
+        2048
+      ],
+      "warm_valid_len_range": [
+        2048,
+        2048
+      ],
+      "comparator": {
+        "ok": false,
+        "divergence_kind": "selection",
+        "reason": "per_layer_selected_indices differs at layer=2 position=224 (within cached prefix): cold=476 warm=477",
+        "compared_fields": [
+          "per_layer_selected_indices"
+        ],
+        "cached_tokens": 2048
+      },
+      "matches_rank0": true
+    },
+    "7": {
+      "cold_eq_warm": false,
+      "compare_len": 2048,
+      "layers": 78,
+      "cold_first_step": 30,
+      "warm_first_step": 33,
+      "cold_valid_len_range": [
+        2048,
+        2048
+      ],
+      "warm_valid_len_range": [
+        2048,
+        2048
+      ],
+      "comparator": {
+        "ok": false,
+        "divergence_kind": "selection",
+        "reason": "per_layer_selected_indices differs at layer=2 position=224 (within cached prefix): cold=476 warm=477",
+        "compared_fields": [
+          "per_layer_selected_indices"
+        ],
+        "cached_tokens": 2048
+      },
+      "matches_rank0": true
+    }
+  },
+  "all_cold_eq_warm": false,
+  "cross_rank_identical": true,
+  "all_ok": false,
+  "status": "FAIL",
+  "reason": "all_cold_eq_warm=False cross_rank_identical=True"
+}
