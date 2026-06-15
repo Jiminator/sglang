@@ -1,0 +1,1502 @@
+{
+  "probe": "R24_rootcause_selection_flip_vs_latent_byte_diff",
+  "identical_prompt": true,
+  "prompt_chars": 24583,
+  "ranks": [
+    0,
+    4
+  ],
+  "runtime_base_commit": "3de57d32b",
+  "cold_prompt_tokens": 6090,
+  "cold_cached_tokens": 0,
+  "warm_prompt_tokens": 6090,
+  "warm_cached_tokens": 6080,
+  "per_rank": {
+    "0": {
+      "cold_prompt_len_captured": 6093,
+      "warm_prompt_len_captured": 6093,
+      "cold_first_step": 7,
+      "warm_first_step": 10,
+      "n_latent_layers_cold": 78,
+      "n_latent_layers_warm": 78,
+      "n_sel_layers_cold": 78,
+      "n_sel_layers_warm": 78,
+      "latent_bytes": {
+        "cached_tokens_C": 6080,
+        "n_cached_prefix_positions_with_any_layer_sha_diff": 0,
+        "n_cached_prefix_layerpos_mismatches_total": 0,
+        "n_tail_positions_with_any_layer_sha_diff": 13,
+        "n_tail_layerpos_mismatches_total": 1002,
+        "example_prefix_diff_positions": [],
+        "example_tail_diff_positions": [
+          6080,
+          6081,
+          6082,
+          6083,
+          6084,
+          6085,
+          6086,
+          6087,
+          6088,
+          6089,
+          6090,
+          6091,
+          6092
+        ],
+        "prefix_diff_positions_within_64_of_boundary_C": []
+      },
+      "selection_flips": {
+        "n_sel_layers_compared": 78,
+        "n_layers_with_flip": 76,
+        "total_flipped_positions": 17830,
+        "flips_where_latent_bytes_DIFFER": 28,
+        "flips_where_latent_bytes_IDENTICAL": 17802,
+        "flipped_positions_outside_cached_prefix": 28,
+        "first_layers_with_flip_detail": [
+          {
+            "layer": 2,
+            "n_flipped": 2,
+            "cold_only": [
+              5962
+            ],
+            "warm_only": [
+              628
+            ],
+            "per_pos": [
+              {
+                "rank": 0,
+                "layer": 2,
+                "logical_pos": 628,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "692afb15",
+                "warm_sha8": "692afb15"
+              },
+              {
+                "rank": 0,
+                "layer": 2,
+                "logical_pos": 5962,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "aa88739f",
+                "warm_sha8": "aa88739f"
+              }
+            ]
+          },
+          {
+            "layer": 3,
+            "n_flipped": 24,
+            "cold_only": [
+              76,
+              133,
+              152,
+              5464,
+              5484,
+              5623,
+              5643,
+              5878,
+              5897,
+              5936
+            ],
+            "warm_only": [
+              3970,
+              4027,
+              4084,
+              4122,
+              4141,
+              4297,
+              4317,
+              4337,
+              4376,
+              4415
+            ],
+            "per_pos": [
+              {
+                "rank": 0,
+                "layer": 3,
+                "logical_pos": 76,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "a26bb02e",
+                "warm_sha8": "a26bb02e"
+              },
+              {
+                "rank": 0,
+                "layer": 3,
+                "logical_pos": 133,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "f36027fe",
+                "warm_sha8": "f36027fe"
+              },
+              {
+                "rank": 0,
+                "layer": 3,
+                "logical_pos": 152,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "c3b5251f",
+                "warm_sha8": "c3b5251f"
+              },
+              {
+                "rank": 0,
+                "layer": 3,
+                "logical_pos": 3970,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "00a549da",
+                "warm_sha8": "00a549da"
+              },
+              {
+                "rank": 0,
+                "layer": 3,
+                "logical_pos": 4027,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "7060f14f",
+                "warm_sha8": "7060f14f"
+              },
+              {
+                "rank": 0,
+                "layer": 3,
+                "logical_pos": 4084,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "38eb8f1c",
+                "warm_sha8": "38eb8f1c"
+              },
+              {
+                "rank": 0,
+                "layer": 3,
+                "logical_pos": 4122,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "eed00a38",
+                "warm_sha8": "eed00a38"
+              },
+              {
+                "rank": 0,
+                "layer": 3,
+                "logical_pos": 4141,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "dcd3c66b",
+                "warm_sha8": "dcd3c66b"
+              },
+              {
+                "rank": 0,
+                "layer": 3,
+                "logical_pos": 4297,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "9d4424ab",
+                "warm_sha8": "9d4424ab"
+              },
+              {
+                "rank": 0,
+                "layer": 3,
+                "logical_pos": 4317,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "4e65d221",
+                "warm_sha8": "4e65d221"
+              },
+              {
+                "rank": 0,
+                "layer": 3,
+                "logical_pos": 4337,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "2a869f9c",
+                "warm_sha8": "2a869f9c"
+              },
+              {
+                "rank": 0,
+                "layer": 3,
+                "logical_pos": 4376,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "926c1610",
+                "warm_sha8": "926c1610"
+              }
+            ]
+          },
+          {
+            "layer": 4,
+            "n_flipped": 42,
+            "cold_only": [
+              298,
+              602,
+              659,
+              1084,
+              1369,
+              2015,
+              2194,
+              2232,
+              2422,
+              2498
+            ],
+            "warm_only": [
+              200,
+              295,
+              352,
+              390,
+              561,
+              1359,
+              2695,
+              3075,
+              3151,
+              3265
+            ],
+            "per_pos": [
+              {
+                "rank": 0,
+                "layer": 4,
+                "logical_pos": 200,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "b443df96",
+                "warm_sha8": "b443df96"
+              },
+              {
+                "rank": 0,
+                "layer": 4,
+                "logical_pos": 295,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "f3950f01",
+                "warm_sha8": "f3950f01"
+              },
+              {
+                "rank": 0,
+                "layer": 4,
+                "logical_pos": 298,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "ff59292b",
+                "warm_sha8": "ff59292b"
+              },
+              {
+                "rank": 0,
+                "layer": 4,
+                "logical_pos": 352,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "0096366f",
+                "warm_sha8": "0096366f"
+              },
+              {
+                "rank": 0,
+                "layer": 4,
+                "logical_pos": 390,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "2831e7d0",
+                "warm_sha8": "2831e7d0"
+              },
+              {
+                "rank": 0,
+                "layer": 4,
+                "logical_pos": 561,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "fced036b",
+                "warm_sha8": "fced036b"
+              },
+              {
+                "rank": 0,
+                "layer": 4,
+                "logical_pos": 602,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "b06f5d74",
+                "warm_sha8": "b06f5d74"
+              },
+              {
+                "rank": 0,
+                "layer": 4,
+                "logical_pos": 659,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "9596ab01",
+                "warm_sha8": "9596ab01"
+              },
+              {
+                "rank": 0,
+                "layer": 4,
+                "logical_pos": 1084,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "ba9a5f27",
+                "warm_sha8": "ba9a5f27"
+              },
+              {
+                "rank": 0,
+                "layer": 4,
+                "logical_pos": 1359,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "5b795865",
+                "warm_sha8": "5b795865"
+              },
+              {
+                "rank": 0,
+                "layer": 4,
+                "logical_pos": 1369,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "d6a73788",
+                "warm_sha8": "d6a73788"
+              },
+              {
+                "rank": 0,
+                "layer": 4,
+                "logical_pos": 2015,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "4d552732",
+                "warm_sha8": "4d552732"
+              }
+            ]
+          },
+          {
+            "layer": 5,
+            "n_flipped": 4,
+            "cold_only": [
+              557,
+              4009
+            ],
+            "warm_only": [
+              177,
+              424
+            ],
+            "per_pos": [
+              {
+                "rank": 0,
+                "layer": 5,
+                "logical_pos": 177,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "e17abcce",
+                "warm_sha8": "e17abcce"
+              },
+              {
+                "rank": 0,
+                "layer": 5,
+                "logical_pos": 424,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "92cdf1df",
+                "warm_sha8": "92cdf1df"
+              },
+              {
+                "rank": 0,
+                "layer": 5,
+                "logical_pos": 557,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "f9dc5ab0",
+                "warm_sha8": "f9dc5ab0"
+              },
+              {
+                "rank": 0,
+                "layer": 5,
+                "logical_pos": 4009,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "9963f04a",
+                "warm_sha8": "9963f04a"
+              }
+            ]
+          },
+          {
+            "layer": 6,
+            "n_flipped": 30,
+            "cold_only": [
+              21,
+              710,
+              767,
+              932,
+              938,
+              1128,
+              1560,
+              1926,
+              2325,
+              2928
+            ],
+            "warm_only": [
+              14,
+              106,
+              163,
+              220,
+              1959,
+              3635,
+              3654,
+              4880,
+              5196,
+              5455
+            ],
+            "per_pos": [
+              {
+                "rank": 0,
+                "layer": 6,
+                "logical_pos": 14,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "75b78a3f",
+                "warm_sha8": "75b78a3f"
+              },
+              {
+                "rank": 0,
+                "layer": 6,
+                "logical_pos": 21,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "87cd3199",
+                "warm_sha8": "87cd3199"
+              },
+              {
+                "rank": 0,
+                "layer": 6,
+                "logical_pos": 106,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "02889f1e",
+                "warm_sha8": "02889f1e"
+              },
+              {
+                "rank": 0,
+                "layer": 6,
+                "logical_pos": 163,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "71399da1",
+                "warm_sha8": "71399da1"
+              },
+              {
+                "rank": 0,
+                "layer": 6,
+                "logical_pos": 220,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "f5b38df3",
+                "warm_sha8": "f5b38df3"
+              },
+              {
+                "rank": 0,
+                "layer": 6,
+                "logical_pos": 710,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "e16defd6",
+                "warm_sha8": "e16defd6"
+              },
+              {
+                "rank": 0,
+                "layer": 6,
+                "logical_pos": 767,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "e00d7b08",
+                "warm_sha8": "e00d7b08"
+              },
+              {
+                "rank": 0,
+                "layer": 6,
+                "logical_pos": 932,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "eefb3027",
+                "warm_sha8": "eefb3027"
+              },
+              {
+                "rank": 0,
+                "layer": 6,
+                "logical_pos": 938,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "b7ff625f",
+                "warm_sha8": "b7ff625f"
+              },
+              {
+                "rank": 0,
+                "layer": 6,
+                "logical_pos": 1128,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "18d28ed5",
+                "warm_sha8": "18d28ed5"
+              },
+              {
+                "rank": 0,
+                "layer": 6,
+                "logical_pos": 1560,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "72fa7992",
+                "warm_sha8": "72fa7992"
+              },
+              {
+                "rank": 0,
+                "layer": 6,
+                "logical_pos": 1926,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "fc4aaf78",
+                "warm_sha8": "fc4aaf78"
+              }
+            ]
+          },
+          {
+            "layer": 7,
+            "n_flipped": 630,
+            "cold_only": [
+              26,
+              48,
+              64,
+              67,
+              83,
+              86,
+              102,
+              105,
+              121,
+              124
+            ],
+            "warm_only": [
+              14,
+              59,
+              74,
+              93,
+              169,
+              188,
+              207,
+              245,
+              283,
+              321
+            ],
+            "per_pos": [
+              {
+                "rank": 0,
+                "layer": 7,
+                "logical_pos": 14,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "14c4f8c6",
+                "warm_sha8": "14c4f8c6"
+              },
+              {
+                "rank": 0,
+                "layer": 7,
+                "logical_pos": 26,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "794843e1",
+                "warm_sha8": "794843e1"
+              },
+              {
+                "rank": 0,
+                "layer": 7,
+                "logical_pos": 48,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "83a69b5c",
+                "warm_sha8": "83a69b5c"
+              },
+              {
+                "rank": 0,
+                "layer": 7,
+                "logical_pos": 59,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "70e7d38e",
+                "warm_sha8": "70e7d38e"
+              },
+              {
+                "rank": 0,
+                "layer": 7,
+                "logical_pos": 64,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "187e3039",
+                "warm_sha8": "187e3039"
+              },
+              {
+                "rank": 0,
+                "layer": 7,
+                "logical_pos": 67,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "7eb196fc",
+                "warm_sha8": "7eb196fc"
+              },
+              {
+                "rank": 0,
+                "layer": 7,
+                "logical_pos": 74,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "c2e1e5e8",
+                "warm_sha8": "c2e1e5e8"
+              },
+              {
+                "rank": 0,
+                "layer": 7,
+                "logical_pos": 83,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "1a90c88e",
+                "warm_sha8": "1a90c88e"
+              },
+              {
+                "rank": 0,
+                "layer": 7,
+                "logical_pos": 86,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "5711e0e1",
+                "warm_sha8": "5711e0e1"
+              },
+              {
+                "rank": 0,
+                "layer": 7,
+                "logical_pos": 93,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "b3d62fc6",
+                "warm_sha8": "b3d62fc6"
+              },
+              {
+                "rank": 0,
+                "layer": 7,
+                "logical_pos": 102,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "e961cf6a",
+                "warm_sha8": "e961cf6a"
+              },
+              {
+                "rank": 0,
+                "layer": 7,
+                "logical_pos": 105,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "70cd0359",
+                "warm_sha8": "70cd0359"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "4": {
+      "cold_prompt_len_captured": 6093,
+      "warm_prompt_len_captured": 6093,
+      "cold_first_step": 7,
+      "warm_first_step": 10,
+      "n_latent_layers_cold": 78,
+      "n_latent_layers_warm": 78,
+      "n_sel_layers_cold": 78,
+      "n_sel_layers_warm": 78,
+      "latent_bytes": {
+        "cached_tokens_C": 6080,
+        "n_cached_prefix_positions_with_any_layer_sha_diff": 0,
+        "n_cached_prefix_layerpos_mismatches_total": 0,
+        "n_tail_positions_with_any_layer_sha_diff": 13,
+        "n_tail_layerpos_mismatches_total": 1002,
+        "example_prefix_diff_positions": [],
+        "example_tail_diff_positions": [
+          6080,
+          6081,
+          6082,
+          6083,
+          6084,
+          6085,
+          6086,
+          6087,
+          6088,
+          6089,
+          6090,
+          6091,
+          6092
+        ],
+        "prefix_diff_positions_within_64_of_boundary_C": []
+      },
+      "selection_flips": {
+        "n_sel_layers_compared": 78,
+        "n_layers_with_flip": 76,
+        "total_flipped_positions": 17830,
+        "flips_where_latent_bytes_DIFFER": 28,
+        "flips_where_latent_bytes_IDENTICAL": 17802,
+        "flipped_positions_outside_cached_prefix": 28,
+        "first_layers_with_flip_detail": [
+          {
+            "layer": 2,
+            "n_flipped": 2,
+            "cold_only": [
+              5962
+            ],
+            "warm_only": [
+              628
+            ],
+            "per_pos": [
+              {
+                "rank": 4,
+                "layer": 2,
+                "logical_pos": 628,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "692afb15",
+                "warm_sha8": "692afb15"
+              },
+              {
+                "rank": 4,
+                "layer": 2,
+                "logical_pos": 5962,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "aa88739f",
+                "warm_sha8": "aa88739f"
+              }
+            ]
+          },
+          {
+            "layer": 3,
+            "n_flipped": 24,
+            "cold_only": [
+              76,
+              133,
+              152,
+              5464,
+              5484,
+              5623,
+              5643,
+              5878,
+              5897,
+              5936
+            ],
+            "warm_only": [
+              3970,
+              4027,
+              4084,
+              4122,
+              4141,
+              4297,
+              4317,
+              4337,
+              4376,
+              4415
+            ],
+            "per_pos": [
+              {
+                "rank": 4,
+                "layer": 3,
+                "logical_pos": 76,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "a26bb02e",
+                "warm_sha8": "a26bb02e"
+              },
+              {
+                "rank": 4,
+                "layer": 3,
+                "logical_pos": 133,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "f36027fe",
+                "warm_sha8": "f36027fe"
+              },
+              {
+                "rank": 4,
+                "layer": 3,
+                "logical_pos": 152,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "c3b5251f",
+                "warm_sha8": "c3b5251f"
+              },
+              {
+                "rank": 4,
+                "layer": 3,
+                "logical_pos": 3970,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "00a549da",
+                "warm_sha8": "00a549da"
+              },
+              {
+                "rank": 4,
+                "layer": 3,
+                "logical_pos": 4027,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "7060f14f",
+                "warm_sha8": "7060f14f"
+              },
+              {
+                "rank": 4,
+                "layer": 3,
+                "logical_pos": 4084,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "38eb8f1c",
+                "warm_sha8": "38eb8f1c"
+              },
+              {
+                "rank": 4,
+                "layer": 3,
+                "logical_pos": 4122,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "eed00a38",
+                "warm_sha8": "eed00a38"
+              },
+              {
+                "rank": 4,
+                "layer": 3,
+                "logical_pos": 4141,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "dcd3c66b",
+                "warm_sha8": "dcd3c66b"
+              },
+              {
+                "rank": 4,
+                "layer": 3,
+                "logical_pos": 4297,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "9d4424ab",
+                "warm_sha8": "9d4424ab"
+              },
+              {
+                "rank": 4,
+                "layer": 3,
+                "logical_pos": 4317,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "4e65d221",
+                "warm_sha8": "4e65d221"
+              },
+              {
+                "rank": 4,
+                "layer": 3,
+                "logical_pos": 4337,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "2a869f9c",
+                "warm_sha8": "2a869f9c"
+              },
+              {
+                "rank": 4,
+                "layer": 3,
+                "logical_pos": 4376,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "926c1610",
+                "warm_sha8": "926c1610"
+              }
+            ]
+          },
+          {
+            "layer": 4,
+            "n_flipped": 42,
+            "cold_only": [
+              298,
+              602,
+              659,
+              1084,
+              1369,
+              2015,
+              2194,
+              2232,
+              2422,
+              2498
+            ],
+            "warm_only": [
+              200,
+              295,
+              352,
+              390,
+              561,
+              1359,
+              2695,
+              3075,
+              3151,
+              3265
+            ],
+            "per_pos": [
+              {
+                "rank": 4,
+                "layer": 4,
+                "logical_pos": 200,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "b443df96",
+                "warm_sha8": "b443df96"
+              },
+              {
+                "rank": 4,
+                "layer": 4,
+                "logical_pos": 295,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "f3950f01",
+                "warm_sha8": "f3950f01"
+              },
+              {
+                "rank": 4,
+                "layer": 4,
+                "logical_pos": 298,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "ff59292b",
+                "warm_sha8": "ff59292b"
+              },
+              {
+                "rank": 4,
+                "layer": 4,
+                "logical_pos": 352,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "0096366f",
+                "warm_sha8": "0096366f"
+              },
+              {
+                "rank": 4,
+                "layer": 4,
+                "logical_pos": 390,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "2831e7d0",
+                "warm_sha8": "2831e7d0"
+              },
+              {
+                "rank": 4,
+                "layer": 4,
+                "logical_pos": 561,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "fced036b",
+                "warm_sha8": "fced036b"
+              },
+              {
+                "rank": 4,
+                "layer": 4,
+                "logical_pos": 602,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "b06f5d74",
+                "warm_sha8": "b06f5d74"
+              },
+              {
+                "rank": 4,
+                "layer": 4,
+                "logical_pos": 659,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "9596ab01",
+                "warm_sha8": "9596ab01"
+              },
+              {
+                "rank": 4,
+                "layer": 4,
+                "logical_pos": 1084,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "ba9a5f27",
+                "warm_sha8": "ba9a5f27"
+              },
+              {
+                "rank": 4,
+                "layer": 4,
+                "logical_pos": 1359,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "5b795865",
+                "warm_sha8": "5b795865"
+              },
+              {
+                "rank": 4,
+                "layer": 4,
+                "logical_pos": 1369,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "d6a73788",
+                "warm_sha8": "d6a73788"
+              },
+              {
+                "rank": 4,
+                "layer": 4,
+                "logical_pos": 2015,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "4d552732",
+                "warm_sha8": "4d552732"
+              }
+            ]
+          },
+          {
+            "layer": 5,
+            "n_flipped": 4,
+            "cold_only": [
+              557,
+              4009
+            ],
+            "warm_only": [
+              177,
+              424
+            ],
+            "per_pos": [
+              {
+                "rank": 4,
+                "layer": 5,
+                "logical_pos": 177,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "e17abcce",
+                "warm_sha8": "e17abcce"
+              },
+              {
+                "rank": 4,
+                "layer": 5,
+                "logical_pos": 424,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "92cdf1df",
+                "warm_sha8": "92cdf1df"
+              },
+              {
+                "rank": 4,
+                "layer": 5,
+                "logical_pos": 557,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "f9dc5ab0",
+                "warm_sha8": "f9dc5ab0"
+              },
+              {
+                "rank": 4,
+                "layer": 5,
+                "logical_pos": 4009,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "9963f04a",
+                "warm_sha8": "9963f04a"
+              }
+            ]
+          },
+          {
+            "layer": 6,
+            "n_flipped": 30,
+            "cold_only": [
+              21,
+              710,
+              767,
+              932,
+              938,
+              1128,
+              1560,
+              1926,
+              2325,
+              2928
+            ],
+            "warm_only": [
+              14,
+              106,
+              163,
+              220,
+              1959,
+              3635,
+              3654,
+              4880,
+              5196,
+              5455
+            ],
+            "per_pos": [
+              {
+                "rank": 4,
+                "layer": 6,
+                "logical_pos": 14,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "75b78a3f",
+                "warm_sha8": "75b78a3f"
+              },
+              {
+                "rank": 4,
+                "layer": 6,
+                "logical_pos": 21,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "87cd3199",
+                "warm_sha8": "87cd3199"
+              },
+              {
+                "rank": 4,
+                "layer": 6,
+                "logical_pos": 106,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "02889f1e",
+                "warm_sha8": "02889f1e"
+              },
+              {
+                "rank": 4,
+                "layer": 6,
+                "logical_pos": 163,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "71399da1",
+                "warm_sha8": "71399da1"
+              },
+              {
+                "rank": 4,
+                "layer": 6,
+                "logical_pos": 220,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "f5b38df3",
+                "warm_sha8": "f5b38df3"
+              },
+              {
+                "rank": 4,
+                "layer": 6,
+                "logical_pos": 710,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "e16defd6",
+                "warm_sha8": "e16defd6"
+              },
+              {
+                "rank": 4,
+                "layer": 6,
+                "logical_pos": 767,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "e00d7b08",
+                "warm_sha8": "e00d7b08"
+              },
+              {
+                "rank": 4,
+                "layer": 6,
+                "logical_pos": 932,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "eefb3027",
+                "warm_sha8": "eefb3027"
+              },
+              {
+                "rank": 4,
+                "layer": 6,
+                "logical_pos": 938,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "b7ff625f",
+                "warm_sha8": "b7ff625f"
+              },
+              {
+                "rank": 4,
+                "layer": 6,
+                "logical_pos": 1128,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "18d28ed5",
+                "warm_sha8": "18d28ed5"
+              },
+              {
+                "rank": 4,
+                "layer": 6,
+                "logical_pos": 1560,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "72fa7992",
+                "warm_sha8": "72fa7992"
+              },
+              {
+                "rank": 4,
+                "layer": 6,
+                "logical_pos": 1926,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "fc4aaf78",
+                "warm_sha8": "fc4aaf78"
+              }
+            ]
+          },
+          {
+            "layer": 7,
+            "n_flipped": 630,
+            "cold_only": [
+              26,
+              48,
+              64,
+              67,
+              83,
+              86,
+              102,
+              105,
+              121,
+              124
+            ],
+            "warm_only": [
+              14,
+              59,
+              74,
+              93,
+              169,
+              188,
+              207,
+              245,
+              283,
+              321
+            ],
+            "per_pos": [
+              {
+                "rank": 4,
+                "layer": 7,
+                "logical_pos": 14,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "14c4f8c6",
+                "warm_sha8": "14c4f8c6"
+              },
+              {
+                "rank": 4,
+                "layer": 7,
+                "logical_pos": 26,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "794843e1",
+                "warm_sha8": "794843e1"
+              },
+              {
+                "rank": 4,
+                "layer": 7,
+                "logical_pos": 48,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "83a69b5c",
+                "warm_sha8": "83a69b5c"
+              },
+              {
+                "rank": 4,
+                "layer": 7,
+                "logical_pos": 59,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "70e7d38e",
+                "warm_sha8": "70e7d38e"
+              },
+              {
+                "rank": 4,
+                "layer": 7,
+                "logical_pos": 64,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "187e3039",
+                "warm_sha8": "187e3039"
+              },
+              {
+                "rank": 4,
+                "layer": 7,
+                "logical_pos": 67,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "7eb196fc",
+                "warm_sha8": "7eb196fc"
+              },
+              {
+                "rank": 4,
+                "layer": 7,
+                "logical_pos": 74,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "c2e1e5e8",
+                "warm_sha8": "c2e1e5e8"
+              },
+              {
+                "rank": 4,
+                "layer": 7,
+                "logical_pos": 83,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "1a90c88e",
+                "warm_sha8": "1a90c88e"
+              },
+              {
+                "rank": 4,
+                "layer": 7,
+                "logical_pos": 86,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "5711e0e1",
+                "warm_sha8": "5711e0e1"
+              },
+              {
+                "rank": 4,
+                "layer": 7,
+                "logical_pos": 93,
+                "side": "warm_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "b3d62fc6",
+                "warm_sha8": "b3d62fc6"
+              },
+              {
+                "rank": 4,
+                "layer": 7,
+                "logical_pos": 102,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "e961cf6a",
+                "warm_sha8": "e961cf6a"
+              },
+              {
+                "rank": 4,
+                "layer": 7,
+                "logical_pos": 105,
+                "side": "cold_only",
+                "domain": "cached_prefix",
+                "byte_state": "bytes_identical",
+                "cold_sha8": "70cd0359",
+                "warm_sha8": "70cd0359"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "conclusion": "mixed",
+  "conclusion_detail": {
+    "rank0_flips_at_byte_DIFFER": 28,
+    "rank0_flips_at_byte_IDENTICAL": 17802,
+    "rank0_cached_prefix_positions_with_latent_byte_diff": 0,
+    "rank0_tail_positions_with_latent_byte_diff": 13
+  },
+  "status": "DONE",
+  "conclusion_corrected": {
+    "verdict": "cause_b_identical_bytes_near_tie (within the cached prefix)",
+    "note": "The auto 'mixed' label is an artifact of counting tail flips. Restricting to the cached-prefix domain (the only domain where cause-a/cause-b is a meaningful question) the verdict is UNAMBIGUOUS cause (b).",
+    "cached_prefix_domain_pos_lt_C": {
+      "C": 6080,
+      "C_is_multiple_of_page64": true,
+      "selection_flips_in_cached_prefix": 17802,
+      "of_which_at_latent_bytes_IDENTICAL": 17802,
+      "of_which_at_latent_bytes_DIFFER": 0,
+      "cached_prefix_positions_with_any_layer_latent_byte_diff": 0
+    },
+    "tail_domain_pos_ge_C": {
+      "positions": "[6080,6089] (the last partial page, re-prefilled NOT reused by radix)",
+      "selection_flips_in_tail": 28,
+      "latent_bytes": "differ -- EXPECTED (these slots were recomputed, not cache-reused); NOT evidence for cause (a)"
+    },
+    "both_ranks_identical": "rank0 and rank4 produce identical numbers; cross-rank consistent"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "probe": "R24_rootcause_selection_flip_vs_latent_byte_diff",
+  "date_utc": "2026-06-16",
+  "runtime_base_commit": "3de57d32b",
+  "model": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
+  "channel_mask": "/models/glm51-fp8-channel-mask-s256.safetensors",
+  "op_point": {
+    "tp_size": 8,
+    "kv_cache_dtype": "fp8_e4m3",
+    "page_size": 64,
+    "mem_fraction_static": 0.8,
+    "max_running_requests": 64,
+    "cuda_graph_max_bs": 64,
+    "cuda_graph": "DISABLED (eager)",
+    "radix_cache": "ON (SGLANG_DS_RADIX_OVERRIDE=1, no --disable-radix-cache)",
+    "expandable_segments": "NEVER (PYTORCH_CUDA_ALLOC_CONF unset)"
+  },
+  "ds_config": {
+    "top_k": 2048, "page_size": 64,
+    "channel_mask_path": "/models/glm51-fp8-channel-mask-s256.safetensors",
+    "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max",
+    "anchor_mode": "off", "anchor_budget": 0, "recall_oracle": false,
+    "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0,
+    "latent_capture": true, "selection_capture": true
+  },
+  "method": "COLD then WARM IDENTICAL prompt (~3800 tok). latent_capture gives per-LOGICAL-position fp8-latent SHA; selection_capture gives per-layer SELECTED logical positions at first decode step. Correlate: for each flipped logical position (cold-top-k XOR warm-top-k), compare cold vs warm latent SHA at that position. bytes differ -> cause (a); bytes identical -> cause (b).",
+  "raw_pt_dumps": "DELETED after computing the comparison (kept only summary.json + flip_position_table.jsonl.gz)"
+}

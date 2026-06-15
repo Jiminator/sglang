@@ -5,7 +5,17 @@
 
 ## 1. Current state summary
 
-- **M0 COMPLETE; M1 COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 COMPLETE+VERIFIED (R21): TokenLabelTable DELETED (DEC-2), table-free is the one served default, capacity + AC-7 re-proven on the shipped path. M3 task7 IN PROGRESS (R22–R24): the table-free radix fixture gate-CODE is REPAIRED + AC-7 un-regressed; the cold/warm + recall SERVING evidence is being REPAIRED (the R23 runs overclaimed — Codex R23 — and are being re-run honestly in R24); edge probe + final artifact follow.**
+- **M0 COMPLETE; M1 COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 COMPLETE+VERIFIED (R21): TokenLabelTable DELETED (DEC-2), table-free is the one served default, capacity + AC-7 re-proven on the shipped path. M3 task7 IN PROGRESS (R22–R24): the table-free radix fixture gate-CODE is REPAIRED + AC-7 un-regressed; the HONEST corrected probes (R24) show radix-on is NOT cold/warm selection-equivalent (~2% top-2048 flip; L4096 recall −0.849pp) — root cause is inherent near-tie top-k cutoff sensitivity (cached fp8 bytes bit-identical), NOT a fixable byte bug (DEC-8). Owner DEC-9: R25 investigates determinism reduction before deciding radix-OFF-served vs accept-as-value-affecting.**
+- **R24 — task7: HONEST corrected radix probes (reversing the R23 overclaim) + root-cause characterization (owner DEC-8/DEC-9).**
+  De-overclaimed the ledgers (`0a22aff86`), then re-ran on the committed gate (`3de57d32b`): **P1 cold/warm
+  SELECTION equivalence FAIL** (IDENTICAL prompts, warm cached_tokens=3776 real hit, ALL 8 ranks, SELECTED-
+  INDEX diff; cross-rank bit-identity holds but cold(fresh)≠warm(cached), ~2% of top-2048 flip, 76/78
+  layers); **P2 recall radix-OFF vs radix-ON same-trials FAIL** (L4096 on−off −0.849pp; off 58.045% ==
+  frozen baseline). **Root cause (DEC-8):** the cached fp8-latent bytes are bit-identical to fresh (0/6080
+  cached positions differ); the flips are all at byte-identical positions → near-tie cutoff sensitivity,
+  not a byte/quant bug. AC-7 DSA default 410560 unchanged. **DEC-9 (owner): R25** attempts determinism
+  reduction (deterministic tie-break / score-reduce-order pinning); then radix-OFF-served vs accept. The
+  edge probe + final artifact + no-override boot are downstream. `runs/20260616_r24/`.
 - **R23 — task7: repaired the fail-closed gate (Codex R22). The R23 SERVING evidence was OVERCLAIMED (Codex R23) and is NOT valid.**
   Accepted gate-CODE fixes: validator requires each probe field `is True`; `compare_tablefree_selection`
   requires a positive `cached_tokens` + fails closed on zero/empty/short (prefix-only); operator runbook
