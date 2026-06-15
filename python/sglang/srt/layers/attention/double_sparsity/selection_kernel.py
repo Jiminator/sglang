@@ -856,6 +856,7 @@ def retrieve_topk_graph_safe(
     reduce_ca=None,
     score_reduce_bf16: bool = False,
     recall_oracle: bool = False,
+    score_capture: bool = False,
     scorer_norm: str = "off",
     head_agg: str = "max",
     anchor_mode: str = "off",
@@ -1052,6 +1053,14 @@ def retrieve_topk_graph_safe(
         and anchor_mode == "off"
     )
     topk_scores = scores_view
+    # DEC-9 scorepath exp-1: snapshot the PRE-reduce per-rank score (scores_view
+    # straight off the absorbed paged kernel, before the cross-TP all-reduce).
+    # The reduce mutates scores_view in place (copy_back) or returns a separate
+    # bf16 view, so the pre-reduce values must be cloned NOW. Eager-only,
+    # capture-guarded, off by default — one bool check on the hot path when off.
+    pre_reduce_snapshot = None
+    if score_capture and not torch.cuda.is_current_stream_capturing():
+        pre_reduce_snapshot = scores_view.detach().clone()
     if process_group is not None and torch.distributed.is_available() and torch.distributed.is_initialized():
         torch.cuda.nvtx.range_push("ds_score_allreduce")
         reduced = reduce_token_scores(
@@ -1166,6 +1175,28 @@ def retrieve_topk_graph_safe(
         )
         out_indices[:bs, :max_top_k].copy_(a_idx)
         out_lengths[:bs].copy_(a_len)
+
+    # Flag-gated SCORE capture (DEC-9 Q2 instrument): dump the absorbed score row
+    # the top-k just consumed. ``topk_scores`` is the AUTHORITATIVE input to the
+    # selection top-k — the bf16 reduced view when bf16 is authoritative, else the
+    # fp32 ``scores_view``; the dump upcasts to fp32 (bf16->fp32 is exact). Column
+    # t == logical position t (same domain as selection_capture). Eager decode
+    # only (the host copy is illegal under capture); off by default — one getattr
+    # here when off. Capture-guarded; this Python does not re-run on graph replay.
+    if score_capture and not torch.cuda.is_current_stream_capturing():
+        from sglang.srt.layers.attention.double_sparsity.score_capture import (
+            maybe_dump_score_capture,
+        )
+
+        maybe_dump_score_capture(
+            scores=topk_scores[:bs],
+            req_pool_indices=req_pool_indices,
+            seq_lens=seq_lens,
+            layer_id=layer_id,
+            pre_reduce_scores=(
+                pre_reduce_snapshot[:bs] if pre_reduce_snapshot is not None else None
+            ),
+        )
 
     # Flag-gated recall oracle on the production GPU decode path. ``scores_view``
     # is the all-reduced + per-request-masked score tensor (after the all_reduce

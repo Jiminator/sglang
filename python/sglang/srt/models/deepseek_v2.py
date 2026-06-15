@@ -2453,6 +2453,9 @@ class DeepseekV2AttentionMLA(
                         recall_oracle=bool(
                             getattr(_selector.config, "recall_oracle", False)
                         ),
+                        score_capture=bool(
+                            getattr(_selector.config, "score_capture", False)
+                        ),
                         scorer_norm=getattr(_selector.config, "scorer_norm", "off"),
                         head_agg=getattr(_selector.config, "head_agg", "max"),
                         anchor_mode=getattr(_selector.config, "anchor_mode", "off"),

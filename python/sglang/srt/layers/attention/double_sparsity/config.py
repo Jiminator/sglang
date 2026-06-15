@@ -30,6 +30,7 @@ _ALLOWED_FIELDS = {
     "recall_oracle",
     "selection_capture",
     "latent_capture",
+    "score_capture",
     "selector_width_buckets",
     "selector_width_overflow_policy",
     "score_reduce_dtype",
@@ -57,6 +58,13 @@ _ALLOWED_FIELDS = {
 #   illegal under graph capture). NOTE: this disables graph CAPTURE, but the
 #   selector still runs the graph-safe path (retrieve_topk_graph_safe) eagerly —
 #   the oracle hook lives there.
+# score_capture: config-borne enable for the per-(layer, decode-step) absorbed
+#   SCORE-row dump — the post-reduce / post-mask fp32 score tensor the selection
+#   top-k consumes (logical-position indexed, same domain as selection_capture).
+#   The Q2 instrument: compare cold-vs-warm scores at the positions that flip in
+#   the selection. Eager decode only; capture-safe no-op under graph capture.
+#   Off by default (one getattr on the hot path when off; byte-identical
+#   selection). Requires --disable-cuda-graph (the dump host-copies).
 # selection_capture: config-borne enable for the per-(layer, decode-step)
 #   selection dump (selected_indices + valid_lengths). When on, the graph state
 #   allocates per-layer capture buffers, the selector mirrors every layer's
@@ -131,6 +139,7 @@ class DoubleSparsityConfig:
     recall_oracle: bool = False
     selection_capture: bool = False
     latent_capture: bool = False
+    score_capture: bool = False
     selector_width_buckets: List[int] = field(
         default_factory=lambda: list(_DEFAULT_SELECTOR_WIDTH_BUCKETS)
     )
@@ -176,6 +185,11 @@ class DoubleSparsityConfig:
             raise ValueError(
                 f"Double Sparsity 'latent_capture' must be a boolean, "
                 f"got {self.latent_capture!r}."
+            )
+        if not isinstance(self.score_capture, bool):
+            raise ValueError(
+                f"Double Sparsity 'score_capture' must be a boolean, "
+                f"got {self.score_capture!r}."
             )
         if not isinstance(self.selector_width_buckets, list) or any(
             not isinstance(w, int) or isinstance(w, bool) or w <= 0
@@ -355,6 +369,7 @@ def parse_double_sparsity_config(payload: str) -> DoubleSparsityConfig:
         latent_capture=_coerce_bool(
             data.get("latent_capture", False), "latent_capture"
         ),
+        score_capture=_coerce_bool(data.get("score_capture", False), "score_capture"),
         selector_width_buckets=_coerce_width_buckets(
             data.get(
                 "selector_width_buckets", list(_DEFAULT_SELECTOR_WIDTH_BUCKETS)
