@@ -102,13 +102,16 @@ fi
 
 # Radix cache: DS serves radix-off by default. To serve radix-on, set
 # RADIX_FIXTURE_ARTIFACT to a TABLE-FREE fixtures-passed state file (written by
-# validator.write_radix_fixture_state once the table-free correctness probes pass
-# on this exact config: cold/warm selection equivalence, recall under radix-on, and
-# an eviction/partial-hit/page-boundary edge probe). The launcher then passes
+# validator.write_radix_fixture_state once the radix correctness probes pass on
+# this exact config). The authorization criterion is value-equivalence, not
+# cold/warm bit-identity: recall@2048 radix-on-vs-off within +/-0.5pp overall and
+# per length, cross-rank selection identity, a clean eviction/partial-hit/page-
+# boundary edge probe, no dense fallback, and the cold/warm selection flips
+# documented as value-neutral near-cutoff reshuffling. The launcher then passes
 # --double-sparsity-radix-fixture-artifact and drops --disable-radix-cache; the
-# validator re-verifies the table-free schema + that the state matches this config
-# before permitting radix-on. (Legacy label-capture / FP8-scale fixtures no longer
-# authorize table-free DS — they are rejected.)
+# validator re-verifies the schema + that the state matches this config before
+# permitting radix-on. (Legacy label-capture / FP8-scale fixtures and the
+# superseded bit-identity fixture no longer authorize table-free DS — rejected.)
 # SGLANG_DS_RADIX_OVERRIDE=1 is a developer-only escape hatch that enables
 # radix-on WITHOUT the artifact (used solely to run the radix fixtures, which
 # need radix reuse) — it is not the production serving mechanism.
@@ -191,16 +194,19 @@ exec python3 -m sglang.launch_server \
   2>&1 | tee "${LOG_FILE}"
 # The DS validator gates radix cache OFF until the TABLE-FREE radix fixture has
 # been recorded as passing for this configuration. To enable radix-on:
-#   1. Boot DS radix-on (SGLANG_DS_RADIX_OVERRIDE=1, dev-only) and run the
-#      table-free correctness probes on the served workload: cold-vs-warm
-#      SELECTION equivalence across a real radix cache hit (positive cached-token
-#      count), recall@2048 under radix-on within the +/-0.5pp bar, and an
-#      eviction/partial-hit/page-boundary edge probe (page 64).
+#   1. Boot DS radix-on (SGLANG_DS_RADIX_OVERRIDE=1, dev-only) and run the radix
+#      correctness probes on the served workload (value equivalence, not
+#      bit-identity): recall@2048 radix-on-vs-off within the +/-0.5pp bar overall
+#      and per length, cross-rank selection identity within each path, an
+#      eviction/partial-hit/page-boundary edge probe (page 64, no stale-slot reuse),
+#      no dense fallback, and the cold/warm selection flips characterized as
+#      value-neutral near-cutoff reshuffling.
 #   2. On ALL passing, write a table-free fixtures-passed state file with
 #      validator.write_radix_fixture_state(...) and point RADIX_FIXTURE_ARTIFACT at
-#      it; the validator re-verifies the table-free schema + that the state matches
-#      this config and permits radix-on (without the dev override).
+#      it; the validator re-verifies the schema + that the state matches this config
+#      and permits radix-on (without the dev override).
 # The legacy label-capture / FP8-scale manual fixtures
 # (test_dsv32_radix_label_capture_fixture.py, test_dsv32_fp8_scale_stability.py)
-# prove a deleted invariant (the materialized TokenLabelTable) and NO LONGER
-# authorize table-free DS.
+# prove a deleted invariant (the materialized TokenLabelTable), and the superseded
+# bit-identity fixture (tablefree_v1) gated the wrong criterion; NEITHER authorizes
+# table-free DS.

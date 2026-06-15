@@ -589,9 +589,11 @@ class TestValidator(unittest.TestCase):
             write_radix_fixture_state(
                 state,
                 server_args=self._radix_flip_args(mask),
-                cold_warm_selection_equivalence_passed=True,
-                recall_radixon_passed=True,
+                recall_equivalence_passed=True,
+                cross_rank_selection_identity_passed=True,
                 edge_probe_passed=True,
+                no_dense_fallback_passed=True,
+                cold_warm_flips_value_neutral_documented=True,
             )
             os.environ.pop("SGLANG_DS_RADIX_OVERRIDE", None)
             os.environ["SGLANG_DS_ALLOW_PLACEHOLDER"] = "1"
@@ -632,9 +634,11 @@ class TestValidator(unittest.TestCase):
             write_radix_fixture_state(
                 state,
                 server_args=self._radix_flip_args(mask, tp_size=4),
-                cold_warm_selection_equivalence_passed=True,
-                recall_radixon_passed=True,
+                recall_equivalence_passed=True,
+                cross_rank_selection_identity_passed=True,
                 edge_probe_passed=True,
+                no_dense_fallback_passed=True,
+                cold_warm_flips_value_neutral_documented=True,
             )
             # ... but this boot is tp_size=8.
             args = self._radix_flip_args(mask, artifact=state, tp_size=8)
@@ -667,9 +671,11 @@ class TestValidator(unittest.TestCase):
             write_radix_fixture_state(
                 state,
                 server_args=self._radix_flip_args(mask),
-                cold_warm_selection_equivalence_passed=True,
-                recall_radixon_passed=False,
+                recall_equivalence_passed=False,
+                cross_rank_selection_identity_passed=True,
                 edge_probe_passed=True,
+                no_dense_fallback_passed=True,
+                cold_warm_flips_value_neutral_documented=True,
             )
             args = self._radix_flip_args(mask, artifact=state)
             with self.assertRaises(ValueError) as ctx:
@@ -721,6 +727,58 @@ class TestValidator(unittest.TestCase):
                 getattr(args, "_double_sparsity_radix_fixture_passed", False)
             )
 
+    def test_apply_radix_fixture_artifact_rejects_superseded_bitidentity_schema(self):
+        """The v1 table-free schema gated cold/warm SELECTED-INDEX bit-identity, which
+        is not the radix authorization criterion (a cache hit changes the decode query
+        upstream of DS; the flips are value-neutral near-cutoff reshuffling). It must
+        NOT authorize radix-on — rejected with a regenerate message even when the
+        config fingerprint matches."""
+        from sglang.srt.layers.attention.double_sparsity.validator import (
+            apply_radix_fixture_artifact,
+            radix_fixture_config_fingerprint,
+            RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA_V1,
+        )
+        from sglang.srt.layers.attention.double_sparsity.channel_mask import (
+            save_channel_mask,
+        )
+        import json as _json, tempfile, os as _os
+
+        sel_t = torch.randint(0, 128, (2, 4, 16), dtype=torch.int32)
+        w_t = torch.randn(2, 4, 16, dtype=torch.float32)
+        with tempfile.TemporaryDirectory() as tmp:
+            mask = _os.path.join(tmp, "cm.safetensors")
+            save_channel_mask(
+                mask,
+                sel_t,
+                w_t,
+                dtype="fp8_e4m3",
+                head_dim=128,
+                page_size=64,
+                label_dim=16,
+                created_at="2026-05-20T00:00:00Z",
+            )
+            state = _os.path.join(tmp, "v1_state.json")
+            # v1 artifact with a MATCHING config fingerprint + all v1 fields true —
+            # refused purely on the (superseded) schema kind, not on the fields.
+            v1 = {
+                "schema": RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA_V1,
+                "cold_warm_selection_equivalence_passed": True,
+                "recall_radixon_passed": True,
+                "edge_probe_passed": True,
+                "config": radix_fixture_config_fingerprint(self._radix_flip_args(mask)),
+            }
+            with open(state, "w") as fh:
+                _json.dump(v1, fh)
+            args = self._radix_flip_args(mask, artifact=state)
+            with self.assertRaises(ValueError) as ctx:
+                apply_radix_fixture_artifact(args)
+            msg = str(ctx.exception)
+            self.assertIn("superseded", msg)
+            self.assertIn("bit-identity", msg)
+            self.assertFalse(
+                getattr(args, "_double_sparsity_radix_fixture_passed", False)
+            )
+
     def test_apply_radix_fixture_artifact_rejects_truthy_nonbool_pass_fields(self):
         """Fail-closed: a table-free artifact whose pass fields are truthy NON-bools
         (the string "false", a non-zero int) or missing must NOT authorize radix-on
@@ -752,16 +810,18 @@ class TestValidator(unittest.TestCase):
             fp = radix_fixture_config_fingerprint(self._radix_flip_args(mask))
             base = {
                 "schema": RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA,
-                "cold_warm_selection_equivalence_passed": True,
-                "recall_radixon_passed": True,
+                "recall_equivalence_passed": True,
+                "cross_rank_selection_identity_passed": True,
                 "edge_probe_passed": True,
+                "no_dense_fallback_passed": True,
+                "cold_warm_flips_value_neutral_documented": True,
                 "config": fp,
             }
             p = _os.path.join(tmp, "state.json")
             # Each truthy non-bool variant must REFUSE.
             for bad in (
-                {"cold_warm_selection_equivalence_passed": "false"},  # truthy str
-                {"recall_radixon_passed": 1},  # truthy int, not bool
+                {"recall_equivalence_passed": "false"},  # truthy str
+                {"cross_rank_selection_identity_passed": 1},  # truthy int, not bool
                 {"edge_probe_passed": "true"},  # truthy str, not bool
             ):
                 state = dict(base)

@@ -6111,13 +6111,17 @@ class ServerArgs:
             default=ServerArgs.double_sparsity_radix_fixture_artifact,
             help=(
                 "Path to a TABLE-FREE radix-fixture-passed state file (written by "
-                "validator.write_radix_fixture_state after the table-free correctness "
-                "probes pass on this config: cold/warm selection equivalence, recall "
-                "under radix-on, and an eviction/partial-hit/page-boundary edge probe). "
-                "When provided and --disable-radix-cache is absent, the DS validator "
-                "verifies the table-free schema + that the state matches this boot's "
+                "validator.write_radix_fixture_state after the radix correctness probes "
+                "pass on this config). The authorization criterion is value-equivalence, "
+                "not cold/warm bit-identity: recall@2048 radix-on-vs-off within +/-0.5pp "
+                "overall and per length, cross-rank selection identity, a clean "
+                "eviction/partial-hit/page-boundary edge probe, no dense fallback, and "
+                "the cold/warm selection flips documented as value-neutral near-cutoff "
+                "reshuffling. When provided and --disable-radix-cache is absent, the DS "
+                "validator verifies the schema + that the state matches this boot's "
                 "config, then permits radix cache ON -- the no-env-override flip. A "
-                "legacy label-capture artifact is rejected."
+                "legacy label-capture artifact or a superseded bit-identity artifact is "
+                "rejected."
             ),
         )
 

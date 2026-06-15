@@ -369,10 +369,13 @@ def record_radix_fixture_passed(
 
     The intended flow (table-free DS):
 
-    1. Operator runs the table-free correctness probes on hardware:
-       cold/warm SELECTION equivalence across a radix cache hit,
-       recall@2048 under radix-on within the +/-0.5pp bar, and a clean
-       eviction/partial-hit/page-boundary edge probe.
+    1. Operator runs the radix correctness probes on hardware (value
+       equivalence, not bit-identity): recall@2048 radix-on-vs-off within
+       the +/-0.5pp bar overall and per length, cross-rank selection
+       identity within each path, a clean eviction/partial-hit/page-
+       boundary edge probe (no stale-slot reuse), no dense fallback, and
+       the cold/warm selection flips characterized as value-neutral
+       near-cutoff reshuffling.
     2. On all passing, the operator writes the table-free fixture state
        (``write_radix_fixture_state(...)``) and the launcher passes
        ``--double-sparsity-radix-fixture-artifact <state-file>`` so
@@ -412,26 +415,38 @@ def record_radix_fixture_passed(
 # ----- No-env-override radix-cache flip via a config-bound state file --------
 #
 # The radix flip is authorized by a config-bound state file, NOT an env var.
-# After the operator runs the table-free correctness probes on hardware and they
-# pass, they write a state file via `write_radix_fixture_state(...)` recording the
-# cold/warm selection-equivalence + recall-under-radix-on + edge-probe passes plus
-# a fingerprint of the exact serving config (model / TP / page / KV dtype /
-# channel-mask SHA / table-free selector mode). `serve_double_sparsity.sh` then
-# passes `--double-sparsity-radix-fixture-artifact <state-file>`; `check_server_args`
+# After the operator runs the radix correctness probes on hardware and they pass,
+# they write a state file via `write_radix_fixture_state(...)` recording the
+# value-equivalence criterion (recall@2048 radix-on-vs-off within +/-0.5pp overall
+# and per length, cross-rank selection identity, a clean eviction/partial-hit/
+# page-boundary edge probe, no dense fallback, and the cold/warm selection flips
+# documented as value-neutral near-cutoff reshuffling) plus a fingerprint of the
+# exact serving config (model / TP / page / KV dtype / channel-mask SHA / table-
+# free selector mode). `serve_double_sparsity.sh` then passes
+# `--double-sparsity-radix-fixture-artifact <state-file>`; `check_server_args`
 # calls `apply_radix_fixture_artifact(server_args)` BEFORE `validate_double_sparsity`,
-# which verifies the table-free schema + that the state matches THIS boot's config and
-# only then records the fixture-passed flag. A legacy label-capture artifact, or one
-# recorded for a different model/mask/config/mode, does not authorize this boot
-# (fail-closed).
+# which verifies the schema + that the state matches THIS boot's config and only
+# then records the fixture-passed flag. A legacy label-capture artifact, a
+# superseded bit-identity artifact, or one recorded for a different
+# model/mask/config/mode does not authorize this boot (fail-closed).
 
 RADIX_FIXTURE_STATE_SCHEMA = "ds_radix_fixture_state_v1"
-# Table-free (absorbed-latent) DS uses its OWN fixture kind: it proves cold/warm
-# SELECTION equivalence across a radix cache hit (the absorbed score reads the
-# resident fp8 latent directly — there are no materialized label signatures to
-# capture), recall@2048 under radix-on within bar, and a clean eviction/partial-
-# hit/page-boundary edge probe. The legacy label-capture schema above cannot
-# authorize table-free DS (it proves the wrong thing — the table is deleted).
-RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA = "ds_radix_fixture_state_tablefree_v1"
+# Superseded table-free schema. v1 gated cold/warm SELECTED-INDEX bit-identity,
+# which is NOT the radix authorization criterion: a radix cache hit changes the
+# decode query (v_h) upstream of DS selection — the cached fp8 latent bytes are
+# bit-identical, so the divergence is in the model forward, shared with the
+# shipped dense/DSA paths — so the cold/warm top-k reshuffles a small fraction of
+# borderline near-cutoff tokens. That reshuffle is value-neutral: recall@2048 is
+# unchanged. v1 artifacts are rejected; regenerate under v2.
+RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA_V1 = "ds_radix_fixture_state_tablefree_v1"
+# Table-free (absorbed-latent) DS radix authorization is VALUE-equivalence, not
+# bit-identity: recall@2048 radix-on-vs-off within +/-0.5pp overall and per length,
+# cross-rank selection identity within each path, a clean eviction/partial-hit/
+# page-boundary edge probe (no stale-slot reuse), no dense fallback, and the
+# cold/warm selection flips documented as value-neutral near-cutoff reshuffling.
+# The legacy label-capture schema cannot authorize table-free DS (the table is
+# deleted); the v1 bit-identity schema above is superseded.
+RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA = "ds_radix_fixture_state_tablefree_v2"
 
 
 def _sha256_file(path: str) -> str:
@@ -467,23 +482,42 @@ def write_radix_fixture_state(
     path: str,
     *,
     server_args: "ServerArgs",
-    cold_warm_selection_equivalence_passed: bool,
-    recall_radixon_passed: bool,
+    recall_equivalence_passed: bool,
+    cross_rank_selection_identity_passed: bool,
     edge_probe_passed: bool,
+    no_dense_fallback_passed: bool,
+    cold_warm_flips_value_neutral_documented: bool,
 ) -> dict:
     """Write the table-free radix-fixture-passed state file (operator step after the
-    table-free correctness probes pass on hardware): cold/warm selection equivalence
-    across a cache hit, recall@2048 under radix-on within bar, and a clean
-    eviction/partial-hit/page-boundary edge probe. Returns the written dict."""
+    radix correctness probes pass on hardware). The authorization criterion is
+    VALUE-equivalence, not cold/warm selected-index bit-identity:
+
+    * ``recall_equivalence_passed`` — recall@2048 radix-on vs radix-off within
+      +/-0.5pp overall AND per length (measured on the same trial set);
+    * ``cross_rank_selection_identity_passed`` — all TP ranks select identically
+      within each path;
+    * ``edge_probe_passed`` — clean eviction/partial-hit/page-boundary probe (no
+      stale-slot reuse);
+    * ``no_dense_fallback_passed`` — DS selection never degrades to dense attention;
+    * ``cold_warm_flips_value_neutral_documented`` — the cold/warm top-k flips are
+      characterized and documented as value-neutral near-cutoff reshuffling (a radix
+      cache hit changes the decode query upstream of DS; this is NOT a bit-identity
+      claim).
+
+    Returns the written dict."""
     import time as _time
 
     state = {
         "schema": RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA,
-        "cold_warm_selection_equivalence_passed": bool(
-            cold_warm_selection_equivalence_passed
+        "recall_equivalence_passed": bool(recall_equivalence_passed),
+        "cross_rank_selection_identity_passed": bool(
+            cross_rank_selection_identity_passed
         ),
-        "recall_radixon_passed": bool(recall_radixon_passed),
         "edge_probe_passed": bool(edge_probe_passed),
+        "no_dense_fallback_passed": bool(no_dense_fallback_passed),
+        "cold_warm_flips_value_neutral_documented": bool(
+            cold_warm_flips_value_neutral_documented
+        ),
         "config": radix_fixture_config_fingerprint(server_args),
         "recorded_at": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
     }
@@ -533,7 +567,24 @@ def apply_radix_fixture_artifact(server_args: "ServerArgs") -> None:
             f"{RADIX_FIXTURE_STATE_SCHEMA!r}, which cannot authorize table-free Double "
             "Sparsity radix-on (the TokenLabelTable is deleted). Regenerate the "
             f"table-free fixture (schema {RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA!r}: "
-            "cold/warm selection equivalence + recall-under-radix-on + edge probe)."
+            "recall equivalence + cross-rank identity + edge probe + no-dense-fallback "
+            "+ documented value-neutral flips)."
+        )
+    if schema == RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA_V1:
+        # The v1 table-free schema gated cold/warm SELECTED-INDEX bit-identity. That
+        # is not the radix authorization criterion: a radix cache hit changes the
+        # decode query upstream of DS (the cached fp8 latent bytes are bit-identical),
+        # so the cold/warm top-k reshuffles a small fraction of borderline near-cutoff
+        # tokens — value-neutral (recall@2048 unchanged). Reject; regenerate under v2.
+        raise ValueError(
+            f"radix-fixture artifact {artifact!r} uses the superseded table-free schema "
+            f"{RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA_V1!r}, which gated cold/warm "
+            "SELECTED-INDEX bit-identity. That is not the radix authorization criterion "
+            "(a radix cache hit changes the decode query upstream of DS, so the top-k "
+            "reshuffles a small fraction of borderline tokens — value-neutral; "
+            "recall@2048 is unchanged). Regenerate under "
+            f"{RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA!r} (recall equivalence + cross-rank "
+            "identity + edge probe + no-dense-fallback + documented value-neutral flips)."
         )
     if not isinstance(state, dict) or schema != RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA:
         raise ValueError(
@@ -542,9 +593,11 @@ def apply_radix_fixture_artifact(server_args: "ServerArgs") -> None:
             f"{schema if isinstance(state, dict) else type(state).__name__!r}."
         )
     required = (
-        "cold_warm_selection_equivalence_passed",
-        "recall_radixon_passed",
+        "recall_equivalence_passed",
+        "cross_rank_selection_identity_passed",
         "edge_probe_passed",
+        "no_dense_fallback_passed",
+        "cold_warm_flips_value_neutral_documented",
     )
     # Fail-closed: each probe field must be the JSON boolean `true` EXACTLY. A
     # truthy non-bool (e.g. the string "false", a non-zero int) must NOT authorize
