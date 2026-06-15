@@ -5,17 +5,17 @@
 
 ## 1. Current state summary
 
-- **M0 COMPLETE; M1 COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 COMPLETE+VERIFIED (R21): TokenLabelTable DELETED (DEC-2), table-free is the one served default, capacity + AC-7 re-proven on the shipped path. M3 task7 IN PROGRESS (R22–R23): table-free radix fixture gate REPAIRED + cold/warm + recall + AC-7 validated live; the edge probe + final artifact remain (R24).**
-- **R23 — task7: repaired the fail-closed gate (Codex R22) + ran the table-free radix serving validation.**
-  Fixed two false-pass bugs (validator requires each probe field `is True`; `compare_tablefree_selection`
-  requires a positive `cached_tokens` + fails closed on zero/empty/short, prefix-only); updated the
-  operator runbook (table-free flow; legacy label-capture/FP8 marked non-authorizing); added the
-  config-borne `latent_capture` diagnostic (default-off, capture-safe). **SERVING on the sound gate:**
-  cold/warm SELECTION equivalence **PASS** (real radix hit `cached_tokens=3776`, comparator ok over 78
-  layers × 3776 cached-prefix positions); recall@2048 under radix-on **overall PASS** (−0.059pp); **AC-7**
-  DSA default 410560 unchanged. 384 DS suite; provenance ties evidence to `4a1579cbe`
-  (`runs/20260615_r23/`). **Remaining task7 (R24):** the eviction/partial-hit/page-boundary edge probe +
-  the final authorizing artifact (the honest this-session attestation has `edge_probe=false` → fails closed).
+- **M0 COMPLETE; M1 COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 COMPLETE+VERIFIED (R21): TokenLabelTable DELETED (DEC-2), table-free is the one served default, capacity + AC-7 re-proven on the shipped path. M3 task7 IN PROGRESS (R22–R24): the table-free radix fixture gate-CODE is REPAIRED + AC-7 un-regressed; the cold/warm + recall SERVING evidence is being REPAIRED (the R23 runs overclaimed — Codex R23 — and are being re-run honestly in R24); edge probe + final artifact follow.**
+- **R23 — task7: repaired the fail-closed gate (Codex R22). The R23 SERVING evidence was OVERCLAIMED (Codex R23) and is NOT valid.**
+  Accepted gate-CODE fixes: validator requires each probe field `is True`; `compare_tablefree_selection`
+  requires a positive `cached_tokens` + fails closed on zero/empty/short (prefix-only); operator runbook
+  → table-free flow (legacy label-capture/FP8 marked non-authorizing); config-borne `latent_capture`
+  diagnostic (default-off, capture-safe). **NOT valid (R24 repair):** the cold/warm probe compared only
+  latent SHA (not selected indices) with DIFFERENT cold/warm suffixes and covered only tp_rank=0 while
+  claiming 8 ranks; recall-under-radix-on per-length bins (L4096 −0.849pp, L16384 +0.673pp) were OUTSIDE
+  ±0.5pp yet relabeled PASS. **Only AC-7 stands** (DSA default 410560 unchanged). 384 DS suite. R24
+  re-runs P1 (identical prompts + all 8 ranks + selected-index diff) and P2 (per-length fail-closed,
+  radix-on vs radix-off same-trials); commits `49a401a72`/`4a1579cbe`/`d8d65d88e`; `runs/20260615_r23/`.
 - **R22 — task7 slice 1: table-free radix fixture kind + fail-closed validator gate + cold/warm comparator (CPU foundation; Codex R21 queued #1).**
   `validator.py`: new `ds_radix_fixture_state_tablefree_v1` schema; `apply_radix_fixture_artifact` REJECTS
   the legacy `ds_radix_fixture_state_v1` label-capture schema (regenerate message) + REQUIRES the table-free
