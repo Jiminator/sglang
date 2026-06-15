@@ -19,14 +19,6 @@ from sglang.srt.layers.attention.double_sparsity.config import (
     DoubleSparsityConfig,
     parse_double_sparsity_config,
 )
-from sglang.srt.layers.attention.double_sparsity.token_label_table import (
-    TokenLabelTable,
-    allocate_token_label_table,
-    estimate_hbm_bytes,
-)
-from sglang.srt.layers.attention.double_sparsity.token_label_write import (
-    token_label_write,
-)
 from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
     retrieve_topk,
 )
@@ -41,17 +33,13 @@ __all__ = [
     "ChannelMask",
     "DoubleSparsityConfig",
     "DoubleSparsitySelector",
-    "TokenLabelTable",
     "SanityProbeResult",
-    "allocate_token_label_table",
-    "estimate_hbm_bytes",
     "load_channel_mask",
     "parse_double_sparsity_config",
     "retrieve_topk",
     "save_channel_mask",
     "slice_per_rank",
     "startup_sanity_probe",
-    "token_label_write",
     "validate_against_runtime",
     "validate_double_sparsity",
     "verify_bind_shapes",

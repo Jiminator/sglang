@@ -1,9 +1,8 @@
 """Channel-mask file format, loader, validator, and startup sanity probe.
 
 The channel mask file is produced offline by :mod:`calibrate` and consumed at
-server startup. It freezes the per-(layer, head) projection that the
-:mod:`token_label_write` Triton kernel uses to compress each KV token into
-a ``label_dim``-wide label for runtime top-K selection.
+server startup. It freezes the per-(layer, head) channel projection the runtime
+selector applies to score each KV token for top-K selection.
 
 Schema (``safetensors``):
 
@@ -549,12 +548,12 @@ def startup_sanity_probe(
 ) -> SanityProbeResult:
     """NIAH-min sanity probe: one needle, one short token haystack.
 
-    Constructs a deterministic haystack of ``haystack_pages * page_size``
-    token slots, plants a "needle" token signal at token position
-    ``needle_page * page_size``, runs the selector, and asserts the needle
-    token lands in ``selected_indices``. With the placeholder selector the
-    probe is inconclusive (returns ``passed=False, skipped_reason=...``) —
-    production serving is independently refused by the placeholder-guard.
+    With the placeholder selector the probe is inconclusive (returns
+    ``passed=False, skipped_reason=...``) — production serving is independently
+    refused by the placeholder-guard. A bound real selector scores the resident
+    MLA latent directly (no synthetic signature store to plant a needle in), so
+    the probe reports it as not applicable; the load-bearing recall diagnostic is
+    the config-borne recall oracle.
     """
 
     if needle_page >= haystack_pages or needle_page < 0:
@@ -581,112 +580,14 @@ def startup_sanity_probe(
             skipped_reason="placeholder_selector",
         )
 
-    # Real-selector path: plant a needle directly in the token-label
-    # table (label-dim 0 set high at `needle_page * page_size`, low at the
-    # others), build a query that projects onto label-dim 0 via the loaded
-    # channel mask, and ask the selector to retrieve a SMALL top-K. The probe
-    # must discriminate the needle from the haystack — a trivial
-    # top_k >= haystack_tokens passes by inclusion alone, so this overrides
-    # max_top_k to a sharp value.
-    table = getattr(selector, "token_label_table", None)
-    if table is None:
-        msg = (
-            "channel mask sanity probe needs a bound token_label_table "
-            "on the selector; got None. Call bind_runtime_data first."
-        )
-        if abort_on_placeholder:
-            raise RuntimeError(msg)
-        logger.warning(msg)
-        return SanityProbeResult(
-            passed=False,
-            score=0.0,
-            needle_position=needle_page * page_size,
-            selected_indices=None,
-            skipped_reason="no_token_label_table",
-        )
-
-    from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
-        retrieve_topk_via_labels,
-    )
-
-    device = table.signatures.device
-    num_heads = int(getattr(selector, "num_local_heads", table.signatures.shape[2]))
-    head_dim = int(getattr(selector, "head_dim", 128))
-    layer_id = 0
-    haystack_tokens = haystack_pages * page_size
-    needle_token = needle_page * page_size
-
-    # Move per-layer mask slices onto the table device.
-    sel_layer = mask.channel_selection[layer_id].to(device)  # [H, label_dim] int32
-    w_layer = mask.channel_weights[layer_id].to(device)  # [H, label_dim] fp32
-
-    # Snapshot the layer's signatures and written so we can restore on exit.
-    is_compact = table.scales is not None
-    sig_snapshot = table.signatures[layer_id, :haystack_tokens].clone()
-    written_snapshot = table.written[layer_id, :haystack_tokens].clone()
-    scale_snapshot = (
-        table.scales[layer_id, :haystack_tokens].clone() if is_compact else None
-    )
-
-    try:
-        # Plant: weak baseline along label-dim 0, strong signal at needle_token.
-        # In the int8 compact path the signatures carry equal magnitude and the
-        # discrimination lives entirely in the per-vector scale, so the probe
-        # genuinely exercises the dequant-at-scoring path — a probe that ignored
-        # scales would see a flat int8 field and fail to find the needle.
-        table.signatures[layer_id, :haystack_tokens].zero_()
-        if is_compact:
-            table.signatures[layer_id, :haystack_tokens, :, 0] = 1  # equal int8 magnitude
-            table.scales[layer_id, :haystack_tokens] = 0.1
-            table.scales[layer_id, needle_token] = 10.0
-        else:
-            table.signatures[layer_id, :haystack_tokens, :, 0] = 0.1
-            table.signatures[layer_id, needle_token, :, 0] = 10.0
-        table.written[layer_id, :haystack_tokens] = True
-
-        # Build a query that, when projected through (sel_layer, w_layer),
-        # has its first label-dim slot equal to ~1.0 per head.
-        queries = torch.zeros(1, num_heads, head_dim, device=device, dtype=torch.float32)
-        for h in range(min(num_heads, sel_layer.shape[0])):
-            ch_idx = int(sel_layer[h, 0].item())
-            if ch_idx >= head_dim:
-                continue
-            weight = float(w_layer[h, 0].item())
-            queries[0, h, ch_idx] = 1.0 / weight if abs(weight) > 1e-6 else 1.0
-
-        # Sharp top-K so the probe must discriminate.
-        probe_top_k = max(1, haystack_tokens // 4)
-        per_request_valid = torch.zeros(
-            1, table.signatures.shape[1], dtype=torch.bool, device=device
-        )
-        per_request_valid[0, :haystack_tokens] = True
-
-        selected_indices, valid_lengths = retrieve_topk_via_labels(
-            queries=queries,
-            token_signatures=table.signatures,
-            written=table.written,
-            channel_selection=mask.channel_selection.to(device),
-            channel_weights=mask.channel_weights.to(device),
-            layer_id=layer_id,
-            max_top_k=probe_top_k,
-            per_request_valid=per_request_valid,
-            token_scales=table.scales,
-        )
-    finally:
-        table.signatures[layer_id, :haystack_tokens] = sig_snapshot
-        table.written[layer_id, :haystack_tokens] = written_snapshot
-        if is_compact:
-            table.scales[layer_id, :haystack_tokens] = scale_snapshot
-
-    row = selected_indices[0]
-    length = int(valid_lengths[0])
-    unpadded = [int(v) for v in row[:length].tolist() if v >= 0]
-    passed = needle_token in unpadded
-    score = 1.0 if passed else 0.0
+    # A bound real selector scores the resident MLA latent directly — there is
+    # no synthetic signature store to plant a needle in, so this probe cannot
+    # construct a discriminating fixture. Report not-applicable; the recall
+    # oracle is the load-bearing standalone diagnostic.
     return SanityProbeResult(
-        passed=passed,
-        score=score,
-        needle_position=needle_token,
-        selected_indices=selected_indices,
-        skipped_reason=None,
+        passed=False,
+        score=0.0,
+        needle_position=needle_page * page_size,
+        selected_indices=None,
+        skipped_reason="real_selector_scores_resident_latent",
     )

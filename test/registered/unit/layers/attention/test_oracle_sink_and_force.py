@@ -175,25 +175,23 @@ class TestOracleOffEquivalence(unittest.TestCase):
         self.assertTrue(torch.equal(vl_a, vl_b))
 
 
-class TestRetrieveTopkOracleWiring(unittest.TestCase):
-    """task1: the flag-gated oracle hook is wired into retrieve_topk_via_labels
-    and (a) is a no-op when off, (b) records without perturbing selection."""
+class TestRecallOracleHookWiring(unittest.TestCase):
+    """The flag-gated recall-oracle hook the selector calls each decode step is
+    (a) a no-op when off, (b) read-only (never perturbs the selection), and
+    (c) fail-closed with an explicit marker on a missing trial / out-of-range
+    span / payload exception."""
 
     def setUp(self):
         torch.manual_seed(0)
         self._prev = os.environ.get("SGLANG_DS_RECALL_ORACLE")
         sink_mod.reset_sink_for_testing(None)
         sink_mod.clear_active_trial()
-        # Minimal valid physical-mode inputs (bs=1, H=2, head_dim=4, T=8, label_dim=2).
-        self.kw = dict(
-            queries=torch.randn(1, 2, 4),
-            token_signatures=torch.randn(1, 8, 2, 2),
-            written=torch.ones(1, 8, dtype=torch.bool),
-            channel_selection=torch.tensor([[[0, 1], [2, 3]]], dtype=torch.int32),
-            channel_weights=torch.ones(1, 2, 2, dtype=torch.float32),
-            layer_id=0,
-            max_top_k=4,
+        # bs=1, max_tokens=8 selection scores (the resident-latent absorbed score
+        # the production selector hands the hook).
+        self.scores = torch.tensor(
+            [[0.1, 9.0, 0.2, 0.3, 8.0, 0.4, 0.5, 0.6]], dtype=torch.float32
         )
+        self.max_top_k = 4
 
     def tearDown(self):
         if self._prev is None:
@@ -203,12 +201,24 @@ class TestRetrieveTopkOracleWiring(unittest.TestCase):
         sink_mod.reset_sink_for_testing(None)
         sink_mod.clear_active_trial()
 
-    def _run(self):
+    def _run(self, *, recall_oracle=False):
         from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
-            retrieve_topk_via_labels,
+            _maybe_record_recall_oracle,
+            select_topk_sequence_order,
         )
 
-        return retrieve_topk_via_labels(**self.kw)
+        sel, vl = select_topk_sequence_order(
+            self.scores.clone(), max_top_k=self.max_top_k
+        )
+        _maybe_record_recall_oracle(
+            self.scores,
+            sel,
+            0,
+            self.max_top_k,
+            process_group=None,
+            recall_oracle=recall_oracle,
+        )
+        return sel, vl
 
     def _baseline_off(self):
         os.environ.pop("SGLANG_DS_RECALL_ORACLE", None)
@@ -228,7 +238,7 @@ class TestRetrieveTopkOracleWiring(unittest.TestCase):
         sink_mod.set_active_trial("req-1", 3, [2, 5])
         sel_on, vl_on = self._run()
 
-        # selection is byte-identical with the oracle on (hook does not perturb)
+        # the hook is read-only: selection byte-identical with the oracle on
         self.assertTrue(torch.equal(sel_off, sel_on))
         self.assertTrue(torch.equal(vl_off, vl_on))
         # and a keyed record was written for the active trial
@@ -242,12 +252,12 @@ class TestRetrieveTopkOracleWiring(unittest.TestCase):
         self.assertIn("needle_worst_rank", r)
         self.assertIn("recall_at_k", r)
         self.assertEqual(r["index_topk"], 4)
-        # invariant holds for the wired call (recall@index_topk == selected_contains_needle)
+        # invariant holds (recall@index_topk == selected_contains_needle)
         self.assertTrue(r["recall_at_index_topk_matches_selected"])
 
     def test_oracle_on_without_active_trial_records_failure(self):
         # Fail-closed: enabled but no trial -> explicit failure marker (NOT a
-        # silent no-op). The selection is still byte-identical (no perturbation).
+        # silent no-op). The selection is still byte-identical (read-only hook).
         sel_off, vl_off = self._baseline_off()
         os.environ["SGLANG_DS_RECALL_ORACLE"] = "1"
         sink_mod.reset_sink_for_testing(None)
@@ -333,19 +343,22 @@ class TestConfigBorneOracleActivation(unittest.TestCase):
 
     def test_recall_oracle_param_activates_without_env(self):
         from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
-            retrieve_topk_via_labels,
+            _maybe_record_recall_oracle,
+            select_topk_sequence_order,
         )
 
         self.assertFalse(sink_mod.oracle_enabled())  # env off, config not latched
         sink_mod.set_active_trial("req-cfg", 7, [2, 5])
-        retrieve_topk_via_labels(
-            queries=torch.randn(1, 2, 4),
-            token_signatures=torch.randn(1, 8, 2, 2),
-            written=torch.ones(1, 8, dtype=torch.bool),
-            channel_selection=torch.tensor([[[0, 1], [2, 3]]], dtype=torch.int32),
-            channel_weights=torch.ones(1, 2, 2, dtype=torch.float32),
-            layer_id=0,
-            max_top_k=4,
+        scores = torch.tensor(
+            [[0.1, 9.0, 0.2, 0.3, 8.0, 0.4, 0.5, 0.6]], dtype=torch.float32
+        )
+        sel, _ = select_topk_sequence_order(scores.clone(), max_top_k=4)
+        _maybe_record_recall_oracle(
+            scores,
+            sel,
+            0,
+            4,
+            process_group=None,
             recall_oracle=True,  # config-borne enable
         )
         self.assertTrue(sink_mod.oracle_enabled())  # latched on

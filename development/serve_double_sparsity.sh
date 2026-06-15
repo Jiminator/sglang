@@ -40,18 +40,11 @@ PAGE_SIZE="${PAGE_SIZE:-64}"
 CHANNEL_MASK_PATH="${CHANNEL_MASK_PATH:-/models/dsv32-fp8-channel-mask.safetensors}"
 TOP_K="${TOP_K:-2048}"
 DEVICE_BUFFER_SIZE="${DEVICE_BUFFER_SIZE:-4096}"
-# Per-slot label storage precision. "int8" (default — the served config) is the
-# compact path (int8 signatures + per-vector fp16 scales, ~0.5625x bytes), gated
-# by int8-vs-fp16 selection overlap >= 0.99. Set SIGNATURE_DTYPE=fp16 for a
-# full-precision diagnostic run.
-SIGNATURE_DTYPE="${SIGNATURE_DTYPE:-int8}"
-# Double Sparsity's per-rank TokenLabelTable is now RESERVED in the KV-pool
-# sizing equation (pool_configurator._compute_cell_size folds in its per-token
-# bytes), so the table is no longer carved from post-capture headroom — which was
-# the reason mem_fraction previously had to be pinned to 0.6/0.7. With the table
-# reserved AND the right-sized envelope below, 0.8 boots with sustained headroom
-# (validated GLM-5.1-FP8 int8: max_total_num_tokens 342,784 / bs cap 74, ~22 GB
-# available post-capture). Lower it only to serve a deliberately smaller pool.
+# Double Sparsity selects table-free: absorbed-latent scoring reads the resident
+# MLA latent directly, so there is NO per-rank TokenLabelTable and the ~6.8 GB/rank
+# it used to consume is freed to the KV pool. That is why mem_fraction runs at 0.8
+# with sustained headroom (validated GLM-5.1-FP8: max_total_num_tokens 504,640 /
+# bs cap 109). Lower it only to serve a deliberately smaller pool.
 MEM_FRACTION_STATIC="${MEM_FRACTION_STATIC:-0.8}"
 # Right-sized serving envelope: cap running requests and captured CUDA-graph
 # batch sizes at the workload concurrency ceiling so the graph-capture set does
@@ -68,8 +61,7 @@ mkdir -p "${LOG_DIR}"
 
 # Flag-gated non-learned selector variants (config-borne so they reach the TP
 # workers). Defaults reproduce the production scorer (byte-identical).
-SCORER_NORM="${SCORER_NORM:-off}"                          # off | cosine | hybrid
-SCORER_NORM_HYBRID_THRESHOLD="${SCORER_NORM_HYBRID_THRESHOLD:-8192}"
+SCORER_NORM="${SCORER_NORM:-off}"                          # off (the only supported mode)
 HEAD_AGG="${HEAD_AGG:-max}"                                # max | mean
 ANCHOR_MODE="${ANCHOR_MODE:-off}"                          # off | recency | global | strided
 ANCHOR_BUDGET="${ANCHOR_BUDGET:-0}"
@@ -78,11 +70,6 @@ ANCHOR_BUDGET="${ANCHOR_BUDGET:-0}"
 # (--disable-cuda-graph), which the validator requires.
 RECALL_ORACLE="${RECALL_ORACLE:-0}"                        # 0 | 1
 if [[ "${RECALL_ORACLE}" == "1" ]]; then RECALL_ORACLE_JSON=true; else RECALL_ORACLE_JSON=false; fi
-# Table-free absorbed-latent selection (no TokenLabelTable; ~5.29 GB/rank freed to
-# the KV pool). TABLE_FREE=1 emits "table_free": true. Requires scorer_norm="off"
-# (the absorbed identity). Off => the table path (byte-identical command).
-TABLE_FREE="${TABLE_FREE:-0}"                              # 0 | 1
-if [[ "${TABLE_FREE}" == "1" ]]; then TABLE_FREE_JSON=true; else TABLE_FREE_JSON=false; fi
 # Opt-in lifted-budget decode (graph-safe production path). LIFTED_BUDGET=1 emits
 # "enable_lifted_budget_decode": true + a wider "lifted_budget_top_k" (must be
 # > top_k and a multiple of 128). The path runs UNDER CUDA graph (alloc-free
@@ -98,8 +85,8 @@ else
   LIFTED_BUDGET_JSON=false
   LIFTED_BUDGET_TOP_K=0
 fi
-DS_CONFIG=$(printf '{"top_k": %s, "page_size": %s, "channel_mask_path": "%s", "device_buffer_size": %s, "signature_dtype": "%s", "scorer_norm": "%s", "scorer_norm_hybrid_threshold": %s, "head_agg": "%s", "anchor_mode": "%s", "anchor_budget": %s, "recall_oracle": %s, "table_free": %s, "enable_lifted_budget_decode": %s, "lifted_budget_top_k": %s}' \
-  "${TOP_K}" "${PAGE_SIZE}" "${CHANNEL_MASK_PATH}" "${DEVICE_BUFFER_SIZE}" "${SIGNATURE_DTYPE}" "${SCORER_NORM}" "${SCORER_NORM_HYBRID_THRESHOLD}" "${HEAD_AGG}" "${ANCHOR_MODE}" "${ANCHOR_BUDGET}" "${RECALL_ORACLE_JSON}" "${TABLE_FREE_JSON}" "${LIFTED_BUDGET_JSON}" "${LIFTED_BUDGET_TOP_K}")
+DS_CONFIG=$(printf '{"top_k": %s, "page_size": %s, "channel_mask_path": "%s", "device_buffer_size": %s, "scorer_norm": "%s", "head_agg": "%s", "anchor_mode": "%s", "anchor_budget": %s, "recall_oracle": %s, "enable_lifted_budget_decode": %s, "lifted_budget_top_k": %s}' \
+  "${TOP_K}" "${PAGE_SIZE}" "${CHANNEL_MASK_PATH}" "${DEVICE_BUFFER_SIZE}" "${SCORER_NORM}" "${HEAD_AGG}" "${ANCHOR_MODE}" "${ANCHOR_BUDGET}" "${RECALL_ORACLE_JSON}" "${LIFTED_BUDGET_JSON}" "${LIFTED_BUDGET_TOP_K}")
 echo ">>> effective double_sparsity_config = ${DS_CONFIG}"
 
 # Eager is required only for the recall-oracle diagnostic (it host-syncs). As of R9
@@ -160,7 +147,6 @@ echo "    page_size        = ${PAGE_SIZE}"
 echo "    channel_mask     = ${CHANNEL_MASK_PATH}"
 echo "    top_k            = ${TOP_K}"
 echo "    device_buffer    = ${DEVICE_BUFFER_SIZE}"
-echo "    signature_dtype  = ${SIGNATURE_DTYPE}"
 echo "    mem_fraction     = ${MEM_FRACTION_STATIC}"
 echo "    max_running_reqs = ${MAX_RUNNING_REQUESTS}"
 echo "    cuda_graph_max_bs= ${CUDA_GRAPH_MAX_BS}"

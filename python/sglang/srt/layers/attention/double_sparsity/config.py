@@ -1,23 +1,14 @@
 """Configuration dataclass for standalone Double Sparsity.
 
 The configuration surface is intentionally narrow: ``top_k``, ``page_size``,
-``channel_mask_path``, ``device_buffer_size``, ``signature_dtype``, plus a free
-``extra`` dict.  No ``selection_mode`` / ``top_p`` / ``min_top_k`` /
-``max_top_k`` — top-p selection (Twilight) is a separate follow-on with its
-own ABI design.
+``channel_mask_path``, ``device_buffer_size``, plus a free ``extra`` dict.  No
+``selection_mode`` / ``top_p`` / ``min_top_k`` / ``max_top_k`` — top-p selection
+(Twilight) is a separate follow-on with its own ABI design.
 
 ``top_k`` counts maximum **tokens** per request (not pages).  At Option B
 operating point this matches the model's intrinsic ``index_topk=2048``.
 ``device_buffer_size`` is the score-scratch buffer cap (maximum concurrently
 live tokens for the decode scoring scratch tensor).
-
-``signature_dtype`` selects the per-slot label storage precision:
-
-* ``"fp16"`` (default) stores the channel labels at full fp16 precision.
-* ``"int8"`` stores symmetric-quantized int8 labels plus one fp16 scale per
-  (layer, slot, head) vector, cutting the table footprint to ~0.5625x at a
-  small selection-precision cost.  fp16 stays the default until the compact
-  path has hardware evidence.
 """
 
 from __future__ import annotations
@@ -32,14 +23,11 @@ _ALLOWED_FIELDS = {
     "page_size",
     "channel_mask_path",
     "device_buffer_size",
-    "signature_dtype",
     "scorer_norm",
-    "scorer_norm_hybrid_threshold",
     "head_agg",
     "anchor_mode",
     "anchor_budget",
     "recall_oracle",
-    "table_free",
     "selection_capture",
     "selector_width_buckets",
     "selector_width_overflow_policy",
@@ -53,8 +41,10 @@ _ALLOWED_FIELDS = {
 # the TP worker processes that run the selector). Each is independent and
 # defaults to the production behaviour (byte-identical when all are at default).
 #
-# scorer_norm: "off" (raw channel-dot), "cosine" (direction-only), "hybrid"
-#   (raw for context <= scorer_norm_hybrid_threshold tokens, cosine above).
+# scorer_norm: only "off" (raw channel-dot) is supported. The absorbed-latent
+#   selection identity (score = max_h v_h · c_kv) holds only for the raw dot;
+#   direction-only norms would operate on a materialized per-head signature the
+#   selector never builds.
 # head_agg: cross-head score reduction, "max" (default) or "mean".
 # anchor_mode: which deterministic positions to always force-include in the
 #   selection — "off" (default, none), "recency" (most-recent), "global"
@@ -65,14 +55,7 @@ _ALLOWED_FIELDS = {
 #   reaches TP workers; requires --disable-cuda-graph (the hook does host syncs
 #   illegal under graph capture). NOTE: this disables graph CAPTURE, but the
 #   selector still runs the graph-safe path (retrieve_topk_graph_safe) eagerly —
-#   the oracle hook lives there, not in the eager retrieve_topk_via_labels path.
-# table_free: config-borne enable for the table-free absorbed-latent selection
-#   path (off by default; byte-identical selection when off). When on, the
-#   selector drops the TokenLabelTable scoring and instead selects from the
-#   absorbed-latent score (score = max_h v_h · c_kv, scorer_norm="off" only) read
-#   straight off the resident MLA latent — the score the recall oracle already
-#   validated. Config-borne so it reaches TP workers. Requires scorer_norm="off"
-#   (the absorbed identity only holds there; see validate_double_sparsity).
+#   the oracle hook lives there.
 # selection_capture: config-borne enable for the per-(layer, decode-step)
 #   selection dump (selected_indices + valid_lengths). When on, the graph state
 #   allocates per-layer capture buffers, the selector mirrors every layer's
@@ -112,9 +95,8 @@ _ALLOWED_FIELDS = {
 # lifted_budget_top_k: the fixed (padded) budget for the lifted-budget path; must
 #   be > index_topk and is only meaningful when enable_lifted_budget_decode is on.
 _DEFAULT_LIFTED_BUDGET_TOP_K = 0  # 0 = unset; required (>top_k) when lifted enabled
-_ALLOWED_SCORER_NORM = ("off", "cosine", "hybrid")
+_ALLOWED_SCORER_NORM = ("off",)
 _DEFAULT_SCORER_NORM = "off"
-_DEFAULT_HYBRID_THRESHOLD = 8192
 _ALLOWED_HEAD_AGG = ("max", "mean")
 _DEFAULT_HEAD_AGG = "max"
 _ALLOWED_ANCHOR_MODE = ("off", "recency", "global", "strided")
@@ -133,8 +115,6 @@ _ALLOWED_OVERFLOW_POLICY = ("full_fallback", "fail_closed")
 _DEFAULT_OVERFLOW_POLICY = "full_fallback"
 _DEFAULT_PAGE_SIZE = 64         # FlashMLA KV layout requirement
 _DEFAULT_DEVICE_BUFFER_SIZE = 4096  # score-scratch buffer cap in tokens
-_DEFAULT_SIGNATURE_DTYPE = "fp16"   # full-precision labels until the compact path is hardware-validated
-_ALLOWED_SIGNATURE_DTYPES = ("fp16", "int8")
 
 
 @dataclass
@@ -143,14 +123,11 @@ class DoubleSparsityConfig:
     top_k: int = _DEFAULT_TOP_K
     page_size: int = _DEFAULT_PAGE_SIZE
     device_buffer_size: int = _DEFAULT_DEVICE_BUFFER_SIZE
-    signature_dtype: str = _DEFAULT_SIGNATURE_DTYPE
     scorer_norm: str = _DEFAULT_SCORER_NORM
-    scorer_norm_hybrid_threshold: int = _DEFAULT_HYBRID_THRESHOLD
     head_agg: str = _DEFAULT_HEAD_AGG
     anchor_mode: str = _DEFAULT_ANCHOR_MODE
     anchor_budget: int = _DEFAULT_ANCHOR_BUDGET
     recall_oracle: bool = False
-    table_free: bool = False
     selection_capture: bool = False
     selector_width_buckets: List[int] = field(
         default_factory=lambda: list(_DEFAULT_SELECTOR_WIDTH_BUCKETS)
@@ -164,13 +141,9 @@ class DoubleSparsityConfig:
     def __post_init__(self) -> None:
         if self.scorer_norm not in _ALLOWED_SCORER_NORM:
             raise ValueError(
-                f"Double Sparsity 'scorer_norm' must be one of "
-                f"{list(_ALLOWED_SCORER_NORM)}, got {self.scorer_norm!r}."
-            )
-        if not isinstance(self.scorer_norm_hybrid_threshold, int) or self.scorer_norm_hybrid_threshold <= 0:
-            raise ValueError(
-                f"Double Sparsity 'scorer_norm_hybrid_threshold' must be a positive "
-                f"integer, got {self.scorer_norm_hybrid_threshold!r}."
+                f"Double Sparsity 'scorer_norm' must be 'off' (the absorbed-latent "
+                f"selection identity only holds for the raw channel-dot score), got "
+                f"{self.scorer_norm!r}."
             )
         if self.head_agg not in _ALLOWED_HEAD_AGG:
             raise ValueError(
@@ -191,11 +164,6 @@ class DoubleSparsityConfig:
             raise ValueError(
                 f"Double Sparsity 'recall_oracle' must be a boolean, "
                 f"got {self.recall_oracle!r}."
-            )
-        if not isinstance(self.table_free, bool):
-            raise ValueError(
-                f"Double Sparsity 'table_free' must be a boolean, "
-                f"got {self.table_free!r}."
             )
         if not isinstance(self.selection_capture, bool):
             raise ValueError(
@@ -287,11 +255,6 @@ class DoubleSparsityConfig:
                 f"Double Sparsity 'device_buffer_size' must be a positive integer, "
                 f"got {self.device_buffer_size!r}."
             )
-        if self.signature_dtype not in _ALLOWED_SIGNATURE_DTYPES:
-            raise ValueError(
-                f"Double Sparsity 'signature_dtype' must be one of "
-                f"{list(_ALLOWED_SIGNATURE_DTYPES)}, got {self.signature_dtype!r}."
-            )
         if not isinstance(self.extra, dict):
             raise ValueError(
                 f"Double Sparsity 'extra' must be a dict, got {type(self.extra).__name__}."
@@ -374,16 +337,11 @@ def parse_double_sparsity_config(payload: str) -> DoubleSparsityConfig:
         top_k=int(data.get("top_k", _DEFAULT_TOP_K)),
         page_size=int(data.get("page_size", _DEFAULT_PAGE_SIZE)),
         device_buffer_size=int(data.get("device_buffer_size", _DEFAULT_DEVICE_BUFFER_SIZE)),
-        signature_dtype=str(data.get("signature_dtype", _DEFAULT_SIGNATURE_DTYPE)),
         scorer_norm=str(data.get("scorer_norm", _DEFAULT_SCORER_NORM)),
-        scorer_norm_hybrid_threshold=int(
-            data.get("scorer_norm_hybrid_threshold", _DEFAULT_HYBRID_THRESHOLD)
-        ),
         head_agg=str(data.get("head_agg", _DEFAULT_HEAD_AGG)),
         anchor_mode=str(data.get("anchor_mode", _DEFAULT_ANCHOR_MODE)),
         anchor_budget=int(data.get("anchor_budget", _DEFAULT_ANCHOR_BUDGET)),
         recall_oracle=_coerce_bool(data.get("recall_oracle", False), "recall_oracle"),
-        table_free=_coerce_bool(data.get("table_free", False), "table_free"),
         selection_capture=_coerce_bool(
             data.get("selection_capture", False), "selection_capture"
         ),

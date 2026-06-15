@@ -5,8 +5,7 @@ sequence-order-ascending logical token positions so that the FlashMLA
 block-table plumbing in ``DeepseekV2AttentionMLA.forward_core`` can be
 wired and tested end-to-end before real selection kernels land. The
 placeholder guard refuses to serve real traffic; production must call
-``bind_runtime_data`` with the real ``TokenLabelTable`` and ``ChannelMask``
-before serving.
+``bind_runtime_data`` with the real ``ChannelMask`` before serving.
 
 The class does NOT inherit from any HiSparse base and is NOT registered in
 ``_ALGORITHM_REGISTRY``.
@@ -26,9 +25,6 @@ if TYPE_CHECKING:
     from sglang.srt.layers.attention.double_sparsity.channel_mask import ChannelMask
     from sglang.srt.layers.attention.double_sparsity.config import (
         DoubleSparsityConfig,
-    )
-    from sglang.srt.layers.attention.double_sparsity.token_label_table import (
-        TokenLabelTable,
     )
 
 
@@ -61,10 +57,11 @@ class DoubleSparsitySelector:
       refused by the placeholder guard until ``bind_runtime_data`` flips the
       selector into real mode.
 
-    * **Real** — after :meth:`bind_runtime_data` is called with a populated
-      :class:`TokenLabelTable` and a loaded :class:`ChannelMask`, the
-      selector switches to the real score → all-reduce → top-K flow from
-      :mod:`selection_kernel`. ``IS_PLACEHOLDER`` flips to ``False``.
+    * **Real** — after :meth:`bind_runtime_data` is called with a loaded
+      :class:`ChannelMask`, the selector switches to the real score →
+      all-reduce → top-K flow from :mod:`selection_kernel`, scoring the
+      resident MLA latent through the bind-time absorbed projection.
+      ``IS_PLACEHOLDER`` flips to ``False``.
 
     The class does NOT inherit from any HiSparse base and is NOT registered
     in ``_ALGORITHM_REGISTRY``.
@@ -96,11 +93,10 @@ class DoubleSparsitySelector:
                 f"Double Sparsity max_top_k must be positive, got {self.max_top_k}."
             )
 
-        self.token_label_table: Optional["TokenLabelTable"] = None
         self.channel_mask: Optional["ChannelMask"] = None
         # Bind-time absorbed-latent projection [H, label_dim, kv_lora_rank], built
-        # by deepseek_v2's bind path ONLY when recall_oracle is on; otherwise None
-        # and the side-by-side absorbed diagnostic stays inert.
+        # by deepseek_v2's bind path. Selection scores the resident MLA latent
+        # through it.
         self.absorbed_w_sel: Optional[torch.Tensor] = None
         self.process_group = None
         # Custom all-reduce communicator for the score reduce (the attention-TP
@@ -109,14 +105,8 @@ class DoubleSparsitySelector:
         self.reduce_ca = None
         self.IS_PLACEHOLDER = True
 
-    @property
-    def table_free(self) -> bool:
-        """``True`` iff the config selected the table-free absorbed-latent path."""
-        return bool(getattr(self.config, "table_free", False))
-
     def bind_runtime_data(
         self,
-        token_label_table: "Optional[TokenLabelTable]",
         channel_mask: "ChannelMask",
         *,
         process_group=None,
@@ -124,26 +114,22 @@ class DoubleSparsitySelector:
     ) -> None:
         """Switch the selector from placeholder to real mode.
 
-        For the table path ``token_label_table`` must be non-None and
-        shape-compatible with ``channel_mask``. For the table-free path
-        (``config.table_free``) the table is omitted (``None``): selection scores
-        the resident MLA latent through the bind-time-installed
-        ``absorbed_w_sel`` instead, so no signature table is bound. Subsequent
-        calls to ``retrieve_topk`` use the real score → all-reduce → top-K flow
-        from :mod:`selection_kernel`.
+        Selection scores the resident MLA latent through the
+        bind-time-installed ``absorbed_w_sel`` (the caller installs it before
+        this call), so the only resident selection state is the channel mask.
+        Subsequent calls to ``retrieve_topk`` use the real score → all-reduce →
+        top-K flow from :mod:`selection_kernel`.
 
         Idempotence contract: a second call with the SAME object
-        identities for ``token_label_table``, ``channel_mask``, and
-        ``process_group`` is a no-op. A second call with any different
-        object raises :class:`DoubleSparsityRebindError` to prevent
-        silent invalidation of CUDA-graph buffers and TP state captured
-        on the first bind.
+        identities for ``channel_mask`` and ``process_group`` is a no-op. A
+        second call with any different object raises
+        :class:`DoubleSparsityRebindError` to prevent silent invalidation of
+        CUDA-graph buffers and TP state captured on the first bind.
         """
 
         if not self.IS_PLACEHOLDER:
             same_objects = (
-                self.token_label_table is token_label_table
-                and self.channel_mask is channel_mask
+                self.channel_mask is channel_mask
                 and self.process_group is process_group
                 and self.reduce_ca is reduce_ca
             )
@@ -159,116 +145,11 @@ class DoubleSparsitySelector:
 
         if channel_mask is None:
             raise ValueError("channel_mask is required for real selection.")
-
-        if self.table_free:
-            self._bind_table_free(
-                channel_mask, process_group=process_group, reduce_ca=reduce_ca
-            )
-            return
-
-        if token_label_table is None:
-            raise ValueError("token_label_table is required for real selection.")
-        if channel_mask.label_dim != token_label_table.label_dim:
-            raise ValueError(
-                f"channel_mask.label_dim={channel_mask.label_dim} does not match "
-                f"token_label_table.label_dim={token_label_table.label_dim}."
-            )
-        if token_label_table.num_heads_local != self.num_local_heads:
-            raise ValueError(
-                f"token_label_table.num_heads_local={token_label_table.num_heads_local} "
-                f"does not match selector.num_local_heads={self.num_local_heads}."
-            )
-        mask_num_heads = int(channel_mask.channel_selection.shape[1])
-        if mask_num_heads != self.num_local_heads:
-            raise ValueError(
-                f"channel_mask num_heads={mask_num_heads} does not match "
-                f"selector.num_local_heads={self.num_local_heads}. The calibration "
-                "artifact is TP-agnostic (H_full); call "
-                "channel_mask.slice_per_rank(mask, num_local_heads=..., rank=..., "
-                "tp_size=...) before bind_runtime_data."
-            )
-
-        # The mask is typically loaded from disk on CPU while the token
-        # label table + queries live on the selector's device. Align the
-        # mask tensors to the table's device so retrieve_topk's torch.gather
-        # and weight-multiply don't trip a device mismatch.
-        target_device = token_label_table.signatures.device
-        if channel_mask.channel_selection.device != target_device:
-            channel_mask = replace(
-                channel_mask,
-                channel_selection=channel_mask.channel_selection.to(target_device),
-                channel_weights=channel_mask.channel_weights.to(target_device),
-            )
-
-        # The CUDA graph-safe fast path assumes int32 selection + fp32 weights
-        # so it can avoid host-side `.to(...)` casts (which would allocate
-        # inside captured / replay-stable regions). Refuse to bind a mask that
-        # would force per-call conversion.
-        if channel_mask.channel_selection.dtype != torch.int32:
-            raise ValueError(
-                "channel_mask.channel_selection must be int32, got "
-                f"{channel_mask.channel_selection.dtype}."
-            )
-        if channel_mask.channel_weights.dtype != torch.float32:
-            raise ValueError(
-                "channel_mask.channel_weights must be float32, got "
-                f"{channel_mask.channel_weights.dtype}."
-            )
-
-        self.token_label_table = token_label_table
-        self.channel_mask = channel_mask
-        self.process_group = process_group
-        self.reduce_ca = reduce_ca
-        self.IS_PLACEHOLDER = False
-
-        # Structured bind-time INFO log: operators rely on this to confirm
-        # every DS-enabled layer has been bound on every TP rank.
-        pg_size = 0
-        pg_rank = 0
-        if process_group is not None:
-            try:
-                pg_size = int(torch.distributed.get_world_size(group=process_group))
-                pg_rank = int(torch.distributed.get_rank(group=process_group))
-            except Exception:
-                pg_size = 0
-                pg_rank = 0
-        logger.info(
-            "double_sparsity bind_runtime_data completed: "
-            "selector_id=%s num_local_heads=%d label_dim=%d page_size=%d "
-            "process_group_size=%d process_group_rank=%d",
-            id(self),
-            self.num_local_heads,
-            token_label_table.label_dim,
-            self.page_size,
-            pg_size,
-            pg_rank,
-            extra={
-                "ds_selector_id": id(self),
-                "ds_num_local_heads": self.num_local_heads,
-                "ds_label_dim": token_label_table.label_dim,
-                "ds_page_size": self.page_size,
-                "ds_process_group_size": pg_size,
-                "ds_process_group_rank": pg_rank,
-            },
-        )
-
-    def _bind_table_free(
-        self,
-        channel_mask: "ChannelMask",
-        *,
-        process_group=None,
-        reduce_ca=None,
-    ) -> None:
-        """Table-free real-mode bind: no TokenLabelTable. Selection scores the
-        resident MLA latent through ``self.absorbed_w_sel`` (installed by the
-        caller before this bind), so the only resident state is the channel mask.
-        Shares the channel-mask head-count + int32/fp32 validation with the table
-        path; the device is the selector's device (no table to source it from)."""
         if self.absorbed_w_sel is None:
             raise ValueError(
-                "table_free bind requires selector.absorbed_w_sel to be set first "
-                "(the bind-time K-noPE W_UK projection). The caller installs it "
-                "before bind_runtime_data."
+                "bind_runtime_data requires selector.absorbed_w_sel to be set "
+                "first (the bind-time K-noPE W_UK projection). The caller installs "
+                "it before bind_runtime_data."
             )
         mask_num_heads = int(channel_mask.channel_selection.shape[1])
         if mask_num_heads != self.num_local_heads:
@@ -297,12 +178,13 @@ class DoubleSparsitySelector:
                 f"{channel_mask.channel_weights.dtype}."
             )
 
-        self.token_label_table = None
         self.channel_mask = channel_mask
         self.process_group = process_group
         self.reduce_ca = reduce_ca
         self.IS_PLACEHOLDER = False
 
+        # Structured bind-time INFO log: operators rely on this to confirm
+        # every DS-enabled layer has been bound on every TP rank.
         pg_size = 0
         pg_rank = 0
         if process_group is not None:
@@ -313,7 +195,7 @@ class DoubleSparsitySelector:
                 pg_size = 0
                 pg_rank = 0
         logger.info(
-            "double_sparsity bind_runtime_data completed (table_free): "
+            "double_sparsity bind_runtime_data completed: "
             "selector_id=%s num_local_heads=%d label_dim=%d page_size=%d "
             "process_group_size=%d process_group_rank=%d",
             id(self),
@@ -329,7 +211,6 @@ class DoubleSparsitySelector:
                 "ds_page_size": self.page_size,
                 "ds_process_group_size": pg_size,
                 "ds_process_group_rank": pg_rank,
-                "ds_table_free": True,
             },
         )
 
@@ -353,11 +234,10 @@ class DoubleSparsitySelector:
         ``valid_lengths``: int32 ``[bs]``, the unpadded length of each row.
 
         Dispatches to the real :mod:`selection_kernel` pipeline once
-        :meth:`bind_runtime_data` has installed real runtime data: the
-        table-free path (``config.table_free``) selects from the absorbed-latent
-        score off the resident MLA latent, the table path scores the
-        TokenLabelTable. The placeholder ascending-positions scheme runs until a
-        bind, so downstream wiring is exercisable in unit tests.
+        :meth:`bind_runtime_data` has installed real runtime data: selection
+        scores the absorbed-latent score off the resident MLA latent. The
+        placeholder ascending-positions scheme runs until a bind, so downstream
+        wiring is exercisable in unit tests.
         """
 
         if queries.dim() < 2:
@@ -365,7 +245,7 @@ class DoubleSparsitySelector:
                 f"Double Sparsity expects queries with at least 2 dims, got shape {tuple(queries.shape)}."
             )
 
-        if self.table_free and self.channel_mask is not None:
+        if self.channel_mask is not None:
             from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
                 absorbed_topk_select,
             )
@@ -390,38 +270,6 @@ class DoubleSparsitySelector:
                     getattr(self.config, "score_reduce_dtype", "bf16") == "bf16"
                 ),
                 head_agg=getattr(self.config, "head_agg", "max"),
-            )
-
-        if self.token_label_table is not None and self.channel_mask is not None:
-            from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
-                retrieve_topk_via_labels,
-            )
-
-            return retrieve_topk_via_labels(
-                queries=queries,
-                token_signatures=self.token_label_table.signatures,
-                written=self.token_label_table.written,
-                channel_selection=self.channel_mask.channel_selection,
-                channel_weights=self.channel_mask.channel_weights,
-                layer_id=layer_id,
-                max_top_k=self.max_top_k,
-                process_group=self.process_group,
-                per_request_valid=sparse_mask,
-                req_pool_indices=req_pool_indices,
-                req_to_token=req_to_token,
-                seq_lens=seq_lens,
-                max_seq_len=max_seq_len,
-                token_scales=self.token_label_table.scales,
-                scorer_norm=getattr(self.config, "scorer_norm", "off"),
-                head_agg=getattr(self.config, "head_agg", "max"),
-                hybrid_threshold=getattr(self.config, "scorer_norm_hybrid_threshold", 8192),
-                anchor_mode=getattr(self.config, "anchor_mode", "off"),
-                anchor_budget=getattr(self.config, "anchor_budget", 0),
-                recall_oracle=getattr(self.config, "recall_oracle", False),
-                reduce_ca=self.reduce_ca,
-                score_reduce_bf16=(
-                    getattr(self.config, "score_reduce_dtype", "bf16") == "bf16"
-                ),
             )
 
         batch_size = req_pool_indices.shape[0]
@@ -498,5 +346,5 @@ def assert_real_selector_or_placeholder_allowed(selector: DoubleSparsitySelector
     raise RuntimeError(
         "Double Sparsity is built with the placeholder selector. Refusing to serve "
         "production traffic. Call DoubleSparsitySelector.bind_runtime_data with the "
-        "real TokenLabelTable and ChannelMask before serving."
+        "real ChannelMask before serving."
     )

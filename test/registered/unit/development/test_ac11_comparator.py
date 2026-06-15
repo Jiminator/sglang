@@ -858,12 +858,12 @@ class TestAC11EndToEnd(unittest.TestCase):
                     self.assertEqual(self._ac11_main(dsa, ds), 2)
 
     def test_ignored_server_args_differences_do_not_refuse(self):
-        """mem_fraction_static (DS reserves a TokenLabelTable so it serves at a
-        lower fraction than DSA), random_seed (per-boot telemetry), and the
-        DS-only radix-fixture artifact path legitimately differ between sides
-        and must NOT refuse the comparison — the effective-concurrency asymmetry
-        is recorded in the report, not used to refuse. Real locked Option B
-        fields still refuse (covered by the test above)."""
+        """mem_fraction_static (a per-side launch knob operators may tune
+        differently), random_seed (per-boot telemetry), and the DS-only
+        radix-fixture artifact path legitimately differ between sides and must
+        NOT refuse the comparison — the effective-concurrency asymmetry is
+        recorded in the report, not used to refuse. Real locked Option B fields
+        still refuse (covered by the test above)."""
         for field, dsa_v, ds_v in (
             ("mem_fraction_static", 0.85, 0.6),
             ("random_seed", 111, 222),
@@ -886,11 +886,11 @@ class TestAC11EndToEnd(unittest.TestCase):
                     self.assertIn(self._ac11_main(dsa, ds), (0, 3))
 
     def test_per_side_mem_fraction_drift_refused(self):
-        """``mem_fraction_static`` is ignored ACROSS sides (DSA 0.85 vs DS 0.6
-        is the sanctioned TokenLabelTable asymmetry) but must be CONSTANT
-        WITHIN a side. Per-side drift (e.g. DSA 0.85/0.80/0.75) must refuse
-        (exit 2) so the comparator never medians across mismatched per-side
-        launch knobs; a constant-per-side cross-side asymmetry still proceeds."""
+        """``mem_fraction_static`` is ignored ACROSS sides (a sanctioned
+        per-side launch-knob asymmetry) but must be CONSTANT WITHIN a side.
+        Per-side drift (e.g. DSA 0.85/0.80/0.75) must refuse (exit 2) so the
+        comparator never medians across mismatched per-side launch knobs; a
+        constant-per-side cross-side asymmetry still proceeds."""
         # (a) Per-side mem-fraction drift on the DSA side -> refuse (exit 2).
         with tempfile.TemporaryDirectory() as tmp:
             dsa_paths = []

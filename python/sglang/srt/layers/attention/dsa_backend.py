@@ -319,97 +319,6 @@ _DSA_IMPL_T: TypeAlias = Literal[
 ]
 
 
-def _resolve_req_to_token_for_capture(forward_batch, backend):
-    """Resolve the request→physical-slot map for the radix-capture publish.
-
-    Production ``ForwardBatch`` does not carry a ``req_to_token_pool`` field, so
-    reading it returns None and the capture silently never publishes. Resolve in
-    order: (1) ``forward_batch.req_to_token_pool`` when present (unit fixtures /
-    some paths set it), (2) the backend's own cached map (the attention backend —
-    ``self`` from the DSA path, or the ForwardContext backend from the MHA path —
-    sets ``self.req_to_token`` at init), (3) the active ForwardContext attention
-    backend (TBO-unwrapped) as a final fallback. Mirrors the selector's resolver
-    (see deepseek_v2._select_topk_indices) per BL ds-metadata-via-forward-context.
-    """
-    req_pool = getattr(forward_batch, "req_to_token_pool", None)
-    if req_pool is not None and getattr(req_pool, "req_to_token", None) is not None:
-        return req_pool.req_to_token
-    rtt = getattr(backend, "req_to_token", None)
-    if rtt is not None:
-        return rtt
-    try:
-        from sglang.srt.layers.attention.tbo_backend import (
-            TboAttnBackend as _TboAttnBackend,
-        )
-        from sglang.srt.model_executor.forward_context import (
-            get_attn_backend as _get_attn_backend,
-            has_forward_context as _has_forward_context,
-        )
-
-        if _has_forward_context():
-            _b = _get_attn_backend()
-            if isinstance(_b, _TboAttnBackend):
-                _b = _b.primary
-            return getattr(_b, "req_to_token", None)
-    except Exception:  # noqa: BLE001 — capture must not break production
-        return None
-    return None
-
-
-def _ds_radix_publish_extend_snapshot(*, backend, forward_batch) -> None:
-    """M3-B radix-capture publish hook (extend-only, post-write).
-
-    Called from ``_write_token_labels`` after the current layer's
-    labels have been written. Each call overwrites
-    ``forward_batch.ds_per_request_summary["double_sparsity_radix_capture"]``;
-    the LAST DS layer to fire in this extend forward wins, at which
-    point all layers' label rows for the prompt slots are fresh.
-
-    Default-off zero-cost contract preserved by the caller's
-    ``is_capture_enabled()`` gate. This helper itself is best-effort:
-    any failure is recorded as a string into
-    ``ds_per_request_summary["double_sparsity_radix_capture_error"]``
-    and re-raises nothing — capture must not break production.
-    """
-    from sglang.srt.layers.attention.double_sparsity import (
-        radix_fixture_capture as _ds_radix_capture,
-    )
-
-    table = getattr(backend, "_ds_token_label_table", None)
-    if table is None:
-        return
-    req_to_token = _resolve_req_to_token_for_capture(forward_batch, backend)
-    req_pool_indices = getattr(forward_batch, "req_pool_indices", None)
-    seq_lens = getattr(forward_batch, "seq_lens", None)
-    if (
-        req_to_token is None
-        or req_pool_indices is None
-        or seq_lens is None
-    ):
-        return
-
-    summary = getattr(forward_batch, "ds_per_request_summary", None)
-    if summary is None:
-        summary = {}
-        setattr(forward_batch, "ds_per_request_summary", summary)
-
-    try:
-        summary["double_sparsity_radix_capture"] = (
-            _ds_radix_capture.build_request_capture(
-                signatures=table.signatures,
-                written=table.written,
-                req_to_token=req_to_token,
-                req_pool_indices=req_pool_indices,
-                seq_lens=seq_lens,
-                scales=table.scales,
-            )
-        )
-    except Exception as exc:  # noqa: BLE001 — fixture-only branch
-        summary["double_sparsity_radix_capture_error"] = (
-            f"{type(exc).__name__}: {exc}"
-        )
-
-
 class DeepseekSparseAttnBackend(
     DeepseekSparseAttnBackendMTPPrecomputeMixin, AttentionBackend
 ):
@@ -463,21 +372,6 @@ class DeepseekSparseAttnBackend(
                 model_runner.server_args, "enable_double_sparsity", False
             )
         )
-        # AC-12 sensitivity gate: SGLANG_DS_FAULT_INJECT_ZERO_SIG=1 zeroes
-        # the signature row immediately after every token_label_write while
-        # keeping written=True, so the selector sees intentionally bad labels.
-        # Used to verify the NIAH @ 16K negative sensitivity assertion
-        # (recall must drop > 30 pp). Logged once per process.
-        import os as _os
-        self._ds_fault_zero_sig: bool = (
-            _os.getenv("SGLANG_DS_FAULT_INJECT_ZERO_SIG") == "1"
-        )
-        if self._ds_fault_zero_sig and self.enable_double_sparsity:
-            logger.warning(
-                "double_sparsity: SGLANG_DS_FAULT_INJECT_ZERO_SIG=1 — "
-                "token_label_table.signatures will be zeroed after every "
-                "write; NIAH @ 16K is expected to drop > 30 pp."
-            )
         self.ds_max_top_k: int = 2048
         # Opt-in lifted-budget decode (graph-safe production path): the selector
         # emits a WIDER fixed budget (lifted_budget_top_k > index_topk) and decode
@@ -493,11 +387,6 @@ class DeepseekSparseAttnBackend(
         # bf16 transport for the cross-TP score reduce (score_reduce_dtype);
         # sizes the bf16 scratch in ds_graph_state.
         self.ds_score_reduce_bf16: bool = False
-        # Table-free (absorbed-latent) selection: when on, ds_graph_state carries
-        # the absorbed-latent scratch (v_h / weighted-query / int64 mask) so the
-        # graph-safe table-free path is allocation-free. Off ⇒ table path, no
-        # extra scratch (byte-identical).
-        self.ds_table_free: bool = False
         # Compact DS selector widths to capture as extra graph variants
         # (config-borne; empty = full width only). The CUDA-graph runner reads
         # this to build its selector-width ladder.
@@ -530,7 +419,6 @@ class DeepseekSparseAttnBackend(
                 self.ds_score_reduce_bf16 = (
                     getattr(ds_cfg, "score_reduce_dtype", "bf16") == "bf16"
                 )
-                self.ds_table_free = bool(getattr(ds_cfg, "table_free", False))
                 self.ds_selector_width_buckets = list(
                     getattr(ds_cfg, "selector_width_buckets", []) or []
                 )
@@ -549,41 +437,38 @@ class DeepseekSparseAttnBackend(
             except Exception:
                 # Fall back to the canonical V3.2 default.
                 self.ds_max_top_k = 2048
-        # Token-label write context: populated by finalize_double_sparsity_bind()
-        # (called in model_runner before init_attention_backend), so these
-        # attributes are non-None whenever DS is enabled.
-        self._ds_token_label_table = getattr(
-            model_runner.server_args, "_double_sparsity_token_label_table", None
-        )
-        # Layer count for the selection-capture mirrors == the token-label
-        # table's layer dimension (the same index space layer_id selects with).
-        # 0 (capture off / table unbound) allocates no mirrors.
-        self.ds_selection_capture_layers: int = 0
-        if self.ds_selection_capture and self._ds_token_label_table is not None:
-            _sig = getattr(self._ds_token_label_table, "signatures", None)
-            if _sig is not None:
-                self.ds_selection_capture_layers = int(_sig.shape[0])
+        # Selection context: populated by finalize_double_sparsity_bind()
+        # (called in model_runner before init_attention_backend), so this
+        # attribute is non-None whenever DS is enabled.
         self._ds_channel_selection = getattr(
             model_runner.server_args, "_ds_channel_selection", None
         )
-        # Mask channel count (label_dim) for the table-free absorbed scratch —
-        # derived from the published channel selection ([L, H, label_dim]); 0
-        # leaves the scratch unallocated (and the table-free path falls back).
+        # Layer count for the selection-capture mirrors == the published channel
+        # selection's layer dimension (the same index space layer_id selects
+        # with). 0 (capture off / unbound) allocates no mirrors.
+        self.ds_selection_capture_layers: int = 0
+        if self.ds_selection_capture and self._ds_channel_selection is not None:
+            self.ds_selection_capture_layers = int(
+                self._ds_channel_selection.shape[0]
+            )
+        # Mask channel count (label_dim) for the absorbed scratch — derived from
+        # the published channel selection ([L, H, label_dim]); 0 leaves the
+        # scratch unallocated (and the selector falls back to the eager path).
         self.ds_label_dim: int = (
             int(self._ds_channel_selection.shape[-1])
             if self._ds_channel_selection is not None
             else 0
         )
-        # Table-free selection sizes its absorbed scratch (and slot_written
-        # bitmap) from ds_label_dim. A zero label_dim would silently size the
-        # scratch to 0 and drop the table-free path back onto the allocating
-        # fallback — fail closed instead of serving a broken selector.
-        if self.ds_table_free and self.ds_label_dim <= 0:
+        # Selection sizes its absorbed scratch (and slot_written bitmap) from
+        # ds_label_dim. A zero label_dim would silently size the scratch to 0 and
+        # drop the selector back onto the allocating fallback — fail closed
+        # instead of serving a broken selector.
+        if self.enable_double_sparsity and self.ds_label_dim <= 0:
             raise RuntimeError(
-                "Double Sparsity table_free is enabled but the channel selection "
-                "was not published on server_args (_ds_channel_selection is "
-                "absent), so ds_label_dim<=0. finalize_double_sparsity_bind() must "
-                "publish _ds_channel_selection before the DSA backend is built."
+                "Double Sparsity is enabled but the channel selection was not "
+                "published on server_args (_ds_channel_selection is absent), so "
+                "ds_label_dim<=0. finalize_double_sparsity_bind() must publish "
+                "_ds_channel_selection before the DSA backend is built."
             )
         # Published by finalize_double_sparsity_bind() (which runs before this
         # backend is constructed). Fall back to the model's own no-PE head width
@@ -596,18 +481,15 @@ class DeepseekSparseAttnBackend(
                 self.qk_nope_head_dim,
             )
         )
-        # Table-free validity bitmap: 1 bool per (local layer, physical KV slot).
-        # The table path keeps this inside the TokenLabelTable's `written`; the
-        # table-free path has no table, so a reused physical slot's STALE latent
-        # could be selected before the fresh KV write lands. This independent
-        # bitmap mirrors the table's invalidate-before-select / mark-after-write
-        # lifecycle (NOT the multi-GB signatures). Only allocated when table_free;
-        # the table path leaves it None (byte-identical). Indexed by GLOBAL
-        # layer_id, like the table's `written` and `_ds_channel_selection`.
+        # Slot-validity bitmap: 1 bool per (local layer, physical KV slot). A
+        # reused physical slot's STALE latent could be selected before the fresh
+        # KV write lands, so this bitmap drives the invalidate-before-select /
+        # mark-after-write lifecycle. Allocated whenever DS is enabled. Indexed by
+        # GLOBAL layer_id, like `_ds_channel_selection`.
         self._ds_slot_written: Optional[torch.Tensor] = None
         self._ds_slot_written_true: Optional[torch.Tensor] = None
         self._ds_slot_written_false: Optional[torch.Tensor] = None
-        if self.ds_table_free:
+        if self.enable_double_sparsity:
             _num_local_layers = int(self._ds_channel_selection.shape[0])
             _num_kv_slots = self.token_to_kv_pool.size + self.token_to_kv_pool.page_size
             self._ds_slot_written = torch.zeros(
@@ -973,7 +855,6 @@ class DeepseekSparseAttnBackend(
                 score_reduce_bf16=self.ds_score_reduce_bf16,
                 enable_lifted_budget_decode=self.ds_lifted_budget_decode,
                 lifted_q_pad_heads=(128 if self.device_sm_major >= 10 else 64),
-                table_free=self.ds_table_free,
                 num_local_heads=self.num_q_heads,
                 label_dim=self.ds_label_dim,
                 kv_lora_rank=self.kv_lora_rank,
@@ -1190,7 +1071,6 @@ class DeepseekSparseAttnBackend(
                 score_reduce_bf16=self.ds_score_reduce_bf16,
                 enable_lifted_budget_decode=self.ds_lifted_budget_decode,
                 lifted_q_pad_heads=(128 if self.device_sm_major >= 10 else 64),
-                table_free=self.ds_table_free,
                 num_local_heads=self.num_q_heads,
                 label_dim=self.ds_label_dim,
                 kv_lora_rank=self.kv_lora_rank,
@@ -1738,132 +1618,27 @@ class DeepseekSparseAttnBackend(
         k: torch.Tensor,
         forward_batch: Optional[ForwardBatch] = None,
     ) -> None:
-        """Write per-slot token labels after a KV-cache write.
+        """Mark physical KV slots valid for selection after a KV-cache write.
 
-        Projects the MLA latent key ``k`` (``kv_lora_rank``-wide) through
-        ``layer.kv_b_proj`` to obtain the per-head no-PE K (``qk_nope_head_dim``
-        columns of each per-head ``[K_nope | V]`` block), then writes the
-        selected ``label_dim`` channels to the shared token label table.
+        The KV bytes for this layer/slot were just written by set_mla_kv_buffer
+        (the caller), so mark these physical slots valid: selection scores the
+        resident latent directly, and the slot-validity bitmap keeps a reused
+        physical slot's stale latent from being selected before its fresh KV
+        write lands. In-place index write on the preallocated bitmap (graph-safe
+        — no per-step allocation).
 
-        No-ops if DS is not enabled or the bind context is unavailable.
+        No-ops if DS is not enabled or the bitmap is unavailable.
         ``k`` shape: ``[T, 1, kv_lora_rank]``.
-
-        ``forward_batch`` is the live batch for this forward; it carries the
-        per-request slot map and the per-request summary transport used to
-        publish the radix-capture extend snapshot. It is optional so unit
-        fixtures and the rare label-write site without a batch in scope still
-        write labels; the extend snapshot only publishes when it is present
-        and the mode is extend.
         """
         if not self.enable_double_sparsity:
             return
-        # Table-free mark-after-write: the KV bytes for this layer/slot were just
-        # written by set_mla_kv_buffer (the caller), so mark these physical slots
-        # valid for selection. In-place index write on the preallocated bitmap
-        # (graph-safe — no per-step allocation). Mirrors the table path's
-        # token_label_write setting written=True. The table-free path has no
-        # TokenLabelTable, so it returns here after the mark.
-        if self._ds_token_label_table is None:
-            if self._ds_slot_written is not None:
-                # Device-scalar RHS (not Python `True`) so the indexed mark stays a
-                # pure device-side copy — a CPU `True` would copy CPU->CUDA, which
-                # is illegal under CUDA-graph capture.
-                self._ds_slot_written[layer.layer_id, cache_loc.long()] = (
-                    self._ds_slot_written_true
-                )
-            return
-        if self._ds_channel_selection is None:
-            return
-        kv_b_proj = getattr(layer, "kv_b_proj", None)
-        if kv_b_proj is None:
-            return
-
-        from sglang.srt.layers.attention.double_sparsity.token_label_write import (
-            token_label_write,
-        )
-
-        T = k.shape[0]
-        kv_lora_rank = k.shape[-1]
-        k_latent = k.view(T, kv_lora_rank)
-
-        with torch.no_grad():
-            kv_proj_out = kv_b_proj(k_latent)[0]
-
-        H_local = self._ds_token_label_table.num_heads_local
-        nope_dim = self._ds_qk_nope_head_dim
-        # kv_b_proj output is per-head [K_nope | V]; reshape first so that
-        # slicing [:nope_dim] picks K-noPE columns, not V columns of earlier heads.
-        # Derive the per-head width from the projection output, NOT from
-        # ``layer.v_head_dim``: this hook fires from both the prefill attention
-        # layer (attn_mha, v_head_dim=128) and the decode layer (attn_mqa, whose
-        # v_head_dim is the absorbed kv_lora_rank=512). Using layer.v_head_dim
-        # produced a wrong reshape ([T,H,640] vs the real [T,H,256]) and crashed
-        # decode label writes; the projection's own output width is correct for both.
-        head_width = kv_proj_out.shape[-1] // H_local
-        k_nope = kv_proj_out.view(T, H_local, head_width)[..., :nope_dim].contiguous()
-
-        layer_id = layer.layer_id
-        token_label_write(
-            signatures=self._ds_token_label_table.signatures,
-            written=self._ds_token_label_table.written,
-            layer_id=layer_id,
-            cache_loc=cache_loc,
-            k_nope=k_nope,
-            channel_selection_layer=self._ds_channel_selection[layer_id],
-            scales=self._ds_token_label_table.scales,
-        )
-        # M3-B radix-cache fixture capture (env-gated, zero-cost when
-        # off — `is_capture_enabled` is one `os.environ.get` lookup).
-        # The capture publishes the post-forward per-request snapshot
-        # via the existing per-request summary transport
-        # (forward_batch.ds_per_request_summary ->
-        # BatchTokenIDOutput.per_request_summary -> response meta_info).
-        #
-        # Publishing here (after token_label_write returns) means the
-        # current layer's labels are FRESH; later layers will publish
-        # again with their own freshness, and "latest snapshot per
-        # request" semantics naturally selects the last DS layer's
-        # call to win — at which point all layers are fresh.
-        #
-        # Restricted to extend-mode forwards so decode steps do NOT
-        # overwrite the prefill capture with later snapshots that
-        # include decode-allocated slots.
-        from sglang.srt.layers.attention.double_sparsity import (
-            radix_fixture_capture as _ds_radix_capture,
-        )
-        # Skip the whole capture block while a CUDA graph is being captured:
-        # the fixture's SHA fingerprints copy tensors to CPU, which is illegal
-        # during capture. The label-write hook now fires on the (graph-captured)
-        # decode path, so without this an enabled capture aborts graph capture at
-        # model-runner init. The fixture reads its log from eager paired requests.
-        _ds_capturing = torch.cuda.is_available() and torch.cuda.is_current_stream_capturing()
-        if _ds_radix_capture.is_capture_enabled() and not _ds_capturing:
-            _ds_radix_capture.record_write(
-                layer_id=layer_id,
-                cache_loc=cache_loc,
-                k_nope=k_nope,
-                written_after=self._ds_token_label_table.written[
-                    layer_id, cache_loc.long()
-                ],
+        if self._ds_slot_written is not None:
+            # Device-scalar RHS (not Python `True`) so the indexed mark stays a
+            # pure device-side copy — a CPU `True` would copy CPU->CUDA, which
+            # is illegal under CUDA-graph capture.
+            self._ds_slot_written[layer.layer_id, cache_loc.long()] = (
+                self._ds_slot_written_true
             )
-            forward_mode = getattr(forward_batch, "forward_mode", None)
-            is_extend = bool(
-                forward_batch is not None
-                and forward_mode is not None
-                and getattr(forward_mode, "is_extend", lambda: False)()
-            )
-            if is_extend:
-                _ds_radix_publish_extend_snapshot(
-                    backend=self,
-                    forward_batch=forward_batch,
-                )
-        # AC-12 zero-signature fault injection: zero the just-written
-        # row but keep written=True so the selector treats the slot as
-        # populated with intentionally bad labels (not absent).
-        # `getattr` so unit fixtures that build the backend via
-        # `object.__new__(...)` without running __init__ stay green.
-        if getattr(self, "_ds_fault_zero_sig", False):
-            self._ds_token_label_table.signatures[layer_id, cache_loc] = 0
 
     def forward_extend(
         self,

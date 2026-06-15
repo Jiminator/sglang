@@ -1723,15 +1723,10 @@ class DeepseekV2AttentionMLA(
     ):
         if self.attn_mha.kv_b_proj is None:
             self.attn_mha.kv_b_proj = self.kv_b_proj
-        # The DS token-label write hook projects the latent K through the
-        # attention layer's kv_b_proj. Decode runs on attn_mqa (the absorbed
-        # MQA path), which — unlike attn_mha — was never given kv_b_proj, so
-        # _write_token_labels bailed at its `kv_b_proj is None` guard and decode
-        # tokens were never labelled. DS could then only ever select the prompt
-        # tokens, losing all generated context and degenerating into repetition.
-        # Attach it on attn_mqa too (DS-only; leaves non-DS behavior unchanged).
-        # The hook derives the per-head reshape width from the projection output,
-        # so attn_mqa's larger v_head_dim does not affect label extraction.
+        # Decode runs on attn_mqa (the absorbed MQA path), which — unlike
+        # attn_mha — was never given kv_b_proj. Attach it on attn_mqa too so the
+        # DS decode layer has the same projection in scope as attn_mha (DS-only;
+        # leaves non-DS behavior unchanged).
         if self.use_double_sparsity and getattr(self.attn_mqa, "kv_b_proj", None) is None:
             self.attn_mqa.kv_b_proj = self.kv_b_proj
 
@@ -1872,19 +1867,15 @@ class DeepseekV2AttentionMLA(
         """Wire the DS selector out of placeholder mode.
 
         Reads the validator-loaded channel mask off ``server_args``,
-        slices it for this rank's heads, allocates a shared per-model
-        TokenLabelTable on first use, calls
-        ``bind_runtime_data`` exactly once, and runs the TP-misconfig
-        fail-fast check. After this method returns, the selector reports
-        ``IS_PLACEHOLDER == False``.
+        slices it for this rank's heads, builds the bind-time absorbed-latent
+        projection, calls ``bind_runtime_data`` exactly once, and runs the
+        TP-misconfig fail-fast check. After this method returns, the selector
+        reports ``IS_PLACEHOLDER == False``.
         """
         from sglang.srt.layers.attention.double_sparsity import metrics as _ds_metrics
         from sglang.srt.layers.attention.double_sparsity.channel_mask import (
             slice_per_rank,
             verify_bind_shapes,
-        )
-        from sglang.srt.layers.attention.double_sparsity.token_label_table import (
-            allocate_token_label_table,
         )
         from sglang.srt.layers.attention.double_sparsity.selector import (
             assert_tp_configured,
@@ -1986,86 +1977,18 @@ class DeepseekV2AttentionMLA(
                 self.layer_id,
             )
 
-        # Table-free selection scores the resident MLA latent through the
-        # bind-time absorbed projection — no TokenLabelTable is allocated or bound.
-        # Default off ⇒ the table is allocated + bound exactly as before.
-        table_free = bool(getattr(ds_parsed, "table_free", False))
-
-        # Publish the channel selection + no-PE head width on server_args
-        # REGARDLESS of the table / table-free branch. The table path's KV-write
-        # hook needs both; the table-free path additionally derives the absorbed
-        # scratch label_dim from _ds_channel_selection in DeepseekSparseAttnBackend
-        # (without this publish on the table-free branch the backend reads
-        # ds_label_dim=0 and never allocates the absorbed scratch). The mask loads
-        # on CPU but the write hook / absorbed scorer index GPU-resident tensors
-        # with it, so it must live on the selector's device.
+        # Publish the channel selection + no-PE head width on server_args. The
+        # selector's KV-write hook marks slots through _ds_channel_selection, and
+        # the DSA backend derives the absorbed scratch label_dim from it (without
+        # this publish the backend reads ds_label_dim=0 and never allocates the
+        # absorbed scratch). The mask loads on CPU but the absorbed scorer indexes
+        # GPU-resident tensors with it, so it must live on the selector's device.
         setattr(
             server_args,
             "_ds_channel_selection",
             local_mask.channel_selection.to(self.double_sparsity_selector.device),
         )
         setattr(server_args, "_ds_qk_nope_head_dim", self.qk_nope_head_dim)
-
-        # Shared per-rank TokenLabelTable: one allocator-owned object across
-        # all DS attention layers in the same model+rank. Stored on server_args
-        # so the second layer's init reuses it.
-        table = (
-            None
-            if table_free
-            else getattr(server_args, "_double_sparsity_token_label_table", None)
-        )
-        if not table_free and table is None:
-            num_layers_local = int(getattr(config, "num_hidden_layers", 1))
-            # Physical KV slot capacity: out_cache_loc values range 0..size+page_size-1.
-            # This is the first dimension of the KV buffer, NOT req_to_token_pool.size
-            # (which is the request-row count — a much smaller number).
-            kv_pool = getattr(server_args, "_ds_token_to_kv_pool", None)
-            if kv_pool is None:
-                raise RuntimeError(
-                    "Double Sparsity: token_to_kv_pool is not available at bind time. "
-                    "finalize_double_sparsity_bind() must be called after "
-                    "ModelRunner.init_memory_pool() so that TokenLabelTable is sized "
-                    "from the real KV slot address space."
-                )
-            max_tokens = kv_pool.size + kv_pool.page_size
-            label_dim = int(local_mask.label_dim)
-            page_size = int(ds_parsed.page_size)
-            # fp16 is the default storage; the compact path stores int8
-            # signatures + per-(layer, slot, head) fp16 scales (~0.5625x bytes).
-            signature_dtype = (
-                torch.int8
-                if getattr(ds_parsed, "signature_dtype", "fp16") == "int8"
-                else torch.float16
-            )
-            try:
-                table = allocate_token_label_table(
-                    num_layers_local=num_layers_local,
-                    max_tokens=max_tokens,
-                    num_heads_local=self.num_local_heads,
-                    label_dim=label_dim,
-                    page_size=page_size,
-                    dtype=signature_dtype,
-                    device=self.double_sparsity_selector.device,
-                )
-            except Exception as exc:
-                _ds_metrics.record_error(
-                    "bad_mask",
-                    message=f"TokenLabelTable allocation failed: {exc}",
-                    selector_id=f"layer{self.layer_id}-tp_rank{attn_tp_rank}",
-                    layer_id=self.layer_id,
-                )
-                raise
-            setattr(server_args, "_double_sparsity_token_label_table", table)
-        elif not table_free:
-            # Table already allocated by an earlier layer's init. Guard that it was
-            # sized correctly for this KV pool — a mis-sized reuse would cause
-            # out_cache_loc writes to go out-of-bounds or leave untracked slots.
-            kv_pool = getattr(server_args, "_ds_token_to_kv_pool", None)
-            if kv_pool is not None:
-                from sglang.srt.layers.attention.double_sparsity.token_label_table import (
-                    validate_table_covers_kv_pool,
-                )
-                validate_table_covers_kv_pool(table, kv_pool.size, kv_pool.page_size)
 
         # Pick the attn TP process group when world > 1; otherwise leave None.
         # Also bind the coordinator's custom-all-reduce communicator so the
@@ -2099,42 +2022,38 @@ class DeepseekV2AttentionMLA(
                 process_group = None
                 reduce_ca = None
 
-        # Absorbed-latent projection: build the bind-time W_UK rows when the
-        # table-free selection path is on (it scores the resident latent through
-        # them) OR when the recall_oracle side-by-side diagnostic is on. The
-        # shipped path (both off) pays nothing — w_sel stays None. Built BEFORE the
-        # bind because the table-free bind requires it to already be installed. The
-        # block-fp8 kv_b_proj is dequantized with the SAME semantics as the model's
-        # own w_kc extraction (deepseek_weight_loader): weight_scale (or
+        # Absorbed-latent projection: build the bind-time W_UK rows the selector
+        # scores the resident latent through. Built BEFORE the bind because
+        # bind_runtime_data requires it to already be installed. The block-fp8
+        # kv_b_proj is dequantized with the SAME semantics as the model's own
+        # w_kc extraction (deepseek_weight_loader): weight_scale (or
         # weight_scale_inv) + the [128, 128] weight block size.
-        if table_free or getattr(ds_parsed, "recall_oracle", False):
-            from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
-                build_absorbed_projection,
-            )
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
+            build_absorbed_projection,
+        )
 
-            kv_b_weight = self.kv_b_proj.weight
-            weight_scale_inv = None
-            weight_block_size = None
-            if kv_b_weight.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz):
-                weight_scale_inv = getattr(self.kv_b_proj, "weight_scale", None)
-                if weight_scale_inv is None:
-                    weight_scale_inv = getattr(self.kv_b_proj, "weight_scale_inv", None)
-                weight_block_size = [128, 128]
-            # channel_selection is [num_layers, H, label_dim]; the score path
-            # slices [layer_id] (see _compute_logical_token_scores), so the
-            # bind-time projection must use THIS layer's slice to match.
-            self.double_sparsity_selector.absorbed_w_sel = build_absorbed_projection(
-                kv_b_weight,
-                num_heads=self.num_local_heads,
-                qk_nope_head_dim=self.qk_nope_head_dim,
-                v_head_dim=self.v_head_dim,
-                channel_selection=local_mask.channel_selection[self.layer_id],
-                weight_scale_inv=weight_scale_inv,
-                weight_block_size=weight_block_size,
-            )
+        kv_b_weight = self.kv_b_proj.weight
+        weight_scale_inv = None
+        weight_block_size = None
+        if kv_b_weight.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz):
+            weight_scale_inv = getattr(self.kv_b_proj, "weight_scale", None)
+            if weight_scale_inv is None:
+                weight_scale_inv = getattr(self.kv_b_proj, "weight_scale_inv", None)
+            weight_block_size = [128, 128]
+        # channel_selection is [num_layers, H, label_dim]; the score path slices
+        # [layer_id], so the bind-time projection must use THIS layer's slice to
+        # match.
+        self.double_sparsity_selector.absorbed_w_sel = build_absorbed_projection(
+            kv_b_weight,
+            num_heads=self.num_local_heads,
+            qk_nope_head_dim=self.qk_nope_head_dim,
+            v_head_dim=self.v_head_dim,
+            channel_selection=local_mask.channel_selection[self.layer_id],
+            weight_scale_inv=weight_scale_inv,
+            weight_block_size=weight_block_size,
+        )
 
         self.double_sparsity_selector.bind_runtime_data(
-            token_label_table=table,
             channel_mask=local_mask,
             process_group=process_group,
             reduce_ca=reduce_ca,
@@ -2203,12 +2122,6 @@ class DeepseekV2AttentionMLA(
             summary = {}
             setattr(forward_batch, "ds_per_request_summary", summary)
         summary["double_sparsity"] = records
-
-        # M3-B radix-capture publishing was moved to the DSA backend's
-        # `_write_token_labels` (post-write, extend-only) in Round 38.
-        # Publishing from here fires at the START of selection, BEFORE
-        # writes — so the capture would snapshot stale layer state.
-        # See dsa_backend.py for the corrected emission site.
 
     def _select_topk_indices(
         self,
@@ -2291,33 +2204,16 @@ class DeepseekV2AttentionMLA(
                 assert_real_selector_or_placeholder_allowed(
                     self.double_sparsity_selector
                 )
-                # Invalidate newly-allocated slots before scoring so that a
-                # reused KV slot cannot be selected based on a stale label
-                # left by the previously-evicted request.  The companion
-                # _write_token_labels call later in dsa_backend.py restores
-                # written=True once fresh labels are available.
+                # Invalidate newly-allocated slots before scoring so a reused
+                # physical KV slot cannot be selected based on the stale latent
+                # left by the previously-evicted request. The invalidation runs
+                # on the slot_written validity bitmap (resolved through the
+                # ForwardContext attention backend); the companion
+                # _write_token_labels mark later in dsa_backend.py restores
+                # written=True once the fresh KV write lands. In-place index write
+                # on the preallocated bitmap (graph-safe).
                 _out_cache_loc = getattr(forward_batch, "out_cache_loc", None)
-                _tlt = getattr(self.double_sparsity_selector, "token_label_table", None)
-                if _out_cache_loc is not None and _tlt is not None:
-                    from sglang.srt.layers.attention.double_sparsity.token_label_write import (
-                        invalidate_token_label_slots,
-                    )
-                    invalidate_token_label_slots(_tlt.written, layer_id, _out_cache_loc)
-                # Table-free has no TokenLabelTable; the same invalidation runs on
-                # the independent slot_written bitmap (resolved through the
-                # ForwardContext attention backend), so a reused physical slot's
-                # stale latent cannot be selected before its fresh KV write lands.
-                # In-place index write on the preallocated bitmap (graph-safe).
-                if (
-                    _out_cache_loc is not None
-                    and _tlt is None
-                    and bool(
-                        getattr(
-                            self.double_sparsity_selector.config, "table_free", False
-                        )
-                    )
-                    and _has_forward_context()
-                ):
+                if _out_cache_loc is not None and _has_forward_context():
                     _sw_backend = _get_attn_backend()
                     if isinstance(_sw_backend, _TboAttnBackend):
                         _sw_backend = _sw_backend.primary
@@ -2372,11 +2268,10 @@ class DeepseekV2AttentionMLA(
                     _ds_graph_state = getattr(
                         _dsa_metadata, "ds_graph_state", None
                     )
-                # As of R9 ALL non-learned selector variants ride the graph-safe
-                # path — scorer_norm (cosine/hybrid) + head_agg (mean) in
-                # _logical_score_kernel [R6] and anchor_mode (recency/global/
-                # strided) as a tensorized post-topK force-include in
-                # retrieve_topk_graph_safe [R9] — so ds_scorer_is_graph_safe() is
+                # All non-learned selector variants ride the graph-safe path —
+                # head_agg (mean) in the absorbed score kernel and anchor_mode
+                # (recency/global/strided) as a tensorized post-topK force-include
+                # in retrieve_topk_graph_safe — so ds_scorer_is_graph_safe() is
                 # True and nothing here forces eager. The SGLANG_DS_FORCE_EAGER_SELECT
                 # env escape hatch is retained for debugging. Config-borne flags
                 # reach the TP workers.
@@ -2384,36 +2279,27 @@ class DeepseekV2AttentionMLA(
                     ds_scorer_is_graph_safe as _ds_scorer_is_graph_safe,
                 )
 
-                # NOTE: the recall-oracle diagnostic does NOT force eager. The
-                # eager logical scorer allocates per-token intermediates that do
-                # not scale to long-context int8 tensors (error_containment then
-                # silently drops DS to dense), so the oracle must ride the
-                # production graph-safe Triton path; recall_oracle is threaded
+                # NOTE: the recall-oracle diagnostic does NOT force eager. It must
+                # ride the production graph-safe path; recall_oracle is threaded
                 # into retrieve_topk_graph_safe below instead.
                 _force_eager_select = (
                     os.environ.get("SGLANG_DS_FORCE_EAGER_SELECT", "0") == "1"
                     or not _ds_scorer_is_graph_safe(getattr(_selector, "config", None))
                 )
-                # Table-free selection has no TokenLabelTable; its graph-safe
-                # precondition is the bind-time absorbed projection instead. The
-                # table path keeps the non-None-table precondition unchanged.
-                _table_free = bool(getattr(_selector.config, "table_free", False))
-                # Table-free requires BOTH the bind-time projection AND the
-                # preallocated absorbed scratch (v_h / weighted-query / int64 mask /
-                # fp32 query cast) — without them the graph-safe path would route
-                # through the allocating fallback, so insist on all of them here so
-                # the missing-scratch case fails closed below instead of allocating.
-                if _table_free:
-                    _has_selector_state = (
-                        _selector.absorbed_w_sel is not None
-                        and _ds_graph_state is not None
-                        and _ds_graph_state.scratch_absorbed_v is not None
-                        and _ds_graph_state.scratch_absorbed_qsel is not None
-                        and _ds_graph_state.scratch_absorbed_sel_i64 is not None
-                        and _ds_graph_state.scratch_absorbed_q is not None
-                    )
-                else:
-                    _has_selector_state = _selector.token_label_table is not None
+                # Graph-safe selection requires BOTH the bind-time absorbed
+                # projection AND the preallocated absorbed scratch (v_h /
+                # weighted-query / int64 mask / fp32 query cast) — without them the
+                # graph-safe path would route through the allocating fallback, so
+                # insist on all of them here so the missing-scratch case fails
+                # closed below instead of allocating.
+                _has_selector_state = (
+                    _selector.absorbed_w_sel is not None
+                    and _ds_graph_state is not None
+                    and _ds_graph_state.scratch_absorbed_v is not None
+                    and _ds_graph_state.scratch_absorbed_qsel is not None
+                    and _ds_graph_state.scratch_absorbed_sel_i64 is not None
+                    and _ds_graph_state.scratch_absorbed_q is not None
+                )
                 _use_graph_safe = (
                     not _force_eager_select
                     and _ds_graph_state is not None
@@ -2458,18 +2344,12 @@ class DeepseekV2AttentionMLA(
                         _seq_lens_i32 = _ds_graph_state.scratch_seq_lens[:_bs]
                         _seq_lens_i32.copy_(_seq_lens)
 
-                    # Resident fp8-latent read for the absorbed scorer. Needed by
-                    # the table-free selection path (the RETURNED top-K is the
-                    # absorbed selection) AND by the recall_oracle side-by-side
-                    # diagnostic (table vs absorbed comparison). Read this layer's
+                    # Resident fp8-latent read for the absorbed scorer: the
+                    # RETURNED top-K is the absorbed selection. Read this layer's
                     # fp8 nope latent + per-128-block scales off the MLA KV pool.
-                    # Off both paths all three stay None and nothing here runs
-                    # (byte-identical).
                     _absorbed_latent_fp8 = None
                     _absorbed_latent_scales = None
-                    if (
-                        _table_free or getattr(_selector.config, "recall_oracle", False)
-                    ) and _selector.absorbed_w_sel is not None:
+                    if _selector.absorbed_w_sel is not None:
                         from sglang.srt.model_executor.forward_context import (
                             get_token_to_kv_pool as _get_token_to_kv_pool,
                         )
@@ -2493,36 +2373,26 @@ class DeepseekV2AttentionMLA(
                                 :, 0, _lora : _lora + _nblk * 4
                             ].view(torch.float32)
 
-                    # Table tensors are absent on the table-free path (no
-                    # TokenLabelTable); the table_free branch in
-                    # retrieve_topk_graph_safe never reads them. The validity
-                    # `written` arg for table_free is the independent slot_written
-                    # bitmap [L, T] (the absorbed kernel masks unwritten slots to
-                    # -inf via its HAS_WRITTEN path). Fail closed if the bitmap is
-                    # absent — a missing guard would let a reused slot's stale
-                    # latent be selected.
-                    _tlt = _selector.token_label_table
-                    _written_arg = _tlt.written if _tlt is not None else None
-                    if _table_free:
-                        _sw_backend = None
-                        if _has_forward_context():
-                            _sw_backend = _get_attn_backend()
-                            if isinstance(_sw_backend, _TboAttnBackend):
-                                _sw_backend = _sw_backend.primary
-                        _written_arg = getattr(_sw_backend, "_ds_slot_written", None)
-                        if _written_arg is None:
-                            raise RuntimeError(
-                                "Double Sparsity table_free requires the "
-                                "slot_written validity bitmap, but it is absent on "
-                                "the attention backend; a reused KV slot's stale "
-                                "latent could be selected. Ensure the DSA backend "
-                                "allocated _ds_slot_written under table_free."
-                            )
+                    # The validity `written` arg is the slot_written bitmap [L, T]
+                    # (the absorbed kernel masks unwritten slots to -inf via its
+                    # HAS_WRITTEN path). Fail closed if the bitmap is absent — a
+                    # missing guard would let a reused slot's stale latent be
+                    # selected.
+                    _sw_backend = None
+                    if _has_forward_context():
+                        _sw_backend = _get_attn_backend()
+                        if isinstance(_sw_backend, _TboAttnBackend):
+                            _sw_backend = _sw_backend.primary
+                    _written_arg = getattr(_sw_backend, "_ds_slot_written", None)
+                    if _written_arg is None:
+                        raise RuntimeError(
+                            "Double Sparsity requires the slot_written validity "
+                            "bitmap, but it is absent on the attention backend; a "
+                            "reused KV slot's stale latent could be selected. "
+                            "Ensure the DSA backend allocated _ds_slot_written."
+                        )
                     retrieve_topk_graph_safe(
                         queries=queries_for_ds,
-                        token_signatures=(
-                            _tlt.signatures if _tlt is not None else None
-                        ),
                         written=_written_arg,
                         channel_selection=_selector.channel_mask.channel_selection,
                         channel_weights=_selector.channel_mask.channel_weights,
@@ -2557,7 +2427,6 @@ class DeepseekV2AttentionMLA(
                         ),
                         radix_topk_scratch=_radix_topk_scratch(_ds_graph_state),
                         topk_block=getattr(_ds_graph_state, "topk_block", 1024),
-                        token_scales=(_tlt.scales if _tlt is not None else None),
                         process_group=getattr(_selector, "process_group", None),
                         reduce_ca=getattr(_selector, "reduce_ca", None),
                         score_reduce_bf16=(
@@ -2569,15 +2438,11 @@ class DeepseekV2AttentionMLA(
                         ),
                         scorer_norm=getattr(_selector.config, "scorer_norm", "off"),
                         head_agg=getattr(_selector.config, "head_agg", "max"),
-                        hybrid_threshold=getattr(
-                            _selector.config, "scorer_norm_hybrid_threshold", 8192
-                        ),
                         anchor_mode=getattr(_selector.config, "anchor_mode", "off"),
                         anchor_budget=getattr(_selector.config, "anchor_budget", 0),
                         absorbed_latent_fp8=_absorbed_latent_fp8,
                         absorbed_latent_scales=_absorbed_latent_scales,
                         absorbed_w_sel=_selector.absorbed_w_sel,
-                        table_free=_table_free,
                         scratch_absorbed_v=getattr(
                             _ds_graph_state, "scratch_absorbed_v", None
                         ),
@@ -2595,25 +2460,14 @@ class DeepseekV2AttentionMLA(
                     valid_lengths = _ds_graph_state.valid_lengths[:_bs]
                 else:
                     # Fail closed: the eager retrieve_topk fallback does not thread
-                    # the resident fp8 latent, so table-free selection cannot score
-                    # here. The table-free path only runs through the graph-safe
+                    # the resident fp8 latent, so selection cannot score here.
+                    # Selection only runs through the graph-safe
                     # retrieve_topk_graph_safe above (which reads the latent).
-                    if _table_free:
-                        raise RuntimeError(
-                            "Double Sparsity table_free requires the graph-safe "
-                            "selector path (preallocated ds_graph_state + the "
-                            "resident fp8 latent); the eager retrieve_topk fallback "
-                            "is not wired for table_free."
-                        )
-                    selected_indices, valid_lengths = (
-                        self.double_sparsity_selector.retrieve_topk(
-                            queries=queries_for_ds,
-                            layer_id=layer_id,
-                            req_pool_indices=forward_batch.req_pool_indices,
-                            sparse_mask=_sparse_mask,
-                            seq_lens=_seq_lens,
-                            req_to_token=req_to_token,
-                        )
+                    raise RuntimeError(
+                        "Double Sparsity requires the graph-safe selector path "
+                        "(preallocated ds_graph_state + the resident fp8 latent); "
+                        "the eager retrieve_topk fallback is not wired for "
+                        "production selection."
                     )
                 # Selection-capture mirrors (config-borne diagnostic): copy this
                 # layer's selection into the per-layer capture buffers. A device

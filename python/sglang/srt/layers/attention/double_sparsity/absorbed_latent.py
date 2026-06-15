@@ -1,11 +1,10 @@
-"""Absorbed-latent Double Sparsity scoring (score-only prototype).
+"""Absorbed-latent Double Sparsity scoring.
 
 Double Sparsity selects tokens by ``score = query · signature`` where the
-materialized signature is ``channel_select(W_UK · c_kv)`` — the per-head K_nope
+signature is ``channel_select(W_UK · c_kv)`` — the per-head K_nope
 (``k_nope[h] = W_UK[h] · c_kv``) sliced to the offline-mask channels ``S_h``,
-with the channel weights ``w_c`` applied on the query side. See
-``token_label_write.py`` (write = ``k_nope[:, :, S_h]``) and
-``selection_kernel.project_query_onto_channels`` (query = ``w_c · q_{S_h}``).
+with the channel weights ``w_c`` applied on the query side (query =
+``w_c · q_{S_h}``).
 
 Substituting ``k_nope[t,h,c] = Σ_l W_UK[h][c,l] · c_kv[t,l]`` collapses the score
 to an inner product against the resident latent::
@@ -16,15 +15,14 @@ to an inner product against the resident latent::
 
 so the per-token signature IS the latent: the ``v_h`` projection (a few MACs per
 head per step) is built query-side from the bind-time-selected ``W_UK`` rows, and
-the key side is the fp8 latent the KV pool already stores. The TokenLabelTable,
-the prefill label-write hook, and its GB/rank disappear exactly — only fp32
-reassociation and (in serving) the fp8-quantized latent vs the bf16-pre-quant
-label distinguish the two, a declared value-affecting change gated by recall@2048
-(±0.5pp) + selection equivalence, NOT a bit-identity claim.
+the key side is the fp8 latent the KV pool already stores. No separate signature
+store and no prefill label-write hook are needed; the score reads the resident
+latent directly (``scorer_norm="off"``).
 
-This module is the score-only DIAGNOSTIC reference (``scorer_norm="off"`` only). It
-does not change the selector ABI or delete the table; that integration is a later
-step. It backs the live-path equivalence + recall gates that precede the swap.
+This module owns the production absorbed-latent scoring math (``scorer_norm="off"``
+only): the bind-time ``build_absorbed_projection`` and the per-step query-side
+``absorbed_latent_v`` build, plus CPU reference scorers used as the exact oracle
+for the Triton kernel.
 """
 
 from __future__ import annotations
@@ -206,8 +204,8 @@ def absorbed_latent_score_logical(
     written: torch.Tensor = None,
     head_agg: str = "max",
 ) -> torch.Tensor:
-    """Logical-domain paged absorbed score — mirrors ``_compute_logical_token_scores``
-    but reads the resident latent instead of materialized signatures.
+    """Logical-domain paged absorbed score — scores the resident latent
+    directly (no materialized signatures).
 
     For each request, walks logical positions ``0..max_seq_len`` through
     ``req_to_token[pool, pos] -> physical slot``, gathers ``c_kv`` at the physical

@@ -71,14 +71,12 @@ class DSGraphState:
     # == "bf16"): the fp32 scores are cast into this view, reduced, and cast
     # back — halving the reduce bytes over the static score width.
     scratch_scores_bf16: Optional[torch.Tensor] = None    # bf16 [max_bs, max_seq_len]
-    # Table-free (absorbed-latent) selection scratch — only allocated when the
-    # config-borne `table_free` selector is in play. The query-side latent
-    # projection v_h is built into scratch_absorbed_v in place, scored straight
-    # into scratch_scores (paged fp8, in place), then the SAME reduce + radix
-    # top-k as the table path runs. scratch_absorbed_qsel holds the weighted
-    # channel-gathered query; scratch_absorbed_sel_i64 is the int64 layer mask
-    # (copied from the int32 channel selection) so the gather does no per-step
-    # .long() allocation.
+    # Absorbed-latent selection scratch. The query-side latent projection v_h is
+    # built into scratch_absorbed_v in place, scored straight into scratch_scores
+    # (paged fp8, in place), then the reduce + radix top-k runs.
+    # scratch_absorbed_qsel holds the weighted channel-gathered query;
+    # scratch_absorbed_sel_i64 is the int64 layer mask (copied from the int32
+    # channel selection) so the gather does no per-step .long() allocation.
     # scratch_absorbed_v: fp32 [max_bs, num_local_heads, kv_lora_rank]
     scratch_absorbed_v: Optional[torch.Tensor] = None
     # scratch_absorbed_qsel: fp32 [max_bs, num_local_heads, label_dim]
@@ -156,7 +154,6 @@ def allocate_graph_state(
     enable_lifted_budget_decode: bool = False,
     lifted_q_pad_heads: int = 0,
     lifted_head_dim: int = 576,
-    table_free: bool = False,
     kv_lora_rank: int = 0,
     qk_nope_head_dim: int = 0,
     device: Optional[torch.device] = None,
@@ -178,10 +175,8 @@ def allocate_graph_state(
     ``scratch_topk_indices``, ``scratch_invalid_mask``, ``scratch_sorted_vals``,
     ``scratch_boundary``, ``scratch_valid_i64``, ``scratch_pv_mask``) are also
     allocated, sized to the worst-case ``(max_bs, max_seq_len)`` / ``(max_bs,
-    max_top_k)``.  ``num_local_heads`` and ``label_dim`` size the table-free
-    (absorbed-latent) scratch when ``table_free`` is set (the table path's Triton
-    kernel reads heads/label_dim from the bound selector at call time, so it does
-    not need them); ``kv_lora_rank`` is the latent width for ``scratch_absorbed_v``,
+    max_top_k)``.  ``num_local_heads`` and ``label_dim`` size the absorbed-latent
+    scratch; ``kv_lora_rank`` is the latent width for ``scratch_absorbed_v``,
     ``qk_nope_head_dim`` is the served query width for ``scratch_absorbed_q``.
     """
     if max_bs <= 0:
@@ -274,11 +269,10 @@ def allocate_graph_state(
             scratch_scores_bf16 = torch.zeros(
                 (max_bs, max_seq_len), dtype=torch.bfloat16, device=device,
             )
-        # Table-free absorbed-latent scratch: v_h ([max_bs, H, lora]), the
-        # weighted channel-gathered query ([max_bs, H, label_dim]), and the int64
-        # layer mask ([H, label_dim]). Only allocated for the table-free selector;
-        # the table path leaves all three None.
-        if table_free and num_local_heads > 0 and kv_lora_rank > 0 and label_dim > 0:
+        # Absorbed-latent scratch: v_h ([max_bs, H, lora]), the weighted
+        # channel-gathered query ([max_bs, H, label_dim]), and the int64 layer
+        # mask ([H, label_dim]).
+        if num_local_heads > 0 and kv_lora_rank > 0 and label_dim > 0:
             scratch_absorbed_v = torch.zeros(
                 (max_bs, num_local_heads, kv_lora_rank),
                 dtype=torch.float32,
@@ -326,7 +320,7 @@ def allocate_graph_state(
         )
 
     # Selection-capture mirrors — only when the config-borne diagnostic is on
-    # (selection_capture_layers = the token-label table's layer count).
+    # (selection_capture_layers = the DS layer count).
     capture_indices = None
     capture_lengths = None
     if selection_capture_layers > 0:
@@ -493,30 +487,22 @@ def capture_decode_step(
     # When the selector is bound AND scratch is allocated, route through the
     # allocation-free graph-safe retrieve_topk_graph_safe. Otherwise fall back
     # to selector.retrieve_topk (allocates during capture; not zero-alloc).
-    # Table-free selection has no TokenLabelTable; its graph-safe precondition is
-    # the bind-time absorbed projection + the caller-supplied resident fp8 latent.
-    _table_free = bool(getattr(getattr(selector, "config", None), "table_free", False))
-    if _table_free:
-        use_graph_safe = (
-            getattr(selector, "absorbed_w_sel", None) is not None
-            and getattr(selector, "channel_mask", None) is not None
-            and state.scratch_scores is not None
-            and state.scratch_absorbed_v is not None
-            and absorbed_latent_fp8 is not None
-            and absorbed_latent_scales is not None
-        )
-    else:
-        use_graph_safe = (
-            getattr(selector, "token_label_table", None) is not None
-            and getattr(selector, "channel_mask", None) is not None
-            and state.scratch_scores is not None
-        )
+    # Selection's graph-safe precondition is the bind-time absorbed projection +
+    # the caller-supplied resident fp8 latent.
+    use_graph_safe = (
+        getattr(selector, "absorbed_w_sel", None) is not None
+        and getattr(selector, "channel_mask", None) is not None
+        and state.scratch_scores is not None
+        and state.scratch_absorbed_v is not None
+        and absorbed_latent_fp8 is not None
+        and absorbed_latent_scales is not None
+    )
 
-    # Fail-fast future-proof guard. As of R9 every non-learned variant is
-    # graph-safe — scorer_norm (cosine/hybrid) + head_agg (mean) in the Triton
-    # scorer [R6], anchor_mode (recency/global/strided) as a tensorized post-topK
-    # force-include [R9] — so this does not fire. It remains so a future
-    # non-graph-safe variant can re-enable the eager requirement.
+    # Fail-fast future-proof guard. Every non-learned variant is graph-safe —
+    # head_agg (mean) in the absorbed score kernel, anchor_mode (recency/global/
+    # strided) as a tensorized post-topK force-include — so this does not fire.
+    # It remains so a future non-graph-safe variant can re-enable the eager
+    # requirement.
     if use_graph_safe:
         from sglang.srt.layers.attention.double_sparsity.selection_kernel import (
             ds_scorer_is_graph_safe,
@@ -534,13 +520,9 @@ def capture_decode_step(
                 retrieve_topk_graph_safe,
             )
 
-            # Table tensors are absent on the table-free path; the table_free
-            # branch scores the resident fp8 latent and never reads them.
-            _tlt = getattr(selector, "token_label_table", None)
             retrieve_topk_graph_safe(
                 queries=queries,
-                token_signatures=_tlt.signatures if _tlt is not None else None,
-                written=_tlt.written if _tlt is not None else None,
+                written=None,
                 channel_selection=selector.channel_mask.channel_selection,
                 channel_weights=selector.channel_mask.channel_weights,
                 layer_id=layer_id,
@@ -564,7 +546,6 @@ def capture_decode_step(
                 scratch_scores_bf16=state.scratch_scores_bf16,
                 radix_topk_scratch=radix_topk_scratch(state),
                 topk_block=state.topk_block,
-                token_scales=_tlt.scales if _tlt is not None else None,
                 process_group=getattr(selector, "process_group", None),
                 reduce_ca=getattr(selector, "reduce_ca", None),
                 score_reduce_bf16=(
@@ -572,15 +553,11 @@ def capture_decode_step(
                 ),
                 scorer_norm=getattr(selector.config, "scorer_norm", "off"),
                 head_agg=getattr(selector.config, "head_agg", "max"),
-                hybrid_threshold=getattr(
-                    selector.config, "scorer_norm_hybrid_threshold", 8192
-                ),
                 anchor_mode=getattr(selector.config, "anchor_mode", "off"),
                 anchor_budget=getattr(selector.config, "anchor_budget", 0),
                 absorbed_latent_fp8=absorbed_latent_fp8,
                 absorbed_latent_scales=absorbed_latent_scales,
                 absorbed_w_sel=getattr(selector, "absorbed_w_sel", None),
-                table_free=_table_free,
                 scratch_absorbed_v=state.scratch_absorbed_v,
                 scratch_absorbed_qsel=state.scratch_absorbed_qsel,
                 scratch_absorbed_sel_i64=state.scratch_absorbed_sel_i64,

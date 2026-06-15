@@ -3322,8 +3322,8 @@ class Scheduler(
         # underscore) from the serialized internal state. ServerArgs config
         # fields are all public; the underscore-prefixed attrs are runtime
         # bind state — notably Double Sparsity stashes CUDA tensors / pools
-        # (`_ds_channel_selection`, `_double_sparsity_token_label_table`,
-        # `_ds_token_to_kv_pool`, ...). Serializing those over the ZMQ pyobj
+        # (`_ds_channel_selection`, `_ds_token_to_kv_pool`, ...). Serializing
+        # those over the ZMQ pyobj
         # IPC pickles tensors and crashes `recv_pyobj` (torch.load), taking the
         # whole server down on any `/get_server_info` call.
         ret = {

@@ -1,28 +1,22 @@
-"""Token-score computation + top-K selection for Double Sparsity.
+"""Score reduction + top-K selection for Double Sparsity.
 
-Two pipeline stages, both capture-safe (no host syncs, no dynamic shapes):
+The per-(batch, token) selection scores are produced directly off the
+resident MLA latent by the absorbed-latent score kernels
+(:mod:`absorbed_latent_kernel`). This module owns the stages that follow,
+both capture-safe (no host syncs, no dynamic shapes):
 
-1. **Score**. ``compute_token_scores`` consumes the per-(layer, token)
-   compressed label signatures (``[L, T, H_local, label_dim]`` fp16) and a
-   per-row query (``[bs, num_local_heads, head_dim]`` bf16/fp16) and returns
-   ``token_scores[bs, max_tokens]`` fp32 — max-over-heads of the channel-mask-
-   projected dot product. For TP-correctness the caller all-reduces the
-   resulting scores across the attention TP group, so per-rank top-K
-   agrees by construction.
+1. **Reduce**. The per-rank scores are all-reduced across the attention TP
+   group, so per-rank top-K agrees by construction.
 
-2. **Select**. ``select_topk_sequence_order`` consumes the all-reduced
-   scores plus the ``written`` mask for unpopulated tokens. Returns
-   ``(selected_indices, valid_lengths)`` with ``selected_indices`` in
-   **sequence-order ascending** (logical token position order) with ``-1``
-   padding, per the selector ABI contract.
+2. **Select**. ``select_topk_sequence_order`` consumes the all-reduced scores
+   plus the per-slot ``written`` validity mask. Returns ``(selected_indices,
+   valid_lengths)`` with ``selected_indices`` in **sequence-order ascending**
+   (logical token position order) with ``-1`` padding, per the selector ABI
+   contract. The top-K step uses ``torch.topk`` + ``torch.sort`` (both
+   CUDA-graph capture-safe with static shapes).
 
-The torch-based reference implementation is correct, deterministic, and
-capture-safe. A Triton kernel for the score step lives in
-:func:`_compute_token_scores_kernel` and is selected automatically when
-running on CUDA; the torch path is kept as the documented reference and as
-the fallback for capture-mode debugging and CPU unit tests. The top-K step
-uses ``torch.topk`` + ``torch.sort`` (both CUDA-graph capture-safe with
-static shapes).
+``project_query_onto_channels`` projects a query onto each head's channel
+mask; it is the canonical projection the absorbed-latent build mirrors.
 """
 
 from __future__ import annotations
@@ -44,345 +38,6 @@ try:
     _TRITON_AVAILABLE = True
 except ImportError:
     _TRITON_AVAILABLE = False
-
-
-def _next_pow2(n: int) -> int:
-    if n <= 1:
-        return 1
-    return 1 << (n - 1).bit_length()
-
-
-if _TRITON_AVAILABLE:
-
-    @triton.jit
-    def _logical_score_kernel(
-        q_ptr,          # [bs, H, head_dim] fp32
-        ch_sel_ptr,     # [H, label_dim] int32 (per-layer slice)
-        ch_w_ptr,       # [H, label_dim] fp32 (per-layer slice)
-        sig_ptr,        # [T, H, label_dim] fp16/fp32/int8 (per-layer slice)
-        scale_ptr,      # [T, H] fp16 (compact int8 path) or unused when HAS_SCALE is False
-        written_ptr,    # [T] bool (per-layer slice)
-        rpi_ptr,        # [bs] int32
-        rtt_ptr,        # [num_pools, max_pool_len] int32
-        sl_ptr,         # [bs] int32
-        out_ptr,        # [bs, max_seq_len] fp32 (pre-allocated)
-        num_heads: tl.constexpr,
-        max_seq_len: tl.constexpr,
-        label_dim: tl.constexpr,
-        max_pool_len: tl.constexpr,
-        max_tokens: tl.constexpr,
-        q_stride_b: tl.constexpr,
-        q_stride_h: tl.constexpr,
-        ch_sel_stride_h: tl.constexpr,
-        ch_w_stride_h: tl.constexpr,
-        sig_stride_t: tl.constexpr,
-        sig_stride_h: tl.constexpr,
-        scale_stride_t: tl.constexpr,
-        scale_stride_h: tl.constexpr,
-        HAS_SCALE: tl.constexpr,
-        rtt_stride_p: tl.constexpr,
-        out_stride_b: tl.constexpr,
-        TOKEN_BLOCK: tl.constexpr,
-        LABEL_DIM_POW2: tl.constexpr,
-        SCORER_NORM: tl.constexpr,       # 0=off(raw), 1=cosine, 2=hybrid
-        HEAD_AGG_MEAN: tl.constexpr,     # bool: True=mean over heads, False=max
-        HYBRID_THRESHOLD: tl.constexpr,  # int: hybrid uses cosine when seq_len > this
-        STORE_DEAD_NEG_INF: tl.constexpr,  # bool: write -inf over blocks past seq_len
-        WORKERS: tl.constexpr,           # programs per row; each loops over blocks
-    ):
-        # Persistent-worker layout: the grid is (bs, WORKERS) — a fixed small
-        # program count — and each worker strides over the token blocks it
-        # owns. The loop bound is the LIVE block count (device-computed from
-        # this row's seq_len), so work is proportional to the live window
-        # instead of the static score width: the previous one-program-per-
-        # block grid paid a ~40 µs launch floor for ~23k mostly-dead programs
-        # at the served op point. The grid stays static (CUDA-graph safe);
-        # only the per-program loop trip count is data-dependent, which is
-        # legal device-side control flow. Each position is computed by exactly
-        # one worker with unchanged per-position math, so the output is
-        # bit-identical to the per-block grid.
-        #
-        # The full-width torch.topk consumer scans the whole scratch, so its
-        # path keeps storing -inf over dead blocks (STORE_DEAD_NEG_INF=True
-        # extends the loop to all blocks). The sequence-bounded radix selector
-        # never reads past seq_len and skips them.
-        batch_id = tl.program_id(0)
-        worker = tl.program_id(1)
-
-        seq_len_i = tl.load(sl_ptr + batch_id).to(tl.int32)
-        n_live = tl.minimum(seq_len_i, max_seq_len)
-        live_blocks = (n_live + TOKEN_BLOCK - 1) // TOKEN_BLOCK
-        if STORE_DEAD_NEG_INF:
-            nblk = (max_seq_len + TOKEN_BLOCK - 1) // TOKEN_BLOCK
-        else:
-            nblk = live_blocks
-
-        # Row-invariant loads, hoisted out of the block loop.
-        pool_idx = tl.load(rpi_ptr + batch_id).to(tl.int64)
-        d_offs = tl.arange(0, LABEL_DIM_POW2)
-        d_mask = d_offs < label_dim
-        eps = 1e-6
-        # Per-request cosine decision for hybrid: cosine above the length
-        # threshold, raw channel-dot at/below it (matches the eager
-        # _compute_logical_token_scores length-conditional switch). Scalar.
-        hybrid_cos = seq_len_i > HYBRID_THRESHOLD
-
-        for tok_blk in range(worker, nblk, WORKERS):
-            tok_offs = tok_blk * TOKEN_BLOCK + tl.arange(0, TOKEN_BLOCK)
-            in_range = tok_offs < max_seq_len
-            if tok_blk * TOKEN_BLOCK >= seq_len_i:
-                # Dead block — only visited when STORE_DEAD_NEG_INF extends
-                # the loop past the live count.
-                tl.store(
-                    out_ptr + batch_id * out_stride_b + tok_offs,
-                    tl.full((TOKEN_BLOCK,), float("-inf"), dtype=tl.float32),
-                    mask=in_range,
-                )
-            else:
-                pos_valid = in_range & (tok_offs < seq_len_i)
-
-                safe_tok = tl.minimum(tok_offs, max_pool_len - 1)
-                phys = tl.load(
-                    rtt_ptr + pool_idx * rtt_stride_p + safe_tok,
-                    mask=in_range,
-                    other=0,
-                ).to(tl.int64)
-                safe_phys = tl.minimum(tl.maximum(phys, 0), max_tokens - 1)
-
-                written = tl.load(
-                    written_ptr + safe_phys, mask=in_range, other=0
-                ).to(tl.int1)
-                valid = pos_valid & written
-
-                # Cross-head accumulator: 0 for mean (sum then divide), -inf for max.
-                if HEAD_AGG_MEAN:
-                    acc = tl.zeros((TOKEN_BLOCK,), dtype=tl.float32)
-                else:
-                    acc = tl.full((TOKEN_BLOCK,), float("-inf"), dtype=tl.float32)
-
-                for h in range(num_heads):
-                    sel_h = tl.load(
-                        ch_sel_ptr + h * ch_sel_stride_h + d_offs,
-                        mask=d_mask,
-                        other=0,
-                    ).to(tl.int64)
-                    w_h = tl.load(
-                        ch_w_ptr + h * ch_w_stride_h + d_offs,
-                        mask=d_mask,
-                        other=0.0,
-                    ).to(tl.float32)
-                    q_base = q_ptr + batch_id * q_stride_b + h * q_stride_h
-                    q_h = tl.load(q_base + sel_h, mask=d_mask, other=0.0).to(tl.float32)
-                    q_proj_h = q_h * w_h
-
-                    sig_offs = (
-                        safe_phys[:, None] * sig_stride_t
-                        + h * sig_stride_h
-                        + d_offs[None, :]
-                    )
-                    sig_block = tl.load(
-                        sig_ptr + sig_offs,
-                        mask=in_range[:, None] & d_mask[None, :],
-                        other=0.0,
-                    ).to(tl.float32)
-                    dot = tl.sum(q_proj_h[None, :] * sig_block, axis=1)
-
-                    if SCORER_NORM == 0:
-                        # Raw channel-dot (production), dequant-scaled for the int8 path
-                        # (scale >= 0 preserves ordering).
-                        if HAS_SCALE:
-                            scale_h = tl.load(
-                                scale_ptr + safe_phys * scale_stride_t + h * scale_stride_h,
-                                mask=in_range,
-                                other=0.0,
-                            ).to(tl.float32)
-                            score_h = dot * scale_h
-                        else:
-                            score_h = dot
-                    else:
-                        # Cosine (direction-only): unit-normalize the weighted query and
-                        # the token signature per head. Equal to the eager
-                        # ((qf/||qf||)*(sf/||sf||)).sum form (normalize-then-sum); scale
-                        # is intentionally ignored (it cancels under normalization).
-                        q_norm = tl.sqrt(tl.sum(q_proj_h * q_proj_h)) + eps
-                        sig_norm = tl.sqrt(tl.sum(sig_block * sig_block, axis=1)) + eps
-                        cos = tl.sum(
-                            (q_proj_h[None, :] / q_norm) * (sig_block / sig_norm[:, None]),
-                            axis=1,
-                        )
-                        if SCORER_NORM == 1:
-                            score_h = cos
-                        else:
-                            # Hybrid: cosine above the threshold, raw (scaled) below.
-                            if HAS_SCALE:
-                                scale_h = tl.load(
-                                    scale_ptr + safe_phys * scale_stride_t + h * scale_stride_h,
-                                    mask=in_range,
-                                    other=0.0,
-                                ).to(tl.float32)
-                                raw_h = dot * scale_h
-                            else:
-                                raw_h = dot
-                            score_h = tl.where(hybrid_cos, cos, raw_h)
-
-                    if HEAD_AGG_MEAN:
-                        acc += score_h
-                    else:
-                        acc = tl.where(score_h > acc, score_h, acc)
-
-                if HEAD_AGG_MEAN:
-                    acc = acc / num_heads
-
-                out_score = tl.where(
-                    valid,
-                    acc,
-                    tl.full(acc.shape, float("-inf"), dtype=tl.float32),
-                )
-                tl.store(
-                    out_ptr + batch_id * out_stride_b + tok_offs,
-                    out_score,
-                    mask=in_range,
-                )
-
-
-    @triton.jit
-    def _compute_token_scores_kernel(
-        q_proj_ptr,  # [bs, H, label_dim] fp32
-        sig_ptr,     # [T, H, label_dim] fp16/fp32/int8
-        written_ptr, # [T] bool
-        out_ptr,     # [bs, T] fp32
-        scale_ptr,   # [T, H] fp16 (compact int8 path) or unused when HAS_SCALE is False
-        bs: tl.constexpr,
-        num_heads: tl.constexpr,
-        max_tokens: tl.constexpr,
-        label_dim: tl.constexpr,
-        q_stride_b: tl.constexpr,
-        q_stride_h: tl.constexpr,
-        sig_stride_t: tl.constexpr,
-        sig_stride_h: tl.constexpr,
-        out_stride_b: tl.constexpr,
-        scale_stride_t: tl.constexpr,
-        scale_stride_h: tl.constexpr,
-        HAS_SCALE: tl.constexpr,
-        TOKEN_BLOCK: tl.constexpr,
-        LABEL_DIM_POW2: tl.constexpr,
-    ):
-        batch_id = tl.program_id(0)
-        token_block = tl.program_id(1)
-        token_offsets = token_block * TOKEN_BLOCK + tl.arange(0, TOKEN_BLOCK)
-        token_in_range = token_offsets < max_tokens
-
-        d_offsets = tl.arange(0, LABEL_DIM_POW2)
-        d_mask = d_offsets < label_dim
-
-        max_score = tl.full((TOKEN_BLOCK,), float("-inf"), dtype=tl.float32)
-
-        for h in range(num_heads):
-            q_offsets = batch_id * q_stride_b + h * q_stride_h + d_offsets
-            q_block = tl.load(
-                q_proj_ptr + q_offsets, mask=d_mask, other=0.0
-            ).to(tl.float32)
-
-            sig_offsets = (
-                token_offsets[:, None] * sig_stride_t
-                + h * sig_stride_h
-                + d_offsets[None, :]
-            )
-            sig_block = tl.load(
-                sig_ptr + sig_offsets,
-                mask=token_in_range[:, None] & d_mask[None, :],
-                other=0.0,
-            ).to(tl.float32)
-
-            dot = tl.sum(q_block[None, :] * sig_block, axis=1)
-            if HAS_SCALE:
-                # Dequant: multiply the int8 dot by the per-(token, head) scale
-                # before the cross-head max (scale >= 0 preserves ordering).
-                scale_h = tl.load(
-                    scale_ptr + token_offsets * scale_stride_t + h * scale_stride_h,
-                    mask=token_in_range,
-                    other=0.0,
-                ).to(tl.float32)
-                dot = dot * scale_h
-            max_score = tl.where(dot > max_score, dot, max_score)
-
-        written_block = tl.load(
-            written_ptr + token_offsets, mask=token_in_range, other=0
-        ).to(tl.int1)
-        out_score = tl.where(
-            written_block,
-            max_score,
-            tl.full(max_score.shape, float("-inf"), dtype=tl.float32),
-        )
-
-        out_offsets = batch_id * out_stride_b + token_offsets
-        tl.store(out_ptr + out_offsets, out_score, mask=token_in_range)
-
-
-def _compute_token_scores_triton(
-    q_proj: torch.Tensor,
-    sig_layer: torch.Tensor,
-    written_layer: torch.Tensor,
-    *,
-    scale_layer: Optional[torch.Tensor] = None,
-    token_block: int = 64,
-) -> torch.Tensor:
-    """Triton kernel-driven token scoring.
-
-    Args:
-        q_proj: ``[bs, H, label_dim]`` fp32.
-        sig_layer: ``[max_tokens, H, label_dim]`` fp16/fp32/int8.
-        written_layer: ``[max_tokens]`` bool.
-        scale_layer: optional ``[max_tokens, H]`` per-(slot, head) dequant scale
-            for the int8 compact path; ``None`` keeps the fp16 path.
-
-    Returns:
-        ``[bs, max_tokens]`` fp32. Unwritten tokens are ``-inf``.
-    """
-
-    assert q_proj.is_cuda and sig_layer.is_cuda and written_layer.is_cuda
-    bs, num_heads, label_dim = q_proj.shape
-    max_tokens = int(sig_layer.shape[0])
-    out = torch.empty((bs, max_tokens), dtype=torch.float32, device=q_proj.device)
-
-    q_proj_c = q_proj.contiguous()
-    sig_c = sig_layer.contiguous()
-    written_c = written_layer.contiguous()
-    has_scale = scale_layer is not None
-    scale_c = scale_layer.contiguous() if has_scale else sig_c
-    scale_stride_t = scale_c.stride(0) if has_scale else 0
-    scale_stride_h = scale_c.stride(1) if has_scale else 0
-
-    desired_block = min(token_block, max(max_tokens, 1))
-    if desired_block <= 0:
-        desired_block = max(1, max_tokens)
-    token_block_pow2 = _next_pow2(desired_block)
-    label_dim_pow2 = _next_pow2(max(label_dim, 1))
-    num_token_blocks = (max_tokens + token_block_pow2 - 1) // token_block_pow2
-    grid = (bs, num_token_blocks)
-
-    _compute_token_scores_kernel[grid](
-        q_proj_c,
-        sig_c,
-        written_c,
-        out,
-        scale_c,
-        bs=bs,
-        num_heads=num_heads,
-        max_tokens=max_tokens,
-        label_dim=label_dim,
-        q_stride_b=q_proj_c.stride(0),
-        q_stride_h=q_proj_c.stride(1),
-        sig_stride_t=sig_c.stride(0),
-        sig_stride_h=sig_c.stride(1),
-        out_stride_b=out.stride(0),
-        scale_stride_t=scale_stride_t,
-        scale_stride_h=scale_stride_h,
-        HAS_SCALE=has_scale,
-        TOKEN_BLOCK=token_block_pow2,
-        LABEL_DIM_POW2=label_dim_pow2,
-    )
-    return out
 
 
 def project_query_onto_channels(
@@ -415,51 +70,17 @@ def project_query_onto_channels(
     return gathered * channel_weights.unsqueeze(0)
 
 
-def _scorer_norm_mode() -> str:
-    """Flag-gated DS scorer normalization (Loop-7 Tier-2.B candidate).
-
-    ``SGLANG_DS_SCORER_NORM``:
-      - ``"off"`` (default): the production raw channel-dot scorer, byte-identical.
-      - ``"cosine"``: unit-normalize the query projection and each token signature
-        per head before the dot, so the score is direction-only (magnitude
-        invariant). Rationale (M0 oracle): at 16K the needle ranks ~= its
-        position, i.e. per-token background magnitude dominates the raw dot — a
-        cosine score removes that bias so a salient needle can outrank bulk
-        filler. Scale-invariant, so the int8 dequant scale cancels (ignored).
-    """
-    import os as _os
-
-    mode = _os.environ.get("SGLANG_DS_SCORER_NORM", "off").strip().lower()
-    return mode if mode in ("off", "cosine", "hybrid") else "off"
-
-
-def ds_scorer_is_default(config) -> bool:
-    """``True`` iff the DS selector config uses the production raw channel-dot /
-    cross-head-max scorer with no variant flags — i.e. the graph-safe Triton
-    scorer path is valid. Any non-default variant (scorer_norm/head_agg/
-    anchor_budget) must run the eager logical scorer instead, since the graph-
-    safe Triton scorer only implements the production path.
-    """
-    if config is None:
-        return True
-    return (
-        getattr(config, "scorer_norm", "off") == "off"
-        and getattr(config, "head_agg", "max") == "max"
-        and getattr(config, "anchor_mode", "off") == "off"
-    )
-
-
 def ds_scorer_is_graph_safe(config) -> bool:
     """``True`` iff the configured selector variants are all on the graph-safe
     path, so the selector can run under CUDA-graph capture.
 
-    As of R9 ALL non-learned variants are graph-safe: ``scorer_norm``
-    (cosine/hybrid) + ``head_agg`` (mean) live in ``_logical_score_kernel`` (R6),
-    and ``anchor_mode`` (recency/global/strided) is a tensorized fixed-shape
-    post-topK force-include in ``retrieve_topk_graph_safe`` (R9). None require
-    ``--disable-cuda-graph``. (The ``recall_oracle`` diagnostic is gated
-    separately by ``ds_recall_oracle_enabled``.) Retained as the single guard
-    predicate so a future non-graph-safe variant can re-introduce a gate here.
+    All non-learned variants are graph-safe: ``head_agg`` (mean) lives in the
+    absorbed paged score kernel, and ``anchor_mode`` (recency/global/strided) is
+    a tensorized fixed-shape post-topK force-include in
+    ``retrieve_topk_graph_safe``. None require ``--disable-cuda-graph``. (The
+    ``recall_oracle`` diagnostic is gated separately by
+    ``ds_recall_oracle_enabled``.) Retained as the single guard predicate so a
+    future non-graph-safe variant can re-introduce a gate here.
     """
     return True
 
@@ -494,92 +115,6 @@ def ds_lifted_budget_decode_available() -> bool:
     open (mirroring :func:`ds_scorer_is_graph_safe`).
     """
     return True
-
-
-def compute_token_scores(
-    queries: torch.Tensor,
-    token_signatures: torch.Tensor,
-    written: torch.Tensor,
-    channel_selection: torch.Tensor,
-    channel_weights: torch.Tensor,
-    layer_id: int,
-    token_scales: Optional[torch.Tensor] = None,
-    scorer_norm: Optional[str] = None,
-    head_agg: str = "max",
-) -> torch.Tensor:
-    """Compute per-(batch, token) scalar scores.
-
-    queries:           [bs, num_local_heads, head_dim] (bf16 or fp16)
-    token_signatures:  [num_layers_local, max_tokens, num_heads_local, label_dim]
-    written:           [num_layers_local, max_tokens] bool
-    channel_selection: [num_layers_local, num_heads_local, label_dim] int32
-    channel_weights:   [num_layers_local, num_heads_local, label_dim] fp32
-    token_scales:      optional [num_layers_local, max_tokens, num_heads_local]
-                       per-(slot, head) dequant scale for the int8 compact path.
-
-    Returns ``token_scores[bs, max_tokens]`` fp32. Unwritten tokens get
-    ``-inf`` so the top-K step ignores them deterministically.
-    """
-
-    if not (0 <= layer_id < token_signatures.shape[0]):
-        raise IndexError(
-            f"layer_id={layer_id} out of range [0, {token_signatures.shape[0]})."
-        )
-
-    sel_layer = channel_selection[layer_id]    # [H, label_dim]
-    w_layer = channel_weights[layer_id]        # [H, label_dim]
-    sig_layer = token_signatures[layer_id]     # [T, H, label_dim]
-    written_layer = written[layer_id]          # [T]
-    scale_layer = token_scales[layer_id] if token_scales is not None else None  # [T, H]
-
-    q_proj = project_query_onto_channels(queries, sel_layer, w_layer)  # [bs, H, D]
-
-    norm_mode = scorer_norm if scorer_norm is not None else _scorer_norm_mode()
-    # The physical scorer has no per-request seq_len, so "hybrid" (which is
-    # length-conditional) cannot be applied correctly here and must NOT silently
-    # degrade to cosine (that is exactly the moderate-context regression hybrid
-    # avoids). Reject it; the logical scorer is the hybrid-capable path.
-    if norm_mode == "hybrid":
-        raise ValueError(
-            "Double Sparsity scorer_norm='hybrid' is length-conditional and "
-            "requires per-request seq_len; it is only valid on the logical "
-            "scoring path (_compute_logical_token_scores), not the physical "
-            "compute_token_scores path."
-        )
-    cosine_like = norm_mode == "cosine"
-
-    if (
-        not cosine_like
-        and head_agg == "max"
-        and _TRITON_AVAILABLE
-        and q_proj.is_cuda
-        and sig_layer.is_cuda
-        and written_layer.is_cuda
-    ):
-        return _compute_token_scores_triton(
-            q_proj.to(torch.float32),
-            sig_layer,
-            written_layer,
-            scale_layer=scale_layer,
-        )
-
-    qf = q_proj.to(torch.float32)
-    sf = sig_layer.to(torch.float32)
-    if cosine_like:
-        # Direction-only score: unit-normalize per (head) channel vector. The
-        # int8 dequant scale is a positive per-(token,head) magnitude factor and
-        # cancels under normalization, so scale_layer is intentionally ignored.
-        eps = 1e-6
-        qf = qf / (qf.norm(dim=-1, keepdim=True) + eps)
-        sf = sf / (sf.norm(dim=-1, keepdim=True) + eps)
-        scores_full = torch.einsum("bhd,thd->bth", qf, sf)  # [bs, T, H]
-    else:
-        scores_full = torch.einsum("bhd,thd->bth", qf, sf)  # [bs, T, H]
-        if scale_layer is not None:
-            # Dequant the int8 dot per (token, head) before the cross-head agg.
-            scores_full = scores_full * scale_layer.unsqueeze(0).to(torch.float32)
-    scores = scores_full.mean(dim=-1) if head_agg == "mean" else scores_full.amax(dim=-1)
-    return scores.masked_fill(~written_layer.unsqueeze(0), float("-inf"))
 
 
 _score_reduce_fallback_logged = False
@@ -917,110 +452,6 @@ def blocked_topk_sequence_order(
     return selected, valid_lengths.to(torch.int32)
 
 
-def _compute_logical_token_scores(
-    queries: torch.Tensor,
-    token_signatures: torch.Tensor,
-    written: torch.Tensor,
-    channel_selection: torch.Tensor,
-    channel_weights: torch.Tensor,
-    layer_id: int,
-    req_pool_indices: torch.Tensor,
-    req_to_token: torch.Tensor,
-    seq_lens: torch.Tensor,
-    max_seq_len: int = 0,
-    token_scales: Optional[torch.Tensor] = None,
-    scorer_norm: str = "off",
-    head_agg: str = "max",
-    hybrid_threshold: int = 8192,
-) -> torch.Tensor:
-    """Score tokens in logical-sequence-position space.
-
-    Gathers physical KV-cache labels for each request's logical positions
-    0..seq_len-1 via ``req_to_token``, then scores each logical position
-    against the projected query. Returns ``[bs, max_seq_len]`` fp32 scores,
-    masked to ``-inf`` for positions >= seq_len and for unwritten slots.
-
-    This keeps the top-K output in logical-position domain so that
-    ``logical_to_physical`` can convert it correctly.
-
-    ``max_seq_len`` must be a static Python int when called inside a
-    ``torch.cuda.graph`` capture region. Providing it skips the
-    ``seq_lens.max().item()`` host sync that would raise
-    ``CUDA error: operation not permitted when stream is capturing``.
-    """
-    bs = queries.shape[0]
-    if max_seq_len <= 0:
-        max_seq_len = int(seq_lens.max().item()) if bs > 0 else 0
-    device = queries.device
-
-    if max_seq_len == 0:
-        return torch.full((bs, 1), float("-inf"), dtype=torch.float32, device=device)
-
-    sel_layer = channel_selection[layer_id]  # [H, label_dim]
-    w_layer = channel_weights[layer_id]      # [H, label_dim]
-    q_proj = project_query_onto_channels(queries, sel_layer, w_layer)  # [bs, H, D]
-
-    num_pools = req_to_token.shape[0]
-    max_seqlen_in_pool = req_to_token.shape[1]
-    safe_pool = req_pool_indices.clamp(0, max(num_pools - 1, 0)).long()  # [bs]
-
-    # logical_positions[b, i] = i (0-indexed position within each request)
-    logical_positions = torch.arange(max_seq_len, device=device).unsqueeze(0).expand(bs, -1)  # [bs, max_seq_len]
-    safe_positions = logical_positions.clamp(0, max(max_seqlen_in_pool - 1, 0))  # [bs, max_seq_len]
-
-    # physical_slots[b, i] = req_to_token[safe_pool[b], safe_positions[b, i]]
-    pool_expanded = safe_pool.unsqueeze(1).expand(-1, max_seq_len)         # [bs, max_seq_len]
-    physical_slots = req_to_token[pool_expanded, safe_positions.long()]    # [bs, max_seq_len] int32
-
-    # Gather label signatures for each logical position's physical slot.
-    sig_layer = token_signatures[layer_id]  # [max_tokens, H, label_dim]
-    max_tokens = sig_layer.shape[0]
-    safe_phys = physical_slots.long().clamp(0, max(max_tokens - 1, 0))     # [bs, max_seq_len]
-    gathered_sig = sig_layer[safe_phys]                                     # [bs, max_seq_len, H, label_dim]
-
-    # scores[b, i] = max_over_heads(q_proj[b] · sig[b, i])
-    # q_proj: [bs, H, D] → [bs, 1, H, D]; gathered_sig: [bs, max_seq_len, H, D]
-    qf = q_proj.unsqueeze(1).to(torch.float32)          # [bs, 1, H, D]
-    sf = gathered_sig.to(torch.float32)                  # [bs, max_seq_len, H, D]
-
-    # Raw channel-dot (production), dequant-scaled for the int8 path.
-    raw_dot = (qf * sf).sum(-1)  # [bs, max_seq_len, H]
-    if token_scales is not None:
-        scale_layer = token_scales[layer_id]                       # [max_tokens, H]
-        scale_gathered = scale_layer[safe_phys].to(torch.float32)  # [bs, max_seq_len, H]
-        raw_dot = raw_dot * scale_gathered
-
-    if scorer_norm == "off":
-        dot = raw_dot
-    else:
-        # Direction-only (cosine) score: unit-normalize per (head) channel vector
-        # so per-token background magnitude can't dominate. Scale-invariant, so
-        # token_scales is intentionally ignored for the cosine contribution.
-        eps = 1e-6
-        cos_dot = (
-            (qf / (qf.norm(dim=-1, keepdim=True) + eps))
-            * (sf / (sf.norm(dim=-1, keepdim=True) + eps))
-        ).sum(-1)  # [bs, max_seq_len, H]
-        if scorer_norm == "cosine":
-            dot = cos_dot
-        else:  # "hybrid": raw for short context, cosine for long (per request)
-            use_cos = (seq_lens.to(device) > hybrid_threshold).view(-1, 1, 1)
-            dot = torch.where(use_cos, cos_dot, raw_dot)
-
-    # Cross-head aggregation.
-    scores = dot.mean(dim=-1) if head_agg == "mean" else dot.amax(dim=-1)  # [bs, max_seq_len]
-
-    # Mask: unwritten physical slots and positions >= seq_len
-    written_layer = written[layer_id]  # [max_tokens] bool
-    written_gathered = written_layer[safe_phys]  # [bs, max_seq_len] bool
-    scores = scores.masked_fill(~written_gathered, float("-inf"))
-
-    seq_len_mask = logical_positions < seq_lens.unsqueeze(1).to(device)  # [bs, max_seq_len]
-    scores = scores.masked_fill(~seq_len_mask, float("-inf"))
-
-    return scores
-
-
 def _anchor_positions(n: int, budget: int, mode: str) -> list:
     """Deterministic anchor logical positions in ``[0, n)`` for one request.
 
@@ -1168,140 +599,6 @@ def _force_include_anchor(
     return out, (out >= 0).to(torch.int32).sum(-1)
 
 
-def retrieve_topk_via_labels(
-    *,
-    queries: torch.Tensor,
-    token_signatures: torch.Tensor,
-    written: torch.Tensor,
-    channel_selection: torch.Tensor,
-    channel_weights: torch.Tensor,
-    layer_id: int,
-    max_top_k: int,
-    process_group=None,
-    per_request_valid: Optional[torch.Tensor] = None,
-    req_pool_indices: Optional[torch.Tensor] = None,
-    req_to_token: Optional[torch.Tensor] = None,
-    seq_lens: Optional[torch.Tensor] = None,
-    max_seq_len: int = 0,
-    token_scales: Optional[torch.Tensor] = None,
-    scorer_norm: Optional[str] = None,
-    head_agg: str = "max",
-    hybrid_threshold: int = 8192,
-    anchor_mode: str = "off",
-    anchor_budget: int = 0,
-    recall_oracle: bool = False,
-    reduce_ca=None,
-    score_reduce_bf16: bool = False,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """End-to-end selector flow: score → all-reduce → per-request mask → top-K → ascend.
-
-    **Logical-domain mode** (when ``req_pool_indices``, ``req_to_token``, and
-    ``seq_lens`` are all provided): gathers physical labels per-request using
-    ``req_to_token``, scores in the ``[bs, max_seq_len]`` logical-position
-    domain, and returns logical positions (0-indexed). This is the correct
-    production path — ``logical_to_physical`` can then map the returned
-    positions to physical KV slots.
-
-    **Physical-domain mode** (when those three are absent, default): scores
-    over all physical slots in ``token_signatures`` directly. Used by the
-    sanity probe and unit tests that construct labels at known physical slot
-    indices without a per-request ``req_to_token`` mapping.
-
-    ``per_request_valid``: optional ``[bs, max_tokens/max_seq_len]`` bool mask
-    applied after scoring. ``None`` disables the gate.
-
-    Returns ``(selected_indices, valid_lengths)`` — sequence-ascending, -1 padded.
-    """
-
-    use_logical = (
-        req_pool_indices is not None
-        and req_to_token is not None
-        and seq_lens is not None
-    )
-
-    _norm = scorer_norm if scorer_norm is not None else _scorer_norm_mode()
-    if use_logical:
-        scores = _compute_logical_token_scores(
-            queries=queries,
-            token_signatures=token_signatures,
-            written=written,
-            channel_selection=channel_selection,
-            channel_weights=channel_weights,
-            layer_id=layer_id,
-            req_pool_indices=req_pool_indices,
-            req_to_token=req_to_token,
-            seq_lens=seq_lens,
-            max_seq_len=max_seq_len,
-            token_scales=token_scales,
-            scorer_norm=_norm,
-            head_agg=head_agg,
-            hybrid_threshold=hybrid_threshold,
-        )
-        scores = reduce_token_scores(
-            scores,
-            process_group=process_group,
-            reduce_ca=reduce_ca,
-            use_bf16=score_reduce_bf16,
-        )
-    else:
-        scores = compute_token_scores(
-            queries=queries,
-            token_signatures=token_signatures,
-            written=written,
-            channel_selection=channel_selection,
-            channel_weights=channel_weights,
-            layer_id=layer_id,
-            token_scales=token_scales,
-            scorer_norm=_norm,
-            head_agg=head_agg,
-        )
-        scores = reduce_token_scores(
-            scores,
-            process_group=process_group,
-            reduce_ca=reduce_ca,
-            use_bf16=score_reduce_bf16,
-        )
-
-    if per_request_valid is not None:
-        if per_request_valid.shape != scores.shape:
-            raise ValueError(
-                f"per_request_valid shape {tuple(per_request_valid.shape)} must "
-                f"match token_scores shape {tuple(scores.shape)}."
-            )
-        scores = scores.masked_fill(~per_request_valid.to(torch.bool), float("-inf"))
-    indices, valid_lengths = select_topk_sequence_order(scores, max_top_k)
-    if anchor_mode != "off" and anchor_budget > 0 and use_logical and seq_lens is not None:
-        indices, valid_lengths = _force_include_anchor(
-            indices, scores, seq_lens, int(anchor_budget), anchor_mode
-        )
-    if not torch.cuda.is_current_stream_capturing():
-        from sglang.srt.layers.attention.double_sparsity import metrics as _metrics
-
-        selected_tokens = int(valid_lengths.sum().item())
-        if per_request_valid is not None:
-            total_valid_tokens = int(per_request_valid.to(torch.int64).sum().item())
-        else:
-            total_valid_tokens = int(valid_lengths.shape[0]) * int(scores.shape[-1])
-        _metrics.record_selection(
-            selected_tokens=selected_tokens,
-            total_valid_tokens=total_valid_tokens,
-        )
-        # Flag-gated recall oracle (off by default). Records on the live
-        # all-reduced ``scores`` (the authoritative tensor consumed by the top-K
-        # above) for the harness-registered NIAH trial. Guarded by the same
-        # capture check as the metrics call: the oracle does host syncs
-        # (``.item()``/dict build) that are illegal during CUDA-graph capture.
-        _maybe_record_recall_oracle(
-            scores,
-            indices,
-            layer_id,
-            max_top_k,
-            process_group=process_group,
-            recall_oracle=recall_oracle,
-        )
-    return indices, valid_lengths
-
-
 def _maybe_record_recall_oracle(
     scores: torch.Tensor,
     selected_indices: torch.Tensor,
@@ -1432,101 +729,6 @@ def _maybe_record_recall_oracle(
         return
 
 
-def _logical_score_triton(
-    q_proj_input: torch.Tensor,         # [bs, H, head_dim] fp32 (the raw queries; gather via ch_sel inside)
-    channel_selection_layer: torch.Tensor,  # [H, label_dim] int32
-    channel_weights_layer: torch.Tensor,    # [H, label_dim] fp32
-    sig_layer: torch.Tensor,            # [T, H, label_dim] fp16/fp32/int8
-    written_layer: torch.Tensor,        # [T] bool
-    req_pool_indices: torch.Tensor,     # [bs] int32
-    req_to_token: torch.Tensor,         # [num_pools, max_pool_len] int32
-    seq_lens: torch.Tensor,             # [bs] int32
-    out: torch.Tensor,                  # [bs_buf, max_seq_len] fp32 (pre-allocated, slice [bs])
-    max_seq_len: int,
-    *,
-    scale_layer: Optional[torch.Tensor] = None,  # [T, H] per-(slot, head) int8 dequant scale, else None
-    # Per-position score math is independent of the block partition (each
-    # position's label-dim reduction is self-contained), so output is
-    # bit-identical across block sizes — pinned by a bitwise regression.
-    # None picks the measured optimum per score width: 512 for compact
-    # selector widths (few all-live tiles; 24.6 -> 23.3 us/call captured
-    # replay at the [29, 5120] op point), 256 for full width, where the
-    # dead-grid scale set the optimum (89.7 -> 43.5 us/call vs 64 at the
-    # Case-1 shapes).
-    token_block: Optional[int] = None,
-    store_dead_neg_inf: bool = True,
-    # Persistent-worker count per row: caps the launch grid at (bs, workers)
-    # while each worker loops over its share of LIVE blocks. 128 covers the
-    # served live window (≤18 live blocks at tb=256) with full parallelism and
-    # keeps long-context loop depth shallow (792 blocks / 128 ≈ 7).
-    workers: int = 128,
-    scorer_norm: str = "off",
-    head_agg: str = "max",
-    hybrid_threshold: int = 8192,
-) -> None:
-    """Fill ``out[:bs, :max_seq_len]`` with per-(batch, logical-position) scores.
-
-    All allocations happen in the caller. No `.item()` host syncs.
-    """
-    bs, num_heads, _head_dim = q_proj_input.shape
-    label_dim = int(channel_selection_layer.shape[1])
-    max_pool_len = int(req_to_token.shape[1])
-    max_tokens = int(sig_layer.shape[0])
-
-    has_scale = scale_layer is not None
-    scale_ptr = scale_layer if has_scale else sig_layer
-    scale_stride_t = scale_layer.stride(0) if has_scale else 0
-    scale_stride_h = scale_layer.stride(1) if has_scale else 0
-
-    if token_block is None:
-        token_block = 512 if max_seq_len <= 8192 else 256
-    desired_block = min(token_block, max(max_seq_len, 1))
-    token_block_pow2 = _next_pow2(desired_block)
-    label_dim_pow2 = _next_pow2(max(label_dim, 1))
-    num_token_blocks = (max_seq_len + token_block_pow2 - 1) // token_block_pow2
-    num_workers = max(1, min(int(workers), num_token_blocks))
-    grid = (bs, num_workers)
-
-    scorer_norm_code = {"off": 0, "cosine": 1, "hybrid": 2}.get(scorer_norm or "off", 0)
-    head_agg_mean = head_agg == "mean"
-
-    _logical_score_kernel[grid](
-        q_proj_input,
-        channel_selection_layer,
-        channel_weights_layer,
-        sig_layer,
-        scale_ptr,
-        written_layer,
-        req_pool_indices,
-        req_to_token,
-        seq_lens,
-        out,
-        num_heads=num_heads,
-        max_seq_len=max_seq_len,
-        label_dim=label_dim,
-        max_pool_len=max_pool_len,
-        max_tokens=max_tokens,
-        q_stride_b=q_proj_input.stride(0),
-        q_stride_h=q_proj_input.stride(1),
-        ch_sel_stride_h=channel_selection_layer.stride(0),
-        ch_w_stride_h=channel_weights_layer.stride(0),
-        sig_stride_t=sig_layer.stride(0),
-        sig_stride_h=sig_layer.stride(1),
-        scale_stride_t=scale_stride_t,
-        scale_stride_h=scale_stride_h,
-        HAS_SCALE=has_scale,
-        rtt_stride_p=req_to_token.stride(0),
-        out_stride_b=out.stride(0),
-        TOKEN_BLOCK=token_block_pow2,
-        LABEL_DIM_POW2=label_dim_pow2,
-        SCORER_NORM=scorer_norm_code,
-        HEAD_AGG_MEAN=head_agg_mean,
-        HYBRID_THRESHOLD=int(hybrid_threshold),
-        STORE_DEAD_NEG_INF=store_dead_neg_inf,
-        WORKERS=num_workers,
-    )
-
-
 def absorbed_topk_select(
     *,
     queries: torch.Tensor,
@@ -1548,8 +750,8 @@ def absorbed_topk_select(
     score_reduce_bf16: bool = False,
     head_agg: str = "max",
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Table-free selection: score → all-reduce → per-request mask → top-K → ascend,
-    from the resident MLA latent with NO TokenLabelTable.
+    """Selection: score → all-reduce → per-request mask → top-K → ascend,
+    from the resident MLA latent.
 
     ``score[b, t] = agg_h ( v_h[b] · c_kv[t] )`` for ``scorer_norm="off"`` — the
     absorbed-latent identity the recall oracle already validated. The rope dims are
@@ -1625,7 +827,6 @@ def absorbed_topk_select(
 def retrieve_topk_graph_safe(
     *,
     queries: torch.Tensor,
-    token_signatures: torch.Tensor,
     written: torch.Tensor,
     channel_selection: torch.Tensor,
     channel_weights: torch.Tensor,
@@ -1651,33 +852,37 @@ def retrieve_topk_graph_safe(
     scratch_scores_bf16: Optional[torch.Tensor] = None,    # bf16 [max_bs, max_seq_len]
     radix_topk_scratch: Optional[dict] = None,  # topk_kernel scratch bundle
     topk_block: int = 1024,
-    token_scales: Optional[torch.Tensor] = None,           # fp16 [L, T, H] int8 dequant scale, else None
     process_group=None,
     reduce_ca=None,
     score_reduce_bf16: bool = False,
     recall_oracle: bool = False,
     scorer_norm: str = "off",
     head_agg: str = "max",
-    hybrid_threshold: int = 8192,
     anchor_mode: str = "off",
     anchor_budget: int = 0,
     absorbed_latent_fp8: Optional[torch.Tensor] = None,
     absorbed_latent_scales: Optional[torch.Tensor] = None,
     absorbed_w_sel: Optional[torch.Tensor] = None,
     absorbed_latent: Optional[torch.Tensor] = None,
-    table_free: bool = False,
     scratch_absorbed_v: Optional[torch.Tensor] = None,  # fp32 [max_bs, H, kv_lora_rank]
     scratch_absorbed_qsel: Optional[torch.Tensor] = None,  # fp32 [max_bs, H, label_dim]
     scratch_absorbed_sel_i64: Optional[torch.Tensor] = None,  # int64 [H, label_dim]
     scratch_absorbed_q: Optional[torch.Tensor] = None,  # fp32 [max_bs, H, nope_dim]
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Capture-safe retrieve_topk that writes results into caller-owned buffers.
+    """Capture-safe selection that writes results into caller-owned buffers.
+
+    The returned top-K comes from the absorbed-latent score read straight off
+    the resident MLA latent — no labels gather. The absorbed identity holds only
+    for scorer_norm="off", and the rope dims are excluded by construction (no-PE
+    queries + K-noPE W_UK rows in ``absorbed_w_sel``). ``written`` is the
+    slot-validity bitmap ``[L, T]`` so a reused physical slot's stale latent is
+    masked to ``-inf`` until its fresh KV write lands.
 
     On CUDA with Triton + all scratch buffers provided: uses an allocation-free
     pipeline.  After a single warmup call, subsequent calls perform zero new
     CUDA allocations:
 
-        1. ``_logical_score_kernel`` fills ``scratch_scores`` directly.
+        1. the paged absorbed kernel fills ``scratch_scores`` directly.
         2. (optional) ``per_request_valid`` is applied via in-place masked_fill_.
         3. ``topk`` with ``out=(values, indices)`` (allocation-free after warmup).
         4. ``isneginf`` + ``masked_fill_`` to sentinel-out invalid entries.
@@ -1685,28 +890,21 @@ def retrieve_topk_graph_safe(
         6. ``ge`` + ``masked_fill_`` to convert sentinels to ``-1`` in output.
         7. ``searchsorted`` with ``out=`` for valid_lengths.
 
-    Fallback path (CPU, or scratch tensors missing): calls the legacy
-    :func:`retrieve_topk_via_labels`.  This branch is intended for unit tests;
+    Fallback path (CPU, or scratch tensors missing): calls the eager
+    :func:`absorbed_topk_select`.  This branch is intended for unit tests;
     do NOT route production graph capture through it.
     """
     bs = req_pool_indices.shape[0]
     device = queries.device
 
-    # Table-free selection: the RETURNED top-K comes from the absorbed-latent
-    # score read straight off the resident MLA latent — no TokenLabelTable scoring,
-    # no labels gather. The absorbed identity holds only for scorer_norm="off"
-    # (validate_double_sparsity enforces it), and the rope dims are excluded by
-    # construction (no-PE queries + K-noPE W_UK rows in absorbed_w_sel). Off the
-    # table_free path this whole block is skipped (default-off byte-identical).
-    if table_free:
-        assert scorer_norm == "off", (
-            "table_free selection requires scorer_norm='off' (the absorbed-latent "
-            f"identity only holds there); got {scorer_norm!r}."
-        )
-        assert absorbed_w_sel is not None, (
-            "table_free selection requires absorbed_w_sel (the bind-time K-noPE "
-            "W_UK projection)."
-        )
+    assert scorer_norm == "off", (
+        "Double Sparsity selection requires scorer_norm='off' (the absorbed-latent "
+        f"identity only holds there); got {scorer_norm!r}."
+    )
+    assert absorbed_w_sel is not None, (
+        "Double Sparsity selection requires absorbed_w_sel (the bind-time K-noPE "
+        "W_UK projection)."
+    )
 
     use_triton_fast = (
         _TRITON_AVAILABLE
@@ -1721,11 +919,11 @@ def retrieve_topk_graph_safe(
         and scratch_throwaway_idx is not None
     )
 
-    # Table-free CPU / no-scratch fallback (unit tests): the eager
-    # absorbed_topk_select scores the resident latent without the in-place
-    # graph-state scratch. The graph-safe table_free path below fills
-    # scratch_scores in place and shares the table path's reduce + radix top-k.
-    if table_free and not use_triton_fast:
+    # CPU / no-scratch fallback (unit tests): the eager absorbed_topk_select
+    # scores the resident latent without the in-place graph-state scratch. The
+    # graph-safe path below fills scratch_scores in place and shares the same
+    # reduce + radix top-k.
+    if not use_triton_fast:
         indices, valid = absorbed_topk_select(
             queries=queries,
             absorbed_w_sel=absorbed_w_sel,
@@ -1753,44 +951,13 @@ def retrieve_topk_graph_safe(
         out_lengths[:bs].copy_(valid)
         return out_indices, out_lengths
 
-    if not table_free and not use_triton_fast:
-        indices, valid = retrieve_topk_via_labels(
-            queries=queries,
-            token_signatures=token_signatures,
-            written=written,
-            channel_selection=channel_selection,
-            channel_weights=channel_weights,
-            layer_id=layer_id,
-            max_top_k=max_top_k,
-            process_group=process_group,
-            per_request_valid=per_request_valid,
-            req_pool_indices=req_pool_indices,
-            req_to_token=req_to_token,
-            seq_lens=seq_lens,
-            max_seq_len=max_seq_len,
-            token_scales=token_scales,
-            recall_oracle=recall_oracle,
-            scorer_norm=scorer_norm,
-            head_agg=head_agg,
-            hybrid_threshold=hybrid_threshold,
-            anchor_mode=anchor_mode,
-            anchor_budget=anchor_budget,
-            reduce_ca=reduce_ca,
-            score_reduce_bf16=score_reduce_bf16,
-        )
-        mtk = indices.shape[1]
-        out_indices[:bs, :mtk].copy_(indices)
-        out_lengths[:bs].copy_(valid)
-        return out_indices, out_lengths
-
     # Triton fast path — zero-allocation after warmup.
     # Contract (caller responsibility — bind_runtime_data enforces it for the
     # channel-mask tensors): channel_selection int32, channel_weights fp32,
-    # req_pool_indices / req_to_token / seq_lens int32. queries and sig_layer
-    # may be fp32 / fp16 / bf16 — the kernel casts via tl.load(...).to(tl.float32).
+    # req_pool_indices / req_to_token / seq_lens int32. queries may be
+    # fp32 / fp16 / bf16 — the kernel casts via tl.load(...).to(tl.float32).
     sel_layer = channel_selection[layer_id]
     w_layer = channel_weights[layer_id]
-    scale_layer = token_scales[layer_id] if token_scales is not None else None
     assert sel_layer.dtype == torch.int32, (
         f"channel_selection must be int32, got {sel_layer.dtype}"
     )
@@ -1819,81 +986,57 @@ def retrieve_topk_graph_safe(
     _store_dead = (
         radix_topk_scratch is None or recall_oracle or anchor_mode != "off"
     )
-    if table_free:
-        # Score the SAME logical positions straight from the resident fp8 latent
-        # into scratch_scores IN PLACE (no TokenLabelTable). v_h is built into
-        # scratch_absorbed_v allocation-free, then the paged absorbed kernel
-        # writes the score; from here the path is IDENTICAL to the table branch
-        # (reduce + radix top-k). The absorbed paged kernel always stores -inf
-        # over dead positions, matching _store_dead's full-width consumers.
-        assert absorbed_latent_fp8 is not None and absorbed_latent_scales is not None, (
-            "table_free graph-safe selection requires the resident fp8 latent "
-            "(absorbed_latent_fp8, absorbed_latent_scales)."
-        )
-        # Fail closed: the absorbed scratch MUST be present before the CUDA fast
-        # path runs. A None here would make absorbed_latent_score_logical_paged
-        # fall back to the ALLOCATING absorbed_latent_v (breaking the graph-safe
-        # zero-alloc contract) instead of building v_h in place.
-        assert (
-            scratch_absorbed_v is not None
-            and scratch_absorbed_qsel is not None
-            and scratch_absorbed_sel_i64 is not None
-            and scratch_absorbed_q is not None
-        ), (
-            "table_free graph-safe selection requires the preallocated absorbed "
-            "scratch (scratch_absorbed_v, scratch_absorbed_qsel, "
-            "scratch_absorbed_sel_i64, scratch_absorbed_q); one is None, which "
-            "would silently route through the allocating fallback."
-        )
-        from sglang.srt.layers.attention.double_sparsity.absorbed_latent_kernel import (
-            absorbed_latent_score_logical_paged,
-        )
+    # Score the logical positions straight from the resident fp8 latent into
+    # scratch_scores IN PLACE. v_h is built into scratch_absorbed_v
+    # allocation-free, then the paged absorbed kernel writes the score; from here
+    # the path is reduce + radix top-k. The absorbed paged kernel always stores
+    # -inf over dead positions, matching _store_dead's full-width consumers.
+    assert absorbed_latent_fp8 is not None and absorbed_latent_scales is not None, (
+        "Double Sparsity graph-safe selection requires the resident fp8 latent "
+        "(absorbed_latent_fp8, absorbed_latent_scales)."
+    )
+    # Fail closed: the absorbed scratch MUST be present before the CUDA fast
+    # path runs. A None here would make absorbed_latent_score_logical_paged
+    # fall back to the ALLOCATING absorbed_latent_v (breaking the graph-safe
+    # zero-alloc contract) instead of building v_h in place.
+    assert (
+        scratch_absorbed_v is not None
+        and scratch_absorbed_qsel is not None
+        and scratch_absorbed_sel_i64 is not None
+        and scratch_absorbed_q is not None
+    ), (
+        "Double Sparsity graph-safe selection requires the preallocated absorbed "
+        "scratch (scratch_absorbed_v, scratch_absorbed_qsel, "
+        "scratch_absorbed_sel_i64, scratch_absorbed_q); one is None, which "
+        "would silently route through the allocating fallback."
+    )
+    from sglang.srt.layers.attention.double_sparsity.absorbed_latent_kernel import (
+        absorbed_latent_score_logical_paged,
+    )
 
-        scratch_absorbed_sel_i64.copy_(sel_layer)
-        sel_i64 = scratch_absorbed_sel_i64
-        torch.cuda.nvtx.range_push("ds_absorbed_score")
-        absorbed_latent_score_logical_paged(
-            queries,
-            absorbed_latent_fp8,
-            absorbed_latent_scales,
-            absorbed_w_sel,
-            sel_layer,
-            w_layer,
-            req_pool_indices,
-            req_to_token,
-            seq_lens,
-            max_seq_len,
-            written=written[layer_id] if written is not None else None,
-            head_agg=head_agg,
-            out=scores_view,
-            scratch_v=scratch_absorbed_v,
-            scratch_qsel=scratch_absorbed_qsel,
-            channel_selection_i64=sel_i64,
-            scratch_q=scratch_absorbed_q,
-        )
-        torch.cuda.nvtx.range_pop()
-    else:
-        sig_layer = token_signatures[layer_id]
-        written_layer = written[layer_id]
-        torch.cuda.nvtx.range_push("ds_logical_score")
-        _logical_score_triton(
-            q_proj_input=queries,
-            channel_selection_layer=sel_layer,
-            channel_weights_layer=w_layer,
-            sig_layer=sig_layer,
-            written_layer=written_layer,
-            req_pool_indices=req_pool_indices,
-            req_to_token=req_to_token,
-            seq_lens=seq_lens,
-            out=scores_view,
-            max_seq_len=max_seq_len,
-            scale_layer=scale_layer,
-            scorer_norm=scorer_norm,
-            head_agg=head_agg,
-            hybrid_threshold=hybrid_threshold,
-            store_dead_neg_inf=_store_dead,
-        )
-        torch.cuda.nvtx.range_pop()
+    scratch_absorbed_sel_i64.copy_(sel_layer)
+    sel_i64 = scratch_absorbed_sel_i64
+    torch.cuda.nvtx.range_push("ds_absorbed_score")
+    absorbed_latent_score_logical_paged(
+        queries,
+        absorbed_latent_fp8,
+        absorbed_latent_scales,
+        absorbed_w_sel,
+        sel_layer,
+        w_layer,
+        req_pool_indices,
+        req_to_token,
+        seq_lens,
+        max_seq_len,
+        written=written[layer_id] if written is not None else None,
+        head_agg=head_agg,
+        out=scores_view,
+        scratch_v=scratch_absorbed_v,
+        scratch_qsel=scratch_absorbed_qsel,
+        channel_selection_i64=sel_i64,
+        scratch_q=scratch_absorbed_q,
+    )
+    torch.cuda.nvtx.range_pop()
 
     # The radix selector upcasts score loads in-register, so the reduced bf16
     # buffer can be its authoritative input: the compared values are
@@ -2031,47 +1174,8 @@ def retrieve_topk_graph_safe(
     # off by default, so production decode is unaffected. Records only in eager
     # decode (under graph replay this Python does not re-run).
     if not torch.cuda.is_current_stream_capturing():
-        # Side-by-side absorbed-latent recall diagnostic (score-only). When the
-        # oracle is on AND the bind path supplied the absorbed projection + this
-        # layer's resident fp8 latent, score the SAME logical positions straight
-        # from the latent (no table), all-reduce identically, and select with the
-        # same top-K — then hand both rows to the oracle so each sample carries a
-        # table vs absorbed comparison. The selection decode consumes
-        # (``out_indices``) is UNTOUCHED: this is diagnostic-only. All three
-        # inputs are None on the shipped path, so this block is skipped.
-        absorbed_scores = None
-        absorbed_indices = None
-        if (
-            recall_oracle
-            and absorbed_w_sel is not None
-            and absorbed_latent_fp8 is not None
-        ):
-            from sglang.srt.layers.attention.double_sparsity.absorbed_latent_kernel import (
-                absorbed_latent_score_logical_paged,
-            )
-
-            absorbed_scores = absorbed_latent_score_logical_paged(
-                queries,
-                absorbed_latent_fp8,
-                absorbed_latent_scales,
-                absorbed_w_sel,
-                channel_selection[layer_id],
-                channel_weights[layer_id],
-                req_pool_indices,
-                req_to_token,
-                seq_lens,
-                max_seq_len,
-                written=written[layer_id] if written is not None else None,
-                head_agg=head_agg,
-            )
-            absorbed_scores = reduce_token_scores(
-                absorbed_scores,
-                process_group=process_group,
-                reduce_ca=reduce_ca,
-                use_bf16=score_reduce_bf16,
-            )
-            absorbed_indices, _ = select_topk_sequence_order(absorbed_scores, max_top_k)
-
+        # ``scores_view`` is the all-reduced + per-request-masked absorbed-latent
+        # score the top-K above consumed; ``out_indices[:bs]`` is the selection.
         _maybe_record_recall_oracle(
             scores_view,
             out_indices[:bs],
@@ -2079,12 +1183,10 @@ def retrieve_topk_graph_safe(
             max_top_k,
             process_group=process_group,
             recall_oracle=recall_oracle,
-            absorbed_scores=absorbed_scores,
-            absorbed_indices=absorbed_indices,
         )
 
     return out_indices, out_lengths
 
 
 # Public alias for the end-to-end selector pipeline.
-retrieve_topk = retrieve_topk_via_labels
+retrieve_topk = absorbed_topk_select

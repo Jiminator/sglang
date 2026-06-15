@@ -169,42 +169,6 @@ class DefaultPoolConfigurator(MemoryPoolConfigurator):
                     DSATokenToKVPool.index_k_with_scale_buffer_dtype
                 )
                 cell_size += indexer_size_per_token * num_layers * element_size
-
-            # Double Sparsity reserves the per-token signature table
-            # (TokenLabelTable) deliberately in the pool sizing so it is not
-            # carved from post-capture headroom (which destabilizes high
-            # mem-fraction serving). Mirror allocate_token_label_table's
-            # per-slot footprint: signatures [layers, tokens, heads, label_dim]
-            # plus, for int8, fp16 per-(layer, token, head) scales. DS-only, so
-            # the shipped DSA-native default and HiSparse stay byte-unchanged.
-            if ds_index_k_gated:
-                ds_parsed = getattr(
-                    mr.server_args, "_double_sparsity_parsed_config", None
-                )
-                mask = getattr(mr.server_args, "_double_sparsity_channel_mask", None)
-                # Table-free selection scores the resident latent directly, so the
-                # TokenLabelTable is never allocated — drop its per-token reservation
-                # (the freed bytes become admitted tokens). Default off ⇒ this term
-                # is reserved exactly as before (byte-identical cell size).
-                table_free = ds_parsed is not None and getattr(
-                    ds_parsed, "table_free", False
-                )
-                if ds_parsed is not None and mask is not None and not table_free:
-                    num_label_layers = model_config.num_hidden_layers
-                    num_local_heads = model_config.get_num_attention_heads(tp_size)
-                    label_dim = int(mask.label_dim)
-                    if getattr(ds_parsed, "signature_dtype", "fp16") == "int8":
-                        # int8 signature byte + fp16 per-(layer,token,head) scale.
-                        signature_bytes_per_head = label_dim + 2
-                    else:
-                        signature_bytes_per_head = label_dim * 2
-                    # Signatures (+ int8 scales) per token, plus the `written`
-                    # bitmap (1 byte per (layer, token)) — the full per-token
-                    # TokenLabelTable footprint.
-                    cell_size += (
-                        num_label_layers * num_local_heads * signature_bytes_per_head
-                        + num_label_layers
-                    )
         else:
             cell_size = (
                 model_config.get_num_kv_heads(tp_size)

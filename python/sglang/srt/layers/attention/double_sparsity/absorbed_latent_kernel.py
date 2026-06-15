@@ -1,4 +1,4 @@
-"""GPU paged absorbed-latent score kernel (score-only diagnostic).
+"""GPU paged absorbed-latent score kernel (production DS selection score).
 
 Companion to ``absorbed_latent.py``: the same identity
 ``score[b, t] = agg_h ( v_h[b] · c_kv[t] )`` (``scorer_norm="off"``), but the key
@@ -8,14 +8,12 @@ query-side projection ``v_h`` is built once per step on the host
 (``absorbed_latent.absorbed_latent_v``) and handed to the kernel, so the kernel
 is a paged ``max_h Σ_l v_h[b,h,l] · dequant(latent[slot,l])`` reduction.
 
-The kernel mirrors the persistent-worker topology of the production logical-score
-kernel (``selection_kernel._logical_score_kernel``): a static ``(bs, WORKERS)``
-grid, each worker striding over the token blocks it owns, loop bound = the LIVE
-block count, written-then-``seq_len`` masking in the production order. The
-per-element dequant-then-dot matches the CPU reference value-for-value (only fp32
-summation order reassociates), so the CPU ``absorbed_latent_score_logical`` is its
-exact oracle. This is a diagnostic only — it does NOT change the selector ABI or
-delete the table; that integration is a later step. Value-affecting (the fp8
+The kernel uses a persistent-worker topology: a static ``(bs, WORKERS)`` grid,
+each worker striding over the token blocks it owns, loop bound = the LIVE block
+count, written-then-``seq_len`` masking in selection order. The per-element
+dequant-then-dot matches the CPU reference value-for-value (only fp32 summation
+order reassociates), so the CPU ``absorbed_latent_score_logical`` is its exact
+oracle. This is the production DS selection score path. Value-affecting (the fp8
 latent vs the bf16-pre-quant label), declared, recall-gated — not a bit-identity
 claim.
 """
@@ -114,8 +112,8 @@ if _HAS_TRITON:
         HAS_WRITTEN: tl.constexpr,
         WORKERS: tl.constexpr,
     ):
-        # Persistent-worker layout, identical in spirit to _logical_score_kernel:
-        # static (bs, WORKERS) grid; each worker strides its token blocks; the
+        # Persistent-worker layout: static (bs, WORKERS) grid; each worker
+        # strides its token blocks; the
         # loop bound is the LIVE block count (device-computed from seq_len). The
         # full-width torch.topk consumer scans the whole scratch, so dead blocks
         # are filled with -inf when STORE_DEAD_NEG_INF is set.
