@@ -1,4 +1,9 @@
-"""AC-10 M3-B FP8 scale-factor stability fixture (production paths).
+"""OBSOLETE — NON-AUTHORIZING for table-free DS. The materialized TokenLabelTable
+this fixture's FP8 scale stability supports was DELETED; this proof CANNOT authorize
+table-free DS radix-on (the validator rejects the legacy ``ds_radix_fixture_state_v1``
+schema). Use the table-free fixture flow instead. Kept for historical reference only.
+
+AC-10 M3-B FP8 scale-factor stability fixture (production paths).
 
 Plan §AC-10 / §303 requires that, before the DS launcher drops
 ``--disable-radix-cache``, the operator proves the FP8 quantization +

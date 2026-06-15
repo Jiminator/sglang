@@ -1,4 +1,11 @@
-"""AC-10 M3-B label-capture fixture (DIRECT EVIDENCE via meta_info).
+"""OBSOLETE — NON-AUTHORIZING for table-free DS. The materialized TokenLabelTable
+this fixture captures was DELETED; this label-capture proof CANNOT authorize
+table-free DS radix-on (the validator rejects the legacy ``ds_radix_fixture_state_v1``
+schema). Use the table-free fixture flow instead (cold/warm SELECTION equivalence +
+recall-under-radix-on + eviction/partial-hit/page-boundary edge probe). Kept for
+historical reference only.
+
+AC-10 M3-B label-capture fixture (DIRECT EVIDENCE via meta_info).
 
 This is the fixture the AC-10 (DEC-2) guard flip requires. It verifies
 that for two requests sharing the same prompt, the DS label rows

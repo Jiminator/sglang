@@ -546,12 +546,16 @@ def apply_radix_fixture_artifact(server_args: "ServerArgs") -> None:
         "recall_radixon_passed",
         "edge_probe_passed",
     )
-    if not all(state.get(k) for k in required):
+    # Fail-closed: each probe field must be the JSON boolean `true` EXACTLY. A
+    # truthy non-bool (e.g. the string "false", a non-zero int) must NOT authorize
+    # radix-on — `is True` rejects every non-bool and every False/missing value.
+    bad = [k for k in required if state.get(k) is not True]
+    if bad:
         raise ValueError(
-            f"radix-fixture artifact {artifact!r} does not record ALL table-free "
-            "correctness probes as passed ("
-            + ", ".join(f"{k}={state.get(k)!r}" for k in required)
-            + "); radix-cache ON is not authorized."
+            f"radix-fixture artifact {artifact!r} does not record every table-free "
+            "correctness probe as the JSON boolean true; not satisfied for "
+            + ", ".join(f"{k}={state.get(k)!r}" for k in bad)
+            + " (radix-cache ON is not authorized)."
         )
 
     recorded = state.get("config") or {}

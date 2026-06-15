@@ -475,28 +475,49 @@ def compare_tablefree_selection(
     *,
     cold: Dict[str, Any],
     warm: Dict[str, Any],
+    cached_tokens: int,
 ) -> Dict[str, Any]:
-    """Table-free radix fixture: compare the SELECTION a cold request and a warm
-    request (reusing the same radix-cached prefix) produce over the cached prefix.
+    """Table-free radix fixture: compare the per-cached-prefix-token identity a cold
+    request and a warm request (reusing the same radix-cached prefix) produce, over
+    the first ``cached_tokens`` prefix positions ONLY.
 
     Absorbed-latent scoring makes the selection a deterministic function of
     (query, cached fp8 latent bytes): identical cached latent => identical absorbed
     score => identical top-k. This is the table-free replacement for the label-SHA
     fixture (there are no materialized signatures to capture). Each record carries
-    one or both of:
+    one or both of (per-layer, per-cached-prefix-token sequences):
 
       * ``per_layer_selected_indices`` (List[List[int]]) — the selected logical
-        indices per layer (the end-to-end selection); and/or
+        index per cached-prefix position, per layer; and/or
       * ``per_layer_per_token_latent_sha`` (List[List[str]]) — the resident fp8
         latent bytes SHA of each cached-prefix slot, per layer (the root identity
         the selection is read from).
 
-    The caller aligns the two passes (same decode step / cached-prefix range).
+    ``cached_tokens`` is the number of prefix tokens the radix cache actually reused
+    (a real cache hit). Only this prefix is compared — the suffix legitimately
+    differs (the warm request carries different new tokens than cold).
 
-    Returns ``{ok, divergence_kind, reason, compared_fields}``. Fail-closed: a
-    record missing BOTH comparable fields, a per-layer count mismatch, or any
-    per-layer divergence over the cached prefix => ``ok=False``.
+    Returns ``{ok, divergence_kind, reason, compared_fields, cached_tokens}``.
+    FAIL-CLOSED: ``cached_tokens <= 0`` (no proven hit), neither comparable field
+    present in both passes, an empty comparable field, a per-layer count mismatch, a
+    per-layer capture SHORTER than ``cached_tokens``, or any divergence within the
+    cached prefix => ``ok=False``. "No evidence" never becomes a pass.
     """
+    if (
+        not isinstance(cached_tokens, int)
+        or isinstance(cached_tokens, bool)
+        or cached_tokens <= 0
+    ):
+        return {
+            "ok": False,
+            "divergence_kind": "no_cached_prefix",
+            "reason": (
+                f"cached_tokens={cached_tokens!r} <= 0: no radix cache hit was proven, "
+                "so cold/warm equivalence cannot be claimed (fail-closed)"
+            ),
+            "compared_fields": [],
+            "cached_tokens": cached_tokens,
+        }
     candidates = (
         ("per_layer_selected_indices", "selection"),
         ("per_layer_per_token_latent_sha", "latent"),
@@ -515,6 +536,7 @@ def compare_tablefree_selection(
                 "is present in BOTH passes; nothing to compare (fail-closed)"
             ),
             "compared_fields": [],
+            "cached_tokens": cached_tokens,
         }
     compared_fields = [field for field, _ in present]
     for field, kind in present:
@@ -526,31 +548,52 @@ def compare_tablefree_selection(
                 "divergence_kind": f"{kind}_layer_count",
                 "reason": f"{field} layer count mismatch: cold={len(c)} warm={len(w)}",
                 "compared_fields": compared_fields,
+                "cached_tokens": cached_tokens,
+            }
+        if len(c) == 0:
+            return {
+                "ok": False,
+                "divergence_kind": f"{kind}_empty",
+                "reason": f"{field} has no layers; nothing to compare (fail-closed)",
+                "compared_fields": compared_fields,
+                "cached_tokens": cached_tokens,
             }
         for layer_id in range(len(c)):
             c_layer = list(c[layer_id])
             w_layer = list(w[layer_id])
-            if c_layer != w_layer:
-                pos = next(
-                    (
-                        i
-                        for i in range(min(len(c_layer), len(w_layer)))
-                        if c_layer[i] != w_layer[i]
+            if len(c_layer) < cached_tokens or len(w_layer) < cached_tokens:
+                return {
+                    "ok": False,
+                    "divergence_kind": f"{kind}_short",
+                    "reason": (
+                        f"{field} layer {layer_id} shorter than cached_tokens="
+                        f"{cached_tokens}: cold={len(c_layer)} warm={len(w_layer)} "
+                        "(capture does not cover the claimed cached prefix)"
                     ),
+                    "compared_fields": compared_fields,
+                    "cached_tokens": cached_tokens,
+                }
+            c_pfx = c_layer[:cached_tokens]
+            w_pfx = w_layer[:cached_tokens]
+            if c_pfx != w_pfx:
+                pos = next(
+                    (i for i in range(cached_tokens) if c_pfx[i] != w_pfx[i]),
                     -1,
                 )
                 return {
                     "ok": False,
                     "divergence_kind": kind,
                     "reason": (
-                        f"{field} differs at layer={layer_id} position={pos}: "
-                        f"cold={c_layer!r} warm={w_layer!r}"
+                        f"{field} differs at layer={layer_id} position={pos} "
+                        f"(within cached prefix): cold={c_pfx[pos]!r} warm={w_pfx[pos]!r}"
                     ),
                     "compared_fields": compared_fields,
+                    "cached_tokens": cached_tokens,
                 }
     return {
         "ok": True,
         "divergence_kind": "",
         "reason": "",
         "compared_fields": compared_fields,
+        "cached_tokens": cached_tokens,
     }

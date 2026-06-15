@@ -6110,11 +6110,14 @@ class ServerArgs:
             type=str,
             default=ServerArgs.double_sparsity_radix_fixture_artifact,
             help=(
-                "Path to a radix-fixture-passed state file (written by "
-                "validator.write_radix_fixture_state after BOTH M3-B fixtures pass on "
-                "this config). When provided and --disable-radix-cache is absent, the "
-                "DS validator verifies the state matches this boot's config and then "
-                "permits radix cache ON -- the no-env-override radix-cache flip."
+                "Path to a TABLE-FREE radix-fixture-passed state file (written by "
+                "validator.write_radix_fixture_state after the table-free correctness "
+                "probes pass on this config: cold/warm selection equivalence, recall "
+                "under radix-on, and an eviction/partial-hit/page-boundary edge probe). "
+                "When provided and --disable-radix-cache is absent, the DS validator "
+                "verifies the table-free schema + that the state matches this boot's "
+                "config, then permits radix cache ON -- the no-env-override flip. A "
+                "legacy label-capture artifact is rejected."
             ),
         )
 
