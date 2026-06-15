@@ -1,11 +1,21 @@
 # Loop 11 Results — Authoritative Current State
 
 > Maintained rewrite-over-append: this document always reflects the loop's current state.
-> Last regenerated: Round 21, 2026-06-15. HEAD at round start: `0f84504ce` (R20); R21 deletion commit `01e3ff238`.
+> Last regenerated: Round 22, 2026-06-15. HEAD at round start: `d244ea4b8` (R21); R22 commit `cee132472`.
 
 ## 1. Current state summary
 
-- **M0 COMPLETE; M1 COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 COMPLETE (R21): the TokenLabelTable is DELETED (DEC-2), table-free absorbed-latent selection is the one served default, and the capacity payoff + AC-7 are re-proven on the shipped path.**
+- **M0 COMPLETE; M1 COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 COMPLETE+VERIFIED (R21): TokenLabelTable DELETED (DEC-2), table-free is the one served default, capacity + AC-7 re-proven on the shipped path. M3 task7 IN PROGRESS (R22): the table-free radix fixture gate.**
+- **R22 — task7 slice 1: table-free radix fixture kind + fail-closed validator gate + cold/warm comparator (CPU foundation; Codex R21 queued #1).**
+  `validator.py`: new `ds_radix_fixture_state_tablefree_v1` schema; `apply_radix_fixture_artifact` REJECTS
+  the legacy `ds_radix_fixture_state_v1` label-capture schema (regenerate message) + REQUIRES the table-free
+  schema + 3 table-free probe passes (cold/warm selection equivalence, recall-under-radix-on, edge probe);
+  the config fingerprint pins `selector_mode="table_free"`. `radix_fixture_capture.py`:
+  `compare_tablefree_selection` (cold/warm SELECTION + cached fp8 latent identity over the cached prefix;
+  fail-closed on any divergence). +reject-legacy/authorize/partial/wrong-mode/missing + comparator tests;
+  378 DS suite. DS-radix-on-only surface (DSA default + DS radix-off never reach the gate) → no AC-7 boot.
+  commit `cee132472`. **Remaining task7 (R23+ serving):** live cold/warm selection diff, recall@2048 under
+  radix-on, eviction/partial-hit/page-boundary probes (these GENERATE the artifact the gate authorizes).
 - **R21 — task6 CLOSED (DEC-2): TokenLabelTable DELETED; table-free is the one DS selection path; shipped-path capacity re-proven on a clean committed HEAD.**
   Deleted `token_label_table.py` + `token_label_write.py` + the table-signature scorer engine (the
   cosine/hybrid `scorer_norm` variants + `compute_token_scores` / the logical-score Triton kernels);
