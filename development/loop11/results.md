@@ -1,7 +1,7 @@
 # Loop 11 Results — Authoritative Current State
 
 > Maintained rewrite-over-append: this document always reflects the loop's current state.
-> Last regenerated: Round 23, 2026-06-15. HEAD at round start: `a82673fe2` (R22); R23 commits `49a401a72` (gate+runbook), `4a1579cbe` (latent_capture), `d8d65d88e` (evidence).
+> Last regenerated: Round 25, 2026-06-16. HEAD at round start: `7f8b4602d` (R24). R24 commits: `0a22aff86` (de-overclaim), `3de57d32b` (honest corrected probes), `7f8b4602d` (root-cause evidence + ledgers).
 
 ## 1. Current state summary
 

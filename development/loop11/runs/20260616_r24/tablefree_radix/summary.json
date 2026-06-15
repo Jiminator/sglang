@@ -3,7 +3,8 @@
   "date_utc": "2026-06-15",
   "runtime_base_commit": "0a22aff868e6ce4ca796fd77b842649fb132add7",
   "runtime_base_commit_short": "0a22aff86",
-  "committed_head": "0a22aff86",
+  "committed_evidence_head": "3de57d32b",
+  "committed_head_note": "probes RAN on runtime base 0a22aff86; this evidence was COMMITTED at 3de57d32b (root-cause + ledgers follow at 7f8b4602d)",
   "model": "GLM-5.1-FP8",
   "envelope": "TP8 / fp8_e4m3 / page64 / mem0.8 / max-running 64 / cuda-graph-max-bs 64 (expandable_segments NEVER set)",
   "honesty_note": "Every verdict below matches the RAW numbers. No FAIL is relabeled as PASS or 'noise'. P1 and P2 both FAIL on the corrected methodology; that is the truthful result.",
@@ -79,5 +80,5 @@
     "A7": "RAN, PASS (410560)"
   },
   "cleanup": "all sglang.launch_server / scheduler processes killed; all 8 GPUs at 0 MiB after each probe; one TP=8 server at a time.",
-  "committed": false
+  "committed": true
 }

@@ -26,6 +26,6 @@
     "EAGER (--disable-cuda-graph) for capture/oracle host syncs.",
     "expandable_segments NEVER set (unset PYTORCH_CUDA_ALLOC_CONF).",
     "One TP=8 server at a time; teardown to ~0 MiB between probes.",
-    "Evidence not committed."
+    "Probes RAN on runtime base 0a22aff86; this evidence was COMMITTED at 3de57d32b (root-cause + ledgers follow at 7f8b4602d)."
   ]
 }
