@@ -1,0 +1,23 @@
+{
+  "probe": "P1_cold_warm_selection_equivalence",
+  "capdir": "/sgl-workspace/sglang/development/loop11/runs/20260615_r23/tablefree_radix/.sglang_ds_latentcap",
+  "prefix_request_chars": 15490,
+  "cold_prompt_tokens": 3815,
+  "cold_cached_tokens": 0,
+  "warm_prompt_tokens": 3816,
+  "warm_cached_tokens": 3776,
+  "cold_capture_layers": 78,
+  "warm_capture_layers": 78,
+  "cold_capture_max_prefix_len": 3818,
+  "warm_capture_max_prefix_len": 3819,
+  "comparator": {
+    "ok": true,
+    "divergence_kind": "",
+    "reason": "",
+    "compared_fields": [
+      "per_layer_per_token_latent_sha"
+    ],
+    "cached_tokens": 3776
+  },
+  "status": "PASS"
+}

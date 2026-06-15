@@ -1,0 +1,17 @@
+{
+  "schema": "ds_radix_fixture_state_tablefree_v1",
+  "cold_warm_selection_equivalence_passed": true,
+  "recall_radixon_passed": true,
+  "edge_probe_passed": true,
+  "config": {
+    "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
+    "tp_size": 8,
+    "page_size": 64,
+    "kv_cache_dtype": "fp8_e4m3",
+    "channel_mask_path": "/models/glm51-fp8-channel-mask-s256.safetensors",
+    "channel_mask_sha256": "340b6c0bd40d6d7dcf4fef5ab2a9f096cf56d94bc844960500bcd72db65f08bd",
+    "selector_mode": "table_free"
+  },
+  "recorded_at": "2026-06-15T05:04:21Z",
+  "_note": "SYNTHETIC gate-demo artifact: all three probe fields set true ONLY to prove apply_radix_fixture_artifact ACCEPTS a correctly-formed table-free state on HEAD 49a401a72. NOT a hardware attestation. The honest this-session state is tablefree_fixture_state_THIS_SESSION.json."
+}

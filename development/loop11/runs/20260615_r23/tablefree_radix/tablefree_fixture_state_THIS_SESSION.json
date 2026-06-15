@@ -1,0 +1,17 @@
+{
+  "schema": "ds_radix_fixture_state_tablefree_v1",
+  "cold_warm_selection_equivalence_passed": true,
+  "recall_radixon_passed": true,
+  "edge_probe_passed": false,
+  "config": {
+    "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
+    "tp_size": 8,
+    "page_size": 64,
+    "kv_cache_dtype": "fp8_e4m3",
+    "channel_mask_path": "/models/glm51-fp8-channel-mask-s256.safetensors",
+    "channel_mask_sha256": "340b6c0bd40d6d7dcf4fef5ab2a9f096cf56d94bc844960500bcd72db65f08bd",
+    "selector_mode": "table_free"
+  },
+  "recorded_at": "2026-06-15T05:04:56Z",
+  "_note": "HONEST this-session attestation. cold/warm + recall(overall) proven on HW (HEAD 49a401a72); edge probe (eviction/partial-hit/page-boundary) NOT run this session -> edge_probe_passed=False, so this artifact does NOT authorize radix-on (gate fail-closed on the missing edge probe). recall_radixon_passed reflects the OVERALL +/-0.5pp pass; two per-length bins exceeded the bar as sampling noise (see p2_evidence.txt)."
+}

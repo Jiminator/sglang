@@ -1,0 +1,7 @@
+probe=a7_dsa_default (NO --enable-double-sparsity, mem 0.8, shipped radix-default) status=OK
+max_total_num_tokens=410560  expected=410560  result=MATCH
+kv_ranks_logging_410560=8 (expect 8)
+smoke=OK:Paris. Distance from London to Paris is 343 km, while direct
+--- boot fields ---
+[2026-06-15 05:05:27 TP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 410560, KV size: 23.51 GB
+[2026-06-15 05:06:11 TP0] max_total_num_tokens=410560, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=64, context_len=202752, available_gpu_mem=22.31 GB

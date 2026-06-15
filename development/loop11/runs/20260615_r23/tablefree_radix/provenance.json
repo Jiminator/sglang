@@ -1,0 +1,48 @@
+{
+  "run": "loop11_r23_tablefree_radix_serving_validation",
+  "date_utc": "2026-06-15",
+  "runtime_base_commit": "49a401a72e7a2deb92b31db6a8c85fde22a3ae03",
+  "runtime_base_commit_short": "49a401a72",
+  "gate_description": "SOUND fail-closed table-free radix fixture gate: apply_radix_fixture_artifact requires schema ds_radix_fixture_state_tablefree_v1 + each probe field `is True` + selector_mode='table_free' fingerprint; compare_tablefree_selection fail-closes on zero/empty/short/divergent captures.",
+  "model": "GLM-5.1-FP8 (/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db)",
+  "channel_mask": "/models/glm51-fp8-channel-mask-s256.safetensors (content_sha256=35155ac46ad7 dtype=fp8_e4m3 head_dim=192 page_size=64 label_dim=32 L=78 H=64)",
+  "envelope": {
+    "tp_size": 8,
+    "kv_cache_dtype": "fp8_e4m3",
+    "page_size": 64,
+    "mem_fraction_static": 0.8,
+    "max_running_requests": 64,
+    "cuda_graph_max_bs": 64,
+    "expandable_segments": "NEVER set (custom-all-reduce-v2 IPC requires it unset)"
+  },
+  "ds_config_base": {
+    "top_k": 2048,
+    "page_size": 64,
+    "channel_mask_path": "/models/glm51-fp8-channel-mask-s256.safetensors",
+    "device_buffer_size": 4096,
+    "scorer_norm": "off",
+    "head_agg": "max",
+    "anchor_mode": "off",
+    "anchor_budget": 0,
+    "recall_oracle": false,
+    "enable_lifted_budget_decode": false,
+    "lifted_budget_top_k": 0
+  },
+  "removed_fields_still_rejected_by_parser": ["signature_dtype", "scorer_norm_hybrid_threshold", "table_free"],
+  "boot_commands": {
+    "P1_cold_warm": "SGLANG_DS_RADIX_OVERRIDE=1 SGLANG_DS_LATENT_CAPTURE_DIR=<dir> python -m sglang.launch_server --model-path <GLM> --tp-size 8 --kv-cache-dtype fp8_e4m3 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --mem-fraction-static 0.8 --max-running-requests 64 --cuda-graph-max-bs 64 --enable-double-sparsity --double-sparsity-config '{...,\"latent_capture\": true}' --disable-cuda-graph  (NOTE: NO --disable-radix-cache => radix ON; SGLANG_DS_RADIX_OVERRIDE=1 authorizes; --disable-cuda-graph so the eager latent-capture decode hook fires)",
+    "P2_recall": "SGLANG_DS_RADIX_OVERRIDE=1 python -m sglang.launch_server <same base> --enable-double-sparsity --double-sparsity-config '{...,\"recall_oracle\": true}' --disable-cuda-graph  (radix ON via override; recall_oracle requires eager)",
+    "A7_dsa_default": "python -m sglang.launch_server --model-path <GLM> --tp-size 8 --kv-cache-dtype fp8_e4m3 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --mem-fraction-static 0.8 --max-running-requests 64 --cuda-graph-max-bs 64  (NO --enable-double-sparsity; shipped default radix ON)"
+  },
+  "new_production_instrumentation": {
+    "files": [
+      "python/sglang/srt/layers/attention/double_sparsity/latent_capture.py (NEW)",
+      "python/sglang/srt/layers/attention/double_sparsity/config.py (latent_capture flag: _ALLOWED_FIELDS + dataclass field + validation + parse)",
+      "python/sglang/srt/models/deepseek_v2.py (one config-borne call site in _select_topk_indices)"
+    ],
+    "what": "Config-borne `latent_capture` diagnostic. When on, _select_topk_indices (which already slices the resident fp8 latent + per-128-block scales for the absorbed scorer) dumps, per (tp_rank, request, DS layer), the SHA256 of each prompt-prefix slot's resident fp8-latent bytes + its per-block scale bytes. This is the table-free absorbed-selection ROOT identity (selection = deterministic fn of query + cached fp8 latent bytes; no materialized signatures exist post-TokenLabelTable-deletion).",
+    "capture_safety": "Eager decode only: no-op unless forward_mode.is_decode() AND not torch.cuda.is_current_stream_capturing() (host copy/SHA is illegal under CUDA-graph capture, and the prompt-prefix slots are only host-readable on the eager forward). Off by default; the hot path pays one getattr when the flag is unset. Dump dir defaults under os.getcwd() (worker CWD = repo root; /dev/shm is NOT shared across sandboxed TP workers) with SGLANG_DS_LATENT_CAPTURE_DIR override."
+  },
+  "instrumentation_commit": "4a1579cbe",
+  "note": "Probes ran on the gate commit 49a401a72 + the (then-uncommitted) latent_capture instrumentation, now committed as 4a1579cbe (= 49a401a72 + the latent_capture diff). The exact code the probes ran is reproducible at 4a1579cbe; the gate code (validator/comparator) is in 49a401a72 and is unmodified by the instrumentation commit. The 11M raw recall sink (sink_full.jsonl) was dropped to keep the artifact small; the recall gate summary/log are retained."
+}

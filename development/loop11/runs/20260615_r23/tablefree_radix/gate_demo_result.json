@@ -1,0 +1,43 @@
+{
+  "gate_demo_verdict": "PASS",
+  "good_artifact": "/sgl-workspace/sglang/development/loop11/runs/20260615_r23/tablefree_radix/tablefree_fixture_state_GOOD.json",
+  "good_artifact_fingerprint": {
+    "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
+    "tp_size": 8,
+    "page_size": 64,
+    "kv_cache_dtype": "fp8_e4m3",
+    "channel_mask_path": "/models/glm51-fp8-channel-mask-s256.safetensors",
+    "channel_mask_sha256": "340b6c0bd40d6d7dcf4fef5ab2a9f096cf56d94bc844960500bcd72db65f08bd",
+    "selector_mode": "table_free"
+  },
+  "schemas": {
+    "tablefree": "ds_radix_fixture_state_tablefree_v1",
+    "legacy_rejected": "ds_radix_fixture_state_v1"
+  },
+  "cases": {
+    "1_good_tablefree_accepts": {
+      "authorized": true,
+      "error": null
+    },
+    "2_legacy_schema_rejects": {
+      "authorized": false,
+      "error": "ValueError: radix-fixture artifact '/sgl-workspace/sglang/development/loop11/runs/20260615_r23/tablefree_radix/_legacy_label_state.json' uses the legacy label-capture schema 'ds_radix_fixture_state_v1', which cannot authorize table-free Double Sparsity radix-on (the TokenLabelTable is deleted). Regenerate the table-free fixture (schema 'ds_radix_fixture_state_tablefree_v1': cold/warm selection equivalence + recall-under-radix-on + edge probe)."
+    },
+    "3a_string_true_rejects": {
+      "authorized": false,
+      "error": "ValueError: radix-fixture artifact '/sgl-workspace/sglang/development/loop11/runs/20260615_r23/tablefree_radix/_strtrue_state.json' does not record every table-free correctness probe as the JSON boolean true; not satisfied for edge_probe_passed='true' (radix-cache ON is not authorized)."
+    },
+    "3b_false_field_rejects": {
+      "authorized": false,
+      "error": "ValueError: radix-fixture artifact '/sgl-workspace/sglang/development/loop11/runs/20260615_r23/tablefree_radix/_false_state.json' does not record every table-free correctness probe as the JSON boolean true; not satisfied for recall_radixon_passed=False (radix-cache ON is not authorized)."
+    },
+    "4_config_mismatch_rejects": {
+      "authorized": false,
+      "error": "ValueError: radix-fixture artifact '/sgl-workspace/sglang/development/loop11/runs/20260615_r23/tablefree_radix/tablefree_fixture_state_GOOD.json' was recorded for a different serving config; it cannot authorize this boot. Mismatches: tp_size: artifact=8 current=4"
+    },
+    "5_missing_artifact_rejects": {
+      "authorized": false,
+      "error": "ValueError: --double-sparsity-radix-fixture-artifact='/sgl-workspace/sglang/development/loop11/runs/20260615_r23/tablefree_radix/_nope.json' does not exist; cannot authorize radix-cache ON."
+    }
+  }
+}

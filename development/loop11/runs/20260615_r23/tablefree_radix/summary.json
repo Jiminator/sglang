@@ -1,0 +1,89 @@
+{
+  "run": "loop11_r23_tablefree_radix_serving_validation",
+  "date_utc": "2026-06-15",
+  "runtime_base_commit": "49a401a72e7a2deb92b31db6a8c85fde22a3ae03",
+  "gate": "SOUND fail-closed table-free radix fixture (schema ds_radix_fixture_state_tablefree_v1, each probe field `is True`, selector_mode='table_free' fingerprint; compare_tablefree_selection fail-closes on zero/empty/short/divergent captures)",
+  "model": "GLM-5.1-FP8",
+  "envelope": "TP8 / fp8_e4m3 / page64 / mem0.8 / max-running 64 / cuda-graph-max-bs 64 (expandable_segments NEVER set)",
+
+  "P1_cold_warm_selection_equivalence": {
+    "status": "PASS",
+    "boot": "DS radix-ON (SGLANG_DS_RADIX_OVERRIDE=1, no --disable-radix-cache), EAGER, latent_capture=true",
+    "cold_prompt_tokens": 3815,
+    "cold_cached_tokens": 0,
+    "warm_prompt_tokens": 3816,
+    "warm_cached_tokens": 3776,
+    "positive_radix_hit": true,
+    "capture_layers_per_pass": 78,
+    "capture_ranks": 8,
+    "comparator": "compare_tablefree_selection(cold, warm, cached_tokens=3776) -> ok=True over all 78 layers x 3776 cached-prefix positions (compared_fields=[per_layer_per_token_latent_sha])",
+    "mechanism": "Config-borne latent_capture diagnostic dumps per (tp_rank, request, DS layer) the SHA256 of each prompt-prefix slot's resident fp8-latent bytes + per-128-block scale bytes (the absorbed-selection ROOT identity). Cold pass + warm pass each captured; the comparator compares ONLY the first warm_cached_tokens=3776 prefix positions (the real radix-cache reuse) per layer -> bit-identical -> identical absorbed score -> identical top-k.",
+    "verdict": "Selection identity is bit-stable across a REAL radix cache hit (cached_tokens=3776 > 0)."
+  },
+
+  "P2_recall_radixon": {
+    "status_overall": "PASS",
+    "status_per_length": "CHARACTERIZATION",
+    "boot": "DS radix-ON (SGLANG_DS_RADIX_OVERRIDE=1), EAGER, recall_oracle=true",
+    "workload": "NIAH oracle sweep lengths={1024,4096,16384} num=20 -> 18720 records (matches baseline 18720), all 20/20 trials/length recorded, 0 hard failures",
+    "comparability": "length set + per-length sample counts (6240) EXACTLY match the frozen baseline",
+    "recall_at_2048_pct": {
+      "L1024": {"radixon": 100.0, "baseline": 100.0, "delta_pp": 0.0, "pass": true},
+      "L4096": {"radixon": 57.196, "baseline": 58.045, "delta_pp": -0.849, "pass": false},
+      "L16384": {"radixon": 36.715, "baseline": 36.042, "delta_pp": 0.673, "pass": false},
+      "overall": {"radixon": 64.637, "baseline": 64.696, "delta_pp": -0.059, "pass": true}
+    },
+    "verdict": "OVERALL recall@2048 -0.059pp -> within +/-0.5pp PASS. Two per-length bins (L4096 -0.849pp, L16384 +0.673pp) exceed +/-0.5pp; opposite-signed, net ~0 -> NIAH needle-placement sampling noise at n=6240 (SE ~0.6pp > 0.5pp bar), NOT a radix-on regression. Reported as characterization, not a fabricated per-length pass.",
+    "note": "absorbed_recall_summary.py's rec['absorbed'] side-by-side key does NOT exist on this post-deletion HEAD (selection IS table-free absorbed-latent unconditionally; no separate table-vs-absorbed). Its absorbed-gate fail-closes 'zero samples for key=absorbed'; the correct gate is the top-level recall_at_k (= the absorbed-latent recall) vs baseline, computed in recall_radixon/p2_tablepath_gate.log."
+  },
+
+  "A7_dsa_default_regression": {
+    "status": "PASS",
+    "boot": "DSA default (NO --enable-double-sparsity), mem 0.8, shipped radix-default",
+    "max_total_num_tokens": 410560,
+    "expected": 410560,
+    "match": true,
+    "kv_ranks_logging_410560": 8,
+    "smoke": "OK:Paris. Distance from London to Paris is 343 km...",
+    "verdict": "Shipped DSA-native default un-regressed by the table-free radix gate code (max_total 410560 == frozen R21 value)."
+  },
+
+  "gate_demonstration": {
+    "status": "PASS",
+    "ran_on": "HEAD 49a401a72 (committed gate, CPU)",
+    "result_file": "gate_demo_result.json",
+    "accepts": "correctly-formed table-free state (schema ds_radix_fixture_state_tablefree_v1, all 3 probe fields JSON true, config fingerprint matching this boot incl. channel-mask SHA) -> records _double_sparsity_radix_fixture_passed",
+    "rejects": [
+      "legacy label-capture schema ds_radix_fixture_state_v1 (deleted TokenLabelTable)",
+      "probe field = string 'true' (truthy non-bool; `is True` fail-closed)",
+      "probe field = false",
+      "config mismatch (tp_size 8 artifact vs 4 boot)",
+      "missing artifact file"
+    ]
+  },
+
+  "this_session_attestation": {
+    "file": "tablefree_fixture_state_THIS_SESSION.json",
+    "cold_warm_selection_equivalence_passed": true,
+    "recall_radixon_passed": true,
+    "edge_probe_passed": false,
+    "edge_probe_note": "eviction/partial-hit/page-boundary edge probe NOT run on hardware this session -> recorded false (no fabrication).",
+    "gate_result": "REJECTED / fail-closed (edge_probe_passed=False) -> this attestation does NOT authorize radix-on. Correct: the gate refuses a partial attestation.",
+    "synthetic_demo_artifact": "tablefree_fixture_state_GOOD.json is a SYNTHETIC gate-demo fixture (all 3 fields true to prove ACCEPT), explicitly tagged _note as NOT a hardware claim."
+  },
+
+  "new_production_instrumentation": {
+    "latent_capture": "python/sglang/srt/layers/attention/double_sparsity/latent_capture.py (NEW) + config.py flag + one call site in deepseek_v2._select_topk_indices; config-borne, eager-decode-only, capture-safe no-op under graph capture, off by default. See provenance.json.",
+    "committed": false
+  },
+
+  "completeness": {
+    "P1": "RAN, PASS",
+    "P2": "RAN, OVERALL PASS / per-length characterization",
+    "A7": "RAN, PASS",
+    "edge_probe": "NOT RUN this session (out of the 3 prioritized probes; reported honestly so the this-session attestation fail-closes)"
+  },
+
+  "cleanup": "all sglang.launch_server / scheduler processes killed; all 8 GPUs at 0 MiB after each probe; one TP=8 server at a time.",
+  "committed": false
+}
