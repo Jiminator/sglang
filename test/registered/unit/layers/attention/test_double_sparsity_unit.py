@@ -530,7 +530,8 @@ class TestValidator(unittest.TestCase):
                 with self.assertRaises(ValueError) as ctx:
                     validate_double_sparsity(refused_args)
                 self.assertIn(
-                    "M3-B page-stability fixture", str(ctx.exception),
+                    "table-free radix fixture",
+                    str(ctx.exception),
                 )
                 # 2. After record_radix_fixture_passed(), validation
                 # passes for fresh args carrying the same launch flags.
@@ -586,8 +587,11 @@ class TestValidator(unittest.TestCase):
             )
             state = _os.path.join(tmp, "radix_state.json")
             write_radix_fixture_state(
-                state, server_args=self._radix_flip_args(mask),
-                label_capture_passed=True, fp8_scale_stability_passed=True,
+                state,
+                server_args=self._radix_flip_args(mask),
+                cold_warm_selection_equivalence_passed=True,
+                recall_radixon_passed=True,
+                edge_probe_passed=True,
             )
             os.environ.pop("SGLANG_DS_RADIX_OVERRIDE", None)
             os.environ["SGLANG_DS_ALLOW_PLACEHOLDER"] = "1"
@@ -626,8 +630,11 @@ class TestValidator(unittest.TestCase):
             state = _os.path.join(tmp, "radix_state.json")
             # state recorded for tp_size=4 ...
             write_radix_fixture_state(
-                state, server_args=self._radix_flip_args(mask, tp_size=4),
-                label_capture_passed=True, fp8_scale_stability_passed=True,
+                state,
+                server_args=self._radix_flip_args(mask, tp_size=4),
+                cold_warm_selection_equivalence_passed=True,
+                recall_radixon_passed=True,
+                edge_probe_passed=True,
             )
             # ... but this boot is tp_size=8.
             args = self._radix_flip_args(mask, artifact=state, tp_size=8)
@@ -658,13 +665,61 @@ class TestValidator(unittest.TestCase):
             )
             state = _os.path.join(tmp, "radix_state.json")
             write_radix_fixture_state(
-                state, server_args=self._radix_flip_args(mask),
-                label_capture_passed=True, fp8_scale_stability_passed=False,
+                state,
+                server_args=self._radix_flip_args(mask),
+                cold_warm_selection_equivalence_passed=True,
+                recall_radixon_passed=False,
+                edge_probe_passed=True,
             )
             args = self._radix_flip_args(mask, artifact=state)
             with self.assertRaises(ValueError) as ctx:
                 apply_radix_fixture_artifact(args)
-            self.assertIn("BOTH fixtures", str(ctx.exception))
+            self.assertIn("ALL table-free", str(ctx.exception))
+
+    def test_apply_radix_fixture_artifact_rejects_legacy_label_capture_schema(self):
+        """A legacy label-capture fixture (the table is deleted) must NOT authorize
+        table-free DS radix-on — it is rejected with a regenerate message even when
+        the config fingerprint matches."""
+        from sglang.srt.layers.attention.double_sparsity.validator import (
+            apply_radix_fixture_artifact,
+            radix_fixture_config_fingerprint,
+            RADIX_FIXTURE_STATE_SCHEMA,
+        )
+        from sglang.srt.layers.attention.double_sparsity.channel_mask import (
+            save_channel_mask,
+        )
+        import json as _json, tempfile, os as _os
+
+        sel_t = torch.randint(0, 128, (2, 4, 16), dtype=torch.int32)
+        w_t = torch.randn(2, 4, 16, dtype=torch.float32)
+        with tempfile.TemporaryDirectory() as tmp:
+            mask = _os.path.join(tmp, "cm.safetensors")
+            save_channel_mask(
+                mask, sel_t, w_t, dtype="fp8_e4m3", head_dim=128,
+                page_size=64, label_dim=16, created_at="2026-05-20T00:00:00Z",
+            )
+            state = _os.path.join(tmp, "legacy_state.json")
+            # Legacy artifact with a MATCHING config fingerprint — refused purely on
+            # the (wrong) schema kind, so the regenerate path is unambiguous.
+            legacy = {
+                "schema": RADIX_FIXTURE_STATE_SCHEMA,
+                "label_capture_passed": True,
+                "fp8_scale_stability_passed": True,
+                "config": radix_fixture_config_fingerprint(
+                    self._radix_flip_args(mask)
+                ),
+            }
+            with open(state, "w") as fh:
+                _json.dump(legacy, fh)
+            args = self._radix_flip_args(mask, artifact=state)
+            with self.assertRaises(ValueError) as ctx:
+                apply_radix_fixture_artifact(args)
+            msg = str(ctx.exception)
+            self.assertIn("legacy label-capture schema", msg)
+            self.assertIn("table-free", msg)
+            self.assertFalse(
+                getattr(args, "_double_sparsity_radix_fixture_passed", False)
+            )
 
     def test_apply_radix_fixture_artifact_missing_file_raises(self):
         from sglang.srt.layers.attention.double_sparsity.validator import (
@@ -732,7 +787,7 @@ class TestValidator(unittest.TestCase):
                 apply_radix_fixture_artifact(args)  # no-op (no artifact)
                 with self.assertRaises(ValueError) as ctx:
                     validate_double_sparsity(args)
-                self.assertIn("M3-B page-stability fixture", str(ctx.exception))
+                self.assertIn("table-free radix fixture", str(ctx.exception))
             finally:
                 os.environ.pop("SGLANG_DS_ALLOW_PLACEHOLDER", None)
                 os.environ.pop("SGLANG_DS_ALLOW_NO_ADAPTER", None)
@@ -782,6 +837,76 @@ class TestValidator(unittest.TestCase):
         self.assertEqual(gauge._value.get(), 1,
                           "gauge must read 1 after a successful validation")
         m.reset_for_testing()
+
+
+class TestTableFreeRadixComparator(unittest.TestCase):
+    """The table-free radix fixture comparator: cold/warm SELECTION (and the cached
+    fp8 latent it is read from) must match over the cached prefix; any divergence
+    fails closed."""
+
+    def test_selection_match_passes(self):
+        from sglang.srt.layers.attention.double_sparsity.radix_fixture_capture import (
+            compare_tablefree_selection,
+        )
+
+        cold = {"per_layer_selected_indices": [[1, 5, 9], [2, 6, 9]]}
+        warm = {"per_layer_selected_indices": [[1, 5, 9], [2, 6, 9]]}
+        r = compare_tablefree_selection(cold=cold, warm=warm)
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["compared_fields"], ["per_layer_selected_indices"])
+
+    def test_selection_divergence_fails_closed(self):
+        from sglang.srt.layers.attention.double_sparsity.radix_fixture_capture import (
+            compare_tablefree_selection,
+        )
+
+        cold = {"per_layer_selected_indices": [[1, 5, 9]]}
+        warm = {"per_layer_selected_indices": [[1, 5, 8]]}  # last index differs
+        r = compare_tablefree_selection(cold=cold, warm=warm)
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["divergence_kind"], "selection")
+
+    def test_latent_sha_match_passes(self):
+        from sglang.srt.layers.attention.double_sparsity.radix_fixture_capture import (
+            compare_tablefree_selection,
+        )
+
+        cold = {"per_layer_per_token_latent_sha": [["a", "b"], ["c", "d"]]}
+        warm = {"per_layer_per_token_latent_sha": [["a", "b"], ["c", "d"]]}
+        r = compare_tablefree_selection(cold=cold, warm=warm)
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["compared_fields"], ["per_layer_per_token_latent_sha"])
+
+    def test_latent_sha_divergence_fails_closed(self):
+        from sglang.srt.layers.attention.double_sparsity.radix_fixture_capture import (
+            compare_tablefree_selection,
+        )
+
+        cold = {"per_layer_per_token_latent_sha": [["a", "b"]]}
+        warm = {"per_layer_per_token_latent_sha": [["a", "X"]]}
+        r = compare_tablefree_selection(cold=cold, warm=warm)
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["divergence_kind"], "latent")
+
+    def test_neither_field_fails_closed(self):
+        from sglang.srt.layers.attention.double_sparsity.radix_fixture_capture import (
+            compare_tablefree_selection,
+        )
+
+        r = compare_tablefree_selection(cold={}, warm={})
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["divergence_kind"], "no_comparable_field")
+
+    def test_layer_count_mismatch_fails_closed(self):
+        from sglang.srt.layers.attention.double_sparsity.radix_fixture_capture import (
+            compare_tablefree_selection,
+        )
+
+        cold = {"per_layer_selected_indices": [[1]]}
+        warm = {"per_layer_selected_indices": [[1], [2]]}
+        r = compare_tablefree_selection(cold=cold, warm=warm)
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["divergence_kind"], "selection_layer_count")
 
 
 class TestPlaceholderGuard(unittest.TestCase):

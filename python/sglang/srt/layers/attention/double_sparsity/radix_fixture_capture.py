@@ -469,3 +469,88 @@ def compare_cached_prefix(
         "divergence_kind": "",
         "reason": "",
     }
+
+
+def compare_tablefree_selection(
+    *,
+    cold: Dict[str, Any],
+    warm: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Table-free radix fixture: compare the SELECTION a cold request and a warm
+    request (reusing the same radix-cached prefix) produce over the cached prefix.
+
+    Absorbed-latent scoring makes the selection a deterministic function of
+    (query, cached fp8 latent bytes): identical cached latent => identical absorbed
+    score => identical top-k. This is the table-free replacement for the label-SHA
+    fixture (there are no materialized signatures to capture). Each record carries
+    one or both of:
+
+      * ``per_layer_selected_indices`` (List[List[int]]) — the selected logical
+        indices per layer (the end-to-end selection); and/or
+      * ``per_layer_per_token_latent_sha`` (List[List[str]]) — the resident fp8
+        latent bytes SHA of each cached-prefix slot, per layer (the root identity
+        the selection is read from).
+
+    The caller aligns the two passes (same decode step / cached-prefix range).
+
+    Returns ``{ok, divergence_kind, reason, compared_fields}``. Fail-closed: a
+    record missing BOTH comparable fields, a per-layer count mismatch, or any
+    per-layer divergence over the cached prefix => ``ok=False``.
+    """
+    candidates = (
+        ("per_layer_selected_indices", "selection"),
+        ("per_layer_per_token_latent_sha", "latent"),
+    )
+    present = [
+        (field, kind)
+        for field, kind in candidates
+        if cold.get(field) is not None and warm.get(field) is not None
+    ]
+    if not present:
+        return {
+            "ok": False,
+            "divergence_kind": "no_comparable_field",
+            "reason": (
+                "neither per_layer_selected_indices nor per_layer_per_token_latent_sha "
+                "is present in BOTH passes; nothing to compare (fail-closed)"
+            ),
+            "compared_fields": [],
+        }
+    compared_fields = [field for field, _ in present]
+    for field, kind in present:
+        c = cold.get(field) or []
+        w = warm.get(field) or []
+        if len(c) != len(w):
+            return {
+                "ok": False,
+                "divergence_kind": f"{kind}_layer_count",
+                "reason": f"{field} layer count mismatch: cold={len(c)} warm={len(w)}",
+                "compared_fields": compared_fields,
+            }
+        for layer_id in range(len(c)):
+            c_layer = list(c[layer_id])
+            w_layer = list(w[layer_id])
+            if c_layer != w_layer:
+                pos = next(
+                    (
+                        i
+                        for i in range(min(len(c_layer), len(w_layer)))
+                        if c_layer[i] != w_layer[i]
+                    ),
+                    -1,
+                )
+                return {
+                    "ok": False,
+                    "divergence_kind": kind,
+                    "reason": (
+                        f"{field} differs at layer={layer_id} position={pos}: "
+                        f"cold={c_layer!r} warm={w_layer!r}"
+                    ),
+                    "compared_fields": compared_fields,
+                }
+    return {
+        "ok": True,
+        "divergence_kind": "",
+        "reason": "",
+        "compared_fields": compared_fields,
+    }

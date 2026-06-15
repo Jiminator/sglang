@@ -337,7 +337,7 @@ def validate_double_sparsity(server_args: "ServerArgs") -> None:
         ) != "1":
             raise ValueError(
                 "Double Sparsity requires --disable-radix-cache until the "
-                "M3-B page-stability fixture has been recorded as passing "
+                "table-free radix fixture has been recorded as passing "
                 "(server_args._double_sparsity_radix_fixture_passed = True). "
                 "Set SGLANG_DS_RADIX_OVERRIDE=1 to override during development."
             )
@@ -367,22 +367,19 @@ def record_radix_fixture_passed(
     without requiring the developer override
     ``SGLANG_DS_RADIX_OVERRIDE=1``.
 
-    The intended flow:
+    The intended flow (table-free DS):
 
-    1. Operator runs the M3-B fixture pair:
-       ``test/manual/test_dsv32_radix_label_capture_fixture.py``
-       (direct label SHA bit-equality between cold + warm requests)
-       and
-       ``test/manual/test_dsv32_fp8_scale_stability.py``
-       (singleton vs packed-block FP8 scale-factor equality).
-    2. On both passing, the operator's launcher (or a small init
-       module) calls this helper with the capture fixture's artifact
-       path so the DEC-2 guard accepts radix-cache ON at boot and
-       the server log records exactly which fixture artifact
-       authorized the flip.
-    3. ``serve_double_sparsity.sh`` removes the
-       ``--disable-radix-cache`` flag (the ``AC-10-FIXTURE-MARKER``
-       comment names the exact line).
+    1. Operator runs the table-free correctness probes on hardware:
+       cold/warm SELECTION equivalence across a radix cache hit,
+       recall@2048 under radix-on within the +/-0.5pp bar, and a clean
+       eviction/partial-hit/page-boundary edge probe.
+    2. On all passing, the operator writes the table-free fixture state
+       (``write_radix_fixture_state(...)``) and the launcher passes
+       ``--double-sparsity-radix-fixture-artifact <state-file>`` so
+       ``apply_radix_fixture_artifact`` records this flag at boot and the
+       server log records exactly which artifact authorized the flip.
+    3. ``serve_double_sparsity.sh`` removes the ``--disable-radix-cache``
+       flag once a matching table-free artifact is supplied.
 
     ``artifact_path`` is optional but recommended: when supplied, the
     audit WARNING records the path + SHA256 of its contents so a grep
@@ -415,17 +412,26 @@ def record_radix_fixture_passed(
 # ----- No-env-override radix-cache flip via a config-bound state file --------
 #
 # The radix flip is authorized by a config-bound state file, NOT an env var.
-# After the operator runs BOTH page-stability fixtures on hardware and they
-# pass, they write a state file via `write_radix_fixture_state(...)` recording
-# both passes plus a fingerprint of the exact serving config (model / TP / page
-# / KV dtype / channel-mask SHA). `serve_double_sparsity.sh` then passes
-# `--double-sparsity-radix-fixture-artifact <state-file>`; `check_server_args`
-# calls `apply_radix_fixture_artifact(server_args)` BEFORE
-# `validate_double_sparsity`, which verifies the state matches THIS boot's
-# config and only then records the fixture-passed flag. A state file recorded
-# for a different model/mask/config does not authorize this boot (fail-closed).
+# After the operator runs the table-free correctness probes on hardware and they
+# pass, they write a state file via `write_radix_fixture_state(...)` recording the
+# cold/warm selection-equivalence + recall-under-radix-on + edge-probe passes plus
+# a fingerprint of the exact serving config (model / TP / page / KV dtype /
+# channel-mask SHA / table-free selector mode). `serve_double_sparsity.sh` then
+# passes `--double-sparsity-radix-fixture-artifact <state-file>`; `check_server_args`
+# calls `apply_radix_fixture_artifact(server_args)` BEFORE `validate_double_sparsity`,
+# which verifies the table-free schema + that the state matches THIS boot's config and
+# only then records the fixture-passed flag. A legacy label-capture artifact, or one
+# recorded for a different model/mask/config/mode, does not authorize this boot
+# (fail-closed).
 
 RADIX_FIXTURE_STATE_SCHEMA = "ds_radix_fixture_state_v1"
+# Table-free (absorbed-latent) DS uses its OWN fixture kind: it proves cold/warm
+# SELECTION equivalence across a radix cache hit (the absorbed score reads the
+# resident fp8 latent directly — there are no materialized label signatures to
+# capture), recall@2048 under radix-on within bar, and a clean eviction/partial-
+# hit/page-boundary edge probe. The legacy label-capture schema above cannot
+# authorize table-free DS (it proves the wrong thing — the table is deleted).
+RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA = "ds_radix_fixture_state_tablefree_v1"
 
 
 def _sha256_file(path: str) -> str:
@@ -451,6 +457,9 @@ def radix_fixture_config_fingerprint(server_args: "ServerArgs") -> dict:
         "kv_cache_dtype": getattr(server_args, "kv_cache_dtype", None),
         "channel_mask_path": config.channel_mask_path,
         "channel_mask_sha256": _sha256_file(config.channel_mask_path),
+        # DS selects table-free (the only mode); pin it so a fixture from any other
+        # selector mode cannot authorize this boot.
+        "selector_mode": "table_free",
     }
 
 
@@ -458,17 +467,23 @@ def write_radix_fixture_state(
     path: str,
     *,
     server_args: "ServerArgs",
-    label_capture_passed: bool,
-    fp8_scale_stability_passed: bool,
+    cold_warm_selection_equivalence_passed: bool,
+    recall_radixon_passed: bool,
+    edge_probe_passed: bool,
 ) -> dict:
-    """Write the radix-fixture-passed state file (operator step after both
-    M3-B fixtures pass on hardware). Returns the written dict."""
+    """Write the table-free radix-fixture-passed state file (operator step after the
+    table-free correctness probes pass on hardware): cold/warm selection equivalence
+    across a cache hit, recall@2048 under radix-on within bar, and a clean
+    eviction/partial-hit/page-boundary edge probe. Returns the written dict."""
     import time as _time
 
     state = {
-        "schema": RADIX_FIXTURE_STATE_SCHEMA,
-        "label_capture_passed": bool(label_capture_passed),
-        "fp8_scale_stability_passed": bool(fp8_scale_stability_passed),
+        "schema": RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA,
+        "cold_warm_selection_equivalence_passed": bool(
+            cold_warm_selection_equivalence_passed
+        ),
+        "recall_radixon_passed": bool(recall_radixon_passed),
+        "edge_probe_passed": bool(edge_probe_passed),
         "config": radix_fixture_config_fingerprint(server_args),
         "recorded_at": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
     }
@@ -507,17 +522,36 @@ def apply_radix_fixture_artifact(server_args: "ServerArgs") -> None:
             f"radix-fixture artifact {artifact!r} is unreadable/not JSON: {exc}."
         ) from exc
 
-    if not isinstance(state, dict) or state.get("schema") != RADIX_FIXTURE_STATE_SCHEMA:
+    schema = state.get("schema") if isinstance(state, dict) else None
+    if schema == RADIX_FIXTURE_STATE_SCHEMA:
+        # The legacy label-capture fixture proves bit-stability of the materialized
+        # TokenLabelTable signatures — which no longer exist (the table is deleted;
+        # DS selects table-free off the resident latent). It cannot authorize
+        # table-free DS radix-on; the operator must regenerate the table-free fixture.
+        raise ValueError(
+            f"radix-fixture artifact {artifact!r} uses the legacy label-capture schema "
+            f"{RADIX_FIXTURE_STATE_SCHEMA!r}, which cannot authorize table-free Double "
+            "Sparsity radix-on (the TokenLabelTable is deleted). Regenerate the "
+            f"table-free fixture (schema {RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA!r}: "
+            "cold/warm selection equivalence + recall-under-radix-on + edge probe)."
+        )
+    if not isinstance(state, dict) or schema != RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA:
         raise ValueError(
             f"radix-fixture artifact {artifact!r} schema must be "
-            f"{RADIX_FIXTURE_STATE_SCHEMA!r}, got {state.get('schema') if isinstance(state, dict) else type(state).__name__!r}."
+            f"{RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA!r}, got "
+            f"{schema if isinstance(state, dict) else type(state).__name__!r}."
         )
-    if not (state.get("label_capture_passed") and state.get("fp8_scale_stability_passed")):
+    required = (
+        "cold_warm_selection_equivalence_passed",
+        "recall_radixon_passed",
+        "edge_probe_passed",
+    )
+    if not all(state.get(k) for k in required):
         raise ValueError(
-            f"radix-fixture artifact {artifact!r} does not record BOTH fixtures as "
-            f"passed (label_capture_passed={state.get('label_capture_passed')!r}, "
-            f"fp8_scale_stability_passed={state.get('fp8_scale_stability_passed')!r}); "
-            "radix-cache ON is not authorized."
+            f"radix-fixture artifact {artifact!r} does not record ALL table-free "
+            "correctness probes as passed ("
+            + ", ".join(f"{k}={state.get(k)!r}" for k in required)
+            + "); radix-cache ON is not authorized."
         )
 
     recorded = state.get("config") or {}
