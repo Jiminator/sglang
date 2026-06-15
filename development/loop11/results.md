@@ -1,11 +1,24 @@
 # Loop 11 Results — Authoritative Current State
 
 > Maintained rewrite-over-append: this document always reflects the loop's current state.
-> Last regenerated: Round 17, 2026-06-14. HEAD at round start: `4b0be6936` (R16).
+> Last regenerated: Round 21, 2026-06-15. HEAD at round start: `0f84504ce` (R20); R21 deletion commit `01e3ff238`.
 
 ## 1. Current state summary
 
-- **M0 COMPLETE; M1 COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 capacity payoff + AC-7 PROVEN LIVE (R20) — only the DEC-2 table-module deletion remains.**
+- **M0 COMPLETE; M1 COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 COMPLETE (R21): the TokenLabelTable is DELETED (DEC-2), table-free absorbed-latent selection is the one served default, and the capacity payoff + AC-7 are re-proven on the shipped path.**
+- **R21 — task6 CLOSED (DEC-2): TokenLabelTable DELETED; table-free is the one DS selection path; shipped-path capacity re-proven on a clean committed HEAD.**
+  Deleted `token_label_table.py` + `token_label_write.py` + the table-signature scorer engine (the
+  cosine/hybrid `scorer_norm` variants + `compute_token_scores` / the logical-score Triton kernels);
+  collapsed the `table_free` conditional everywhere (absorbed scratch + the `slot_written` validity bitmap
+  now allocate unconditionally; capture-safe device-scalar RHS + invalidate-before-select preserved);
+  dropped the now-dead config fields (`table_free`, `signature_dtype`, `scorer_norm` hybrid threshold);
+  `scorer_norm` restricted to "off". The pool no longer reserves table bytes; `serve_double_sparsity.sh`
+  defaults to the table-free path (the `TABLE_FREE` opt-in is gone). **Re-proven LIVE on the durable
+  default (no flag) at committed HEAD `01e3ff238`:** `max_total_num_tokens` = **504640** / derived bs cap
+  **109 ≥ 64** / CUDA-graph capture all 8 ranks + both buckets / **no TokenLabelTable allocated** /
+  conc-64 decode #running-req peak **64 ≥ 61** / DSA default **410560 unchanged** (AC-7). DS unit suite
+  371 passed. `provenance.json` ties the evidence to the committed HEAD (no uncommitted code), resolving
+  the R20 artifact-hash drift. Artifact `runs/20260614_m2/table_free_capacity_r21/`. (§11)
 - **R20 — task6 TABLE-FREE CAPACITY PAYOFF PROVEN LIVE (the loop's root-cause win) + AC-7 (DEC-5).**
   Added a `TABLE_FREE` toggle to `serve_double_sparsity.sh` and booted DS `table_free=true` at the GLM-5.1
   / mem-0.8 op-point. **`max_total_num_tokens` 344064 → 504640 (+160,576 tokens ≈ the freed ~6.8 GB/rank
@@ -642,7 +655,7 @@ now UNBLOCKED:** swap the selector ABI to the latent binding, graph scratch for 
 cosine/hybrid, DELETE `token_label_table.py`/`token_label_write.py` (DEC-2), capacity payoff @0.8,
 same-round AC-7.
 
-## 11. M2 task6: table-free latent-selector integration — IN PROGRESS (R17 slice 1)
+## 11. M2 task6: table-free latent-selector integration — COMPLETE (R21)
 
 The structural payoff (DEC-2): make DS selection score the resident fp8 latent directly so the
 `TokenLabelTable` (5.29 GB/rank fp16) is never allocated → the KV pool grows → the bs cap lifts. task5
@@ -732,7 +745,10 @@ the RHS (pure device-side copy). 455 DS suite; default-off byte-identical. Artif
 `runs/20260614_m2/table_free_capacity/{summary.json,c1_table_free_evidence.txt,c2_conc64_evidence.txt,
 a7_dsa_default_evidence.txt}`.
 
-**Remaining for task6** (one cleanup slice): now that table_free is serving-proven (capacity + AC-7),
-DELETE `token_label_table.py` + `token_label_write.py` + the prefill label-write plumbing (DEC-2) and
-make `table_free` the durable served default. Then task7 (radix-on fixtures/recall), task8 (bs64
+**task6 COMPLETE (R21):** `token_label_table.py` + `token_label_write.py` + the table-signature scorer
+engine are DELETED, the `table_free` conditional is collapsed (table-free is the one unconditional DS
+selection path), and table-free is the durable served default — re-proven LIVE on the committed HEAD
+`01e3ff238` (capacity 504640 / bs cap 109; conc-64 #running-req 64; DSA default 410560 un-regressed; no
+TokenLabelTable allocated), with provenance tied to that commit
+(`runs/20260614_m2/table_free_capacity_r21/`). Next: task7 (radix-on fixtures/recall), task8 (bs64
 captured tax), task9 (locked AC-11 sweep).

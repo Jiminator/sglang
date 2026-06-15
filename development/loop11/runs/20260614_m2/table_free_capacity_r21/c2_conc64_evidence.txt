@@ -1,0 +1,6 @@
+probe=c2_table_free_conc64 (live table-free DS server, post-deletion HEAD) decode_running_req_peak=64
+admission_gate=PASS(decode #running-req=64 >= 61)
+sustained_decode_batches_at_running_req_ge_61=141
+bench_jsonl=development/loop11/runs/20260614_m2/table_free_capacity_r21/serving_c2/ds_table_free_gsp_isl4096_osl512_c64_t1.jsonl
+recipe=gen-shared-prefix isl(2253+1843)=4096 / osl=512 / max-concurrency 64, 60s warmup, 180s window, 64 prompts (R20 c2 recipe)
+bench: max_concurrency=64 achieved_conc_descriptor=34.25 completed=192 duration=193.7s decode_tps_p50=23.94 output_throughput=507.6 tok/s p99_ttft=42.53s median_e2e=32.1s median_itl=40.2ms

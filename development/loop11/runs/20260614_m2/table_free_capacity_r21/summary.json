@@ -1,0 +1,63 @@
+{
+  "run": "loop11_m2_table_free_capacity_r21",
+  "date_utc": "2026-06-15",
+  "runtime_base_commit": "01e3ff238",
+  "note": "Re-proof of the SHIPPED durable-default table-free DS path on the committed post-deletion HEAD. TokenLabelTable deleted; table-free absorbed-latent selection is the ONE unconditional DS selection path. NEW config schema (signature_dtype / scorer_norm_hybrid_threshold / table_free REMOVED and rejected by the parser). Booted DS directly via launch_server with the new DS_CONFIG; no serve_double_sparsity.sh launcher, no TABLE_FREE flag.",
+  "model": "GLM-5.1-FP8 (/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db)",
+  "channel_mask": "/models/glm51-fp8-channel-mask-s256.safetensors (content_sha256=35155ac46ad7, L=78 H=64)",
+  "envelope": {
+    "tp_size": 8,
+    "kv_cache_dtype": "fp8_e4m3",
+    "page_size": 64,
+    "mem_fraction_static": 0.8,
+    "max_running_requests": 64,
+    "cuda_graph_max_bs": 64
+  },
+  "C1_table_free_capacity": {
+    "status": "PASS",
+    "max_total_num_tokens": 504640,
+    "kv_size_gb": 24.05,
+    "bs_cap": 109,
+    "bs_cap_formula": "floor(504640 / 4608)",
+    "bs_cap_ge_64": true,
+    "cuda_graph_capture": "SUCCESS all 8 TP ranks (39.04s); 0 capture failures; both selector score-reduce buckets captured (logical width W=202756 + compact width W=5120)",
+    "ranks_captured": 8,
+    "capture_failures": 0,
+    "token_label_table_allocated": false,
+    "token_label_table_hits_in_log": 0,
+    "smoke": "OK:Paris. The city is located on the River Seine in the north o",
+    "server_reported_ds_config": "{\"top_k\": 2048, \"page_size\": 64, \"channel_mask_path\": \"/models/glm51-fp8-channel-mask-s256.safetensors\", \"device_buffer_size\": 4096, \"scorer_norm\": \"off\", \"head_agg\": \"max\", \"anchor_mode\": \"off\", \"anchor_budget\": 0, \"recall_oracle\": false, \"enable_lifted_budget_decode\": false, \"lifted_budget_top_k\": 0}"
+  },
+  "C2_conc64_admission": {
+    "status": "PASS",
+    "decode_running_req_peak": 64,
+    "gate": "PASS (decode #running-req peak 64 >= 61)",
+    "sustained_decode_batches_at_running_req_ge_61": 141,
+    "server_gen_throughput_peak_tok_s": 1613.7,
+    "bench": {
+      "max_concurrency": 64,
+      "achieved_concurrency_descriptor": 34.25,
+      "completed": 192,
+      "duration_s": 193.7,
+      "median_decode_throughput_tps": 23.94,
+      "output_throughput_tok_s": 507.6,
+      "p99_ttft_s": 42.53,
+      "median_e2e_latency_s": 32.1,
+      "median_itl_ms": 40.2
+    },
+    "recipe": "gen-shared-prefix isl(2253+1843)=4096 / osl=512 / max-concurrency 64, 60s warmup, 180s window, 64 prompts (R20 c2 recipe)",
+    "bench_jsonl": "serving_c2/ds_table_free_gsp_isl4096_osl512_c64_t1.jsonl"
+  },
+  "A7_dsa_default_regression": {
+    "status": "PASS",
+    "max_total_num_tokens": 410560,
+    "expected": 410560,
+    "match": true,
+    "kv_per_rank_tokens": 410560,
+    "ranks_logging_kv_410560": 8,
+    "server_fired_up": true,
+    "conclusion": "DSA-native default un-regressed by the TokenLabelTable deletion (shared files dsa_backend.py / deepseek_v2.py / pool_configurator.py). max_total_num_tokens=410560 EXACTLY matches the R20 value."
+  },
+  "cleanup": "all sglang.launch_server / scheduler processes killed; all 8 GPUs at 0 MiB; /dev/shm cleaned",
+  "verdict": "C1 PASS (table-free capacity 504640 tokens, bs cap 109>=64, capture complete all 8 ranks + both selector buckets, NO TokenLabelTable, smoke coherent), C2 PASS (decode #running-req peak 64>=61), A7 PASS (DSA default max_total 410560 unchanged)"
+}

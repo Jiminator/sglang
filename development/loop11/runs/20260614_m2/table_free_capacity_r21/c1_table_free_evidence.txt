@@ -1,0 +1,44 @@
+probe=c1_table_free (launch_server, NEW DS_CONFIG, table-free unconditional, GLM fp8/0.8/right-sized) status=OK
+table_free  max_total_num_tokens=504640  bs_cap=109  (bs_cap = floor(max_total/4608))
+bs_cap_ge_64=YES
+smoke=OK:Paris. The city is located on the River Seine in the north o
+--- boot fields ---
+[2026-06-15 03:20:55 TP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 504640, KV size: 24.05 GB
+[2026-06-15 03:21:35 TP0] Capture cuda graph end. Time elapsed: 39.04 s. mem usage=0.70 GB. avail mem=21.48 GB.
+[2026-06-15 03:21:40 TP0] max_total_num_tokens=504640, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=64, context_len=202752, available_gpu_mem=21.48 GB
+--- cuda-graph capture-end lines (expect 8, one per TP rank) ---
+[2026-06-15 03:21:35 TP0] Capture cuda graph end. Time elapsed: 39.04 s. mem usage=0.70 GB. avail mem=21.48 GB.
+[2026-06-15 03:21:35 TP1] Capture cuda graph end. Time elapsed: 39.05 s. mem usage=0.70 GB. avail mem=21.39 GB.
+[2026-06-15 03:21:35 TP2] Capture cuda graph end. Time elapsed: 39.05 s. mem usage=0.70 GB. avail mem=21.39 GB.
+[2026-06-15 03:21:35 TP3] Capture cuda graph end. Time elapsed: 39.04 s. mem usage=0.70 GB. avail mem=21.39 GB.
+[2026-06-15 03:21:35 TP4] Capture cuda graph end. Time elapsed: 39.04 s. mem usage=0.70 GB. avail mem=21.39 GB.
+[2026-06-15 03:21:35 TP5] Capture cuda graph end. Time elapsed: 39.04 s. mem usage=0.70 GB. avail mem=21.39 GB.
+[2026-06-15 03:21:35 TP6] Capture cuda graph end. Time elapsed: 39.04 s. mem usage=0.70 GB. avail mem=21.39 GB.
+[2026-06-15 03:21:35 TP7] Capture cuda graph end. Time elapsed: 39.04 s. mem usage=0.70 GB. avail mem=21.86 GB.
+ranks_captured=8 (expect 8)  capture_failures=0 (expect 0)
+--- selector score-reduce buckets (expect both: logical-width NCCL_BF16 + compact W=5120 TWO_SHOT_PULL) ---
+Capturing batches (bs=12 avail_mem=21.63 GB):  67%|██████▋   | 8/12 [00:30<00:09,  2.29s/it]Capturing batches (bs=8 avail_mem=21.61 GB):  67%|██████▋   | 8/12 [00:30<00:09,  2.29s/it] [2026-06-15 03:21:27 TP4] double_sparsity score reduce bucket: shape=(8, 202756) dtype=torch.bfloat16 bytes=3244096 weak_contiguous=True custom_ar=True algorithm=TWO_SHOT_PULL
+Capturing batches (bs=16 avail_mem=21.66 GB):  58%|█████▊    | 7/12 [00:28<00:11,  2.28s/it]Capturing batches (bs=12 avail_mem=21.63 GB):  58%|█████▊    | 7/12 [00:28<00:11,  2.28s/it][2026-06-15 03:21:25 TP4] double_sparsity score reduce bucket: shape=(12, 202756) dtype=torch.bfloat16 bytes=4866144 weak_contiguous=True custom_ar=True algorithm=TWO_SHOT_PULL
+Capturing batches (bs=2 avail_mem=21.51 GB):  92%|█████████▏| 11/12 [00:35<00:01,  1.84s/it]Capturing batches (bs=1 avail_mem=21.01 GB):  92%|█████████▏| 11/12 [00:35<00:01,  1.84s/it][2026-06-15 03:21:33 TP6] double_sparsity score reduce bucket: shape=(1, 202756) dtype=torch.bfloat16 bytes=405512 weak_contiguous=True custom_ar=False algorithm=NCCL_BF16
+Capturing batches (bs=24 avail_mem=21.69 GB):  50%|█████     | 6/12 [00:26<00:15,  2.61s/it]Capturing batches (bs=16 avail_mem=21.66 GB):  50%|█████     | 6/12 [00:26<00:15,  2.61s/it][2026-06-15 03:21:23 TP0] double_sparsity score reduce bucket: shape=(16, 202756) dtype=torch.bfloat16 bytes=6488192 weak_contiguous=True custom_ar=True algorithm=TWO_SHOT_PULL
+Capturing batches (bs=32 avail_mem=21.72 GB):  42%|████▏     | 5/12 [00:25<00:21,  3.09s/it]Capturing batches (bs=24 avail_mem=21.69 GB):  42%|████▏     | 5/12 [00:25<00:21,  3.09s/it][2026-06-15 03:21:22 TP4] double_sparsity score reduce bucket: shape=(24, 202756) dtype=torch.bfloat16 bytes=9732288 weak_contiguous=True custom_ar=True algorithm=TWO_SHOT_PULL
+Capturing batches (bs=4 avail_mem=21.58 GB):  83%|████████▎ | 10/12 [00:34<00:03,  1.93s/it]Capturing batches (bs=2 avail_mem=21.51 GB):  83%|████████▎ | 10/12 [00:34<00:03,  1.93s/it][2026-06-15 03:21:30 TP5] double_sparsity score reduce bucket: shape=(2, 202756) dtype=torch.bfloat16 bytes=811024 weak_contiguous=True custom_ar=True algorithm=TWO_SHOT_PULL
+Capturing batches (bs=40 avail_mem=21.75 GB):  33%|███▎      | 4/12 [00:23<00:31,  3.91s/it]Capturing batches (bs=32 avail_mem=21.72 GB):  33%|███▎      | 4/12 [00:23<00:31,  3.91s/it][2026-06-15 03:21:20 TP0] double_sparsity score reduce bucket: shape=(32, 202756) dtype=torch.bfloat16 bytes=12976384 weak_contiguous=True custom_ar=True algorithm=TWO_SHOT_PULL
+Capturing batches (bs=48 avail_mem=21.79 GB):  25%|██▌       | 3/12 [00:22<00:49,  5.46s/it]Capturing batches (bs=40 avail_mem=21.75 GB):  25%|██▌       | 3/12 [00:22<00:49,  5.46s/it][2026-06-15 03:21:18 TP5] double_sparsity score reduce bucket: shape=(40, 202756) dtype=torch.bfloat16 bytes=16220480 weak_contiguous=True custom_ar=True algorithm=TWO_SHOT_PULL
+Capturing batches (bs=56 avail_mem=21.84 GB):  17%|█▋        | 2/12 [00:20<01:27,  8.72s/it]Capturing batches (bs=48 avail_mem=21.79 GB):  17%|█▋        | 2/12 [00:20<01:27,  8.72s/it][2026-06-15 03:21:17 TP0] double_sparsity score reduce bucket: shape=(48, 202756) dtype=torch.bfloat16 bytes=19464576 weak_contiguous=True custom_ar=False algorithm=NCCL_BF16
+Capturing batches (bs=64 avail_mem=22.10 GB):   8%|▊         | 1/12 [00:18<03:27, 18.83s/it]Capturing batches (bs=56 avail_mem=21.84 GB):   8%|▊         | 1/12 [00:18<03:27, 18.83s/it][2026-06-15 03:21:15 TP2] double_sparsity score reduce bucket: shape=(56, 202756) dtype=torch.bfloat16 bytes=22708672 weak_contiguous=True custom_ar=False algorithm=NCCL_BF16
+Capturing batches (bs=8 avail_mem=21.61 GB):  75%|███████▌  | 9/12 [00:32<00:06,  2.06s/it]Capturing batches (bs=4 avail_mem=21.58 GB):  75%|███████▌  | 9/12 [00:32<00:06,  2.06s/it][2026-06-15 03:21:29 TP2] double_sparsity score reduce bucket: shape=(4, 202756) dtype=torch.bfloat16 bytes=1622048 weak_contiguous=True custom_ar=True algorithm=TWO_SHOT_PULL
+[2026-06-15 03:20:59 TP1] double_sparsity score reduce bucket: shape=(64, 202756) dtype=torch.bfloat16 bytes=25952768 weak_contiguous=True custom_ar=False algorithm=NCCL_BF16
+[2026-06-15 03:20:59 TP2] double_sparsity score reduce bucket: shape=(64, 202756) dtype=torch.bfloat16 bytes=25952768 weak_contiguous=True custom_ar=False algorithm=NCCL_BF16
+[2026-06-15 03:20:59 TP3] double_sparsity score reduce bucket: shape=(64, 202756) dtype=torch.bfloat16 bytes=25952768 weak_contiguous=True custom_ar=False algorithm=NCCL_BF16
+[2026-06-15 03:20:59 TP4] double_sparsity score reduce bucket: shape=(64, 202756) dtype=torch.bfloat16 bytes=25952768 weak_contiguous=True custom_ar=False algorithm=NCCL_BF16
+[2026-06-15 03:20:59 TP5] double_sparsity score reduce bucket: shape=(64, 202756) dtype=torch.bfloat16 bytes=25952768 weak_contiguous=True custom_ar=False algorithm=NCCL_BF16
+[2026-06-15 03:20:59 TP6] double_sparsity score reduce bucket: shape=(64, 202756) dtype=torch.bfloat16 bytes=25952768 weak_contiguous=True custom_ar=False algorithm=NCCL_BF16
+[2026-06-15 03:20:59 TP7] double_sparsity score reduce bucket: shape=(64, 202756) dtype=torch.bfloat16 bytes=25952768 weak_contiguous=True custom_ar=False algorithm=NCCL_BF16
+[2026-06-15 03:21:03 TP0] double_sparsity score reduce bucket: shape=(64, 202756) dtype=torch.bfloat16 bytes=25952768 weak_contiguous=True custom_ar=False algorithm=NCCL_BF16
+[2026-06-15 03:21:14 TP0] double_sparsity score reduce bucket: shape=(64, 5120) dtype=torch.bfloat16 bytes=655360 weak_contiguous=True custom_ar=True algorithm=TWO_SHOT_PULL
+reduce_bucket_lines=192
+--- TokenLabelTable / token_label_table allocation (module DELETED; expect NONE) ---
+table_hits=0 — NO TokenLabelTable allocated (module deleted, as expected)
+--- effective double_sparsity_config (from server) ---
+server double_sparsity_config= {"top_k": 2048, "page_size": 64, "channel_mask_path": "/models/glm51-fp8-channel-mask-s256.safetensors", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "recall_oracle": false, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0}

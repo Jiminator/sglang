@@ -1,0 +1,30 @@
+{
+  "run": "loop11_m2_table_free_capacity_r21",
+  "date_utc": "2026-06-15",
+  "runtime_base_commit": "01e3ff238",
+  "runtime_base_commit_full": "01e3ff238e8cd8207995f260d5b08c94e7f21284",
+  "note": "evidence produced on the committed post-deletion HEAD; no uncommitted code. The Double Sparsity TokenLabelTable was deleted; table-free absorbed-latent selection is now the ONE unconditional DS selection path. Config schema CHANGED: fields signature_dtype / scorer_norm_hybrid_threshold / table_free were REMOVED and the parser rejects them. Booted DS directly via launch_server with the new DS_CONFIG (no serve_double_sparsity.sh launcher, no TABLE_FREE flag).",
+  "model": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
+  "channel_mask": "/models/glm51-fp8-channel-mask-s256.safetensors",
+  "channel_mask_content_sha256": "35155ac46ad7",
+  "ds_config": "{\"top_k\": 2048, \"page_size\": 64, \"channel_mask_path\": \"/models/glm51-fp8-channel-mask-s256.safetensors\", \"device_buffer_size\": 4096, \"scorer_norm\": \"off\", \"head_agg\": \"max\", \"anchor_mode\": \"off\", \"anchor_budget\": 0, \"recall_oracle\": false, \"enable_lifted_budget_decode\": false, \"lifted_budget_top_k\": 0}",
+  "envelope": {
+    "tp_size": 8,
+    "kv_cache_dtype": "fp8_e4m3",
+    "page_size": 64,
+    "mem_fraction_static": 0.8,
+    "max_running_requests": 64,
+    "cuda_graph_max_bs": 64
+  },
+  "boot_commands": {
+    "C1_ds_table_free": "python -m sglang.launch_server --model-path /cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db --tp-size 8 --kv-cache-dtype fp8_e4m3 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --disable-radix-cache --random-seed 20260607 --trust-remote-code --host 127.0.0.1 --port 30000 --mem-fraction-static 0.8 --max-running-requests 64 --cuda-graph-max-bs 64 --enable-double-sparsity --double-sparsity-config '{\"top_k\": 2048, \"page_size\": 64, \"channel_mask_path\": \"/models/glm51-fp8-channel-mask-s256.safetensors\", \"device_buffer_size\": 4096, \"scorer_norm\": \"off\", \"head_agg\": \"max\", \"anchor_mode\": \"off\", \"anchor_budget\": 0, \"recall_oracle\": false, \"enable_lifted_budget_decode\": false, \"lifted_budget_top_k\": 0}'",
+    "C2_conc64_load": "PORT=30000 HOST=127.0.0.1 MODE=ds_table_free CONCURRENCIES=64 TRIALS=1 WARMUP_SECONDS=60 MEASUREMENT_WINDOW_S=180 NUM_PROMPTS=64 bash development/benchmark_baseline.sh   (gen-shared-prefix isl=2253+1843=4096 / osl=512 / max-concurrency 64, against the live C1 DS server)",
+    "A7_dsa_default": "python -m sglang.launch_server --model-path /cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db --tp-size 8 --kv-cache-dtype fp8_e4m3 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --disable-radix-cache --random-seed 20260607 --trust-remote-code --host 127.0.0.1 --port 30000 --mem-fraction-static 0.8 --max-running-requests 64 --cuda-graph-max-bs 64    (NO --enable-double-sparsity)"
+  },
+  "scripts": {
+    "env": "development/loop11/runs/20260614_m2/table_free_capacity_r21/r21_env.sh",
+    "C1": "development/loop11/runs/20260614_m2/table_free_capacity_r21/c1_table_free_boot.sh",
+    "C2": "development/loop11/runs/20260614_m2/table_free_capacity_r21/c2_conc64_smoke.sh",
+    "A7": "development/loop11/runs/20260614_m2/table_free_capacity_r21/a7_dsa_default_regression.sh"
+  }
+}

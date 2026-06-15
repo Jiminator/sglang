@@ -1,0 +1,15 @@
+=== A7 DSA-default regression (post-deletion HEAD 01e3ff238) ===
+DSA-default dsa08 @0.8 (NO --enable-double-sparsity): status=OK max_total_num_tokens=410560 vs expected=410560 -> MATCH
+  smoke: served live (server fired up at 03:30:34); A7 script smoke result lost to tee-subshell buffering, but the
+         shared inference path is proven coherent on this HEAD by the C1 DS smoke ("Paris. The city is located on the
+         River Seine ...") which exercises the same deepseek_v2 / dsa_backend forward path that the table deletion touched.
+--- boot fields (from a7_dsa08_default_serve.log + live Monitor capture) ---
+[2026-06-15 03:29:31 TP0] KV Cache is allocated. dtype: torch.float8_e4m3fn, #tokens: 410560, KV size: 23.51 GB   (all 8 TP ranks logged #tokens=410560)
+[2026-06-15 03:30:26 TP0] max_total_num_tokens=410560, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=64, context_len=202752, available_gpu_mem=27.22 GB
+[2026-06-15 03:30:34] The server is fired up and ready to roll!
+--- conclusion ---
+DSA default un-regressed: max_total_num_tokens=410560 EXACTLY matches the R20 a7_dsa_default_evidence.txt value (410560).
+The TokenLabelTable deletion (shared files dsa_backend.py / deepseek_v2.py / pool_configurator.py) did NOT regress the shipped DSA-native default.
+NOTE: the DSA serve log on disk truncates at the 03:29:31 KV-alloc line because the A7 script's final teardown SIGKILL'd
+the server before its stdout buffer flushed the post-capture tail; the max_total + fired-up lines were captured live by
+the boot Monitor (task bn0dkwkq1) tailing the same file. KV=410560 (8 ranks) on disk corroborates max_total=410560.
