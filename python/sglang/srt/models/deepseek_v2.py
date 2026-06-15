@@ -2373,6 +2373,23 @@ class DeepseekV2AttentionMLA(
                                 :, 0, _lora : _lora + _nblk * 4
                             ].view(torch.float32)
 
+                            # Table-free radix fixture: config-borne per-prompt-slot
+                            # resident-latent SHA dump (the absorbed-selection root
+                            # identity). Eager decode only; capture-safe no-op under
+                            # graph capture. Off by default (zero hot-path cost).
+                            if getattr(_selector.config, "latent_capture", False):
+                                from sglang.srt.layers.attention.double_sparsity.latent_capture import (
+                                    maybe_dump_latent_capture,
+                                )
+
+                                maybe_dump_latent_capture(
+                                    forward_batch=forward_batch,
+                                    latent_fp8=_absorbed_latent_fp8,
+                                    latent_scales=_absorbed_latent_scales,
+                                    req_to_token=req_to_token,
+                                    layer_id=layer_id,
+                                )
+
                     # The validity `written` arg is the slot_written bitmap [L, T]
                     # (the absorbed kernel masks unwritten slots to -inf via its
                     # HAS_WRITTEN path). Fail closed if the bitmap is absent — a

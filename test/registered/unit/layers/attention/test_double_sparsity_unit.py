@@ -7682,6 +7682,15 @@ class TestTableFreeConfigAndValidation(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_double_sparsity_config(payload)
 
+    def test_latent_capture_defaults_off_and_accepts_bool(self):
+        # The table-free radix cold/warm capture diagnostic is off by default
+        # (byte-identical served path) and config-borne so it reaches TP workers.
+        self.assertFalse(parse_double_sparsity_config(_valid_payload()).latent_capture)
+        on = parse_double_sparsity_config(
+            '{"channel_mask_path": "/tmp/cm.safetensors", "latent_capture": true}'
+        )
+        self.assertTrue(on.latent_capture)
+
 
 class TestAbsorbedLatentPagedGPU(unittest.TestCase):
     """GPU paged fp8-latent absorbed-score kernel vs the CPU logical reference (the
