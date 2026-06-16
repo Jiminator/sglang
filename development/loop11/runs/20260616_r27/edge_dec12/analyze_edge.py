@@ -38,10 +38,26 @@ top-level status/problems verbatim. main() returns 0 IFF status=="PASS".
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import os
 import random
 from collections import defaultdict
+
+
+def _open_jsonl(path):
+    """Open a .jsonl path, transparently falling back to its .gz sibling.
+
+    The committed evidence stores the large sink/index files compressed
+    (``*.jsonl.gz``) so a clean checkout can reproduce the verdict directly; the
+    uncompressed ``*.jsonl`` is gitignored. Returns an open text handle, or None
+    if neither the plain nor the .gz file exists.
+    """
+    if os.path.exists(path):
+        return open(path, "r", encoding="utf-8")
+    if os.path.exists(path + ".gz"):
+        return gzip.open(path + ".gz", "rt", encoding="utf-8")
+    return None
 
 
 def _recall_2048(payload) -> bool:
@@ -63,9 +79,10 @@ def _idx_of(request_id):
 def per_needle_recall(sink_path, prefix):
     by_idx = defaultdict(lambda: [0, 0])
     failures = defaultdict(int)
-    if not os.path.exists(sink_path):
+    fh = _open_jsonl(sink_path)
+    if fh is None:
         return {}, {"missing_sink": 1}
-    with open(sink_path, "r", encoding="utf-8") as fh:
+    with fh:
         for line in fh:
             line = line.strip()
             if not line:
@@ -94,9 +111,10 @@ def per_needle_recall(sink_path, prefix):
 
 def load_cached(index_path):
     out = {}
-    if not os.path.exists(index_path):
+    fh = _open_jsonl(index_path)
+    if fh is None:
         return out
-    with open(index_path, "r", encoding="utf-8") as fh:
+    with fh:
         for line in fh:
             line = line.strip()
             if not line:

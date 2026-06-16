@@ -1,0 +1,41 @@
+# R28 clean-archive reproduction proof — DEC-12 edge verdict from committed evidence ONLY
+# date_utc: 2026-06-16   commit: cab8c3f21
+# method: git archive HEAD <edge_ded12> | tar -x -C $TMP ; bash $TMP/.../reproduce.sh
+# (the archive contains ONLY git-tracked files — the uncompressed index_*.jsonl are gitignored)
+
+## tracked inputs in the archive (no uncompressed .jsonl):
+index_boundary.jsonl.gz
+index_cold.jsonl.gz
+index_cold_partial.jsonl.gz
+index_evict.jsonl.gz
+index_nearfull.jsonl.gz
+index_partial.jsonl.gz
+sink_boundary.jsonl.gz
+sink_cold.jsonl.gz
+sink_cold_partial.jsonl.gz
+sink_evict.jsonl.gz
+sink_nearfull.jsonl.gz
+sink_partial.jsonl.gz
+  uncompressed index_*.jsonl in archive: 0 (expect 0)
+
+## reproduce.sh output (run inside the clean archive):
+[analyze_edge DEC-12] -> /tmp/tmp.gTn1JWivBs/repro_verdict.json
+  cold   cached dist : {'n': 144, 'min': 0, 'max': 0, 'mean': 0.0, 'median': 0, 'n_zero': 144, 'n_gt0': 0, 'n_page_multiple_gt0': 0}
+  cprt   cached dist : {'n': 136, 'min': 0, 'max': 0, 'mean': 0.0, 'median': 0, 'n_zero': 136, 'n_gt0': 0, 'n_page_multiple_gt0': 0}  (matched control for partial)
+  bnd    cached dist : {'n': 144, 'min': 320, 'max': 640, 'mean': 491.11, 'median': 512, 'n_zero': 0, 'n_gt0': 144, 'n_page_multiple_gt0': 144}
+  prt@P  cached dist : {'n': 136, 'min': 2688, 'max': 2752, 'mean': 2747.76, 'median': 2752, 'n_zero': 0, 'n_gt0': 136, 'n_page_multiple_gt0': 136}
+  nfl    cached dist : {'n': 144, 'min': 4288, 'max': 4352, 'mean': 4292.89, 'median': 4288, 'n_zero': 0, 'n_gt0': 144, 'n_page_multiple_gt0': 144}  (out-of-contract)
+  evc    cached dist : {'n': 144, 'min': 0, 'max': 0, 'mean': 0.0, 'median': 0, 'n_zero': 144, 'n_gt0': 0, 'n_page_multiple_gt0': 0}
+  boundary (vs cold       ): n=144 ctrl=60.1518% case=59.7712% mean_delta=-0.3806pp CI95=[-0.7011, -0.0623] within=True
+  partial  (vs cold_partial): n=136 ctrl=75.9238% case=75.912% mean_delta=-0.0118pp CI95=[-0.2852, 0.2569] within=True
+  evict    (vs cold       ): n=144 ctrl=60.1518% case=60.1518% mean_delta=0.0pp CI95=[0.0, 0.0] within=True
+  nearfull (OUT-OF-CONTRACT): n=144 mean_delta=1.5692pp CI95=[1.2754, 1.8697] value_affecting=True
+  STATUS: PASS
+=== reproduced verdict status + arm deltas ===
+status: PASS problems: []
+  a_boundary_aligned_reuse: -0.3806pp (control=cold)
+  b_partial_page_hit_production: -0.0118pp (control=cold_partial)
+  c_eviction_recompute: 0.0pp (control=cold)
+  out_of_contract near_full_reuse_partial_page: 1.5692pp
+=== diff committed vs reproduced (normalized JSON) ===
+REPRODUCE OK: reproduced verdict == committed gate_c_edge_verdict.json
