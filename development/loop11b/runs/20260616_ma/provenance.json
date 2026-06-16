@@ -85,5 +85,5 @@
   },
   "git_head": "da3e77aec (recipe correction)",
   "authorization": "RE-EARNED (not inherited). Freshly calibrated label-dim-32 mask with a NEW tensor content_sha256 (35155ac4...) != the loop-11 fixture's pinned hash. Under owner DEC-1 the validator pins the tensor-content SHA, so the radix-on fixture is RE-MINTED against this mask via the DEC-12 probes.",
-  "recall_comparability": "IN PROGRESS: GATE A recall@2048 (served-fp8 radix-on vs the frozen loop9/runs/20260610_m0/recall_baseline.json, matched length-set + per-length sample counts). The label-dim-16 mask scored -5.2pp at L4096; the corrected label-dim-32 recipe is expected to match the baseline (loop11 R16 reference: L4096 58.4%). Verdict appended after GATE A."
+  "recall_comparability": "AC-5 QUALITY PASS: the label-dim-32 served recall matches the frozen loop9/runs/20260610_m0/recall_baseline.json on matched populations (6240 samples/length). Radix-OFF served-fp8: L1024 100.0% (base 100.0), L4096 58.045% (base 58.045 — EXACT), L16384 36.36% (base 36.04, +0.32pp), overall 64.80% (base 64.70) — all within +/-0.5pp. This confirms the DEC-3 recipe fix vs the label-dim-16 mask's -5.2pp at L4096. The radix on-vs-off equivalence (recall_equivalence_passed, the fixture gate) is being re-verified robustly at num=60 (the num=20 draw was noisy at one length, as expected from low needle count)."
 }
