@@ -100,22 +100,23 @@ if [[ "${RECALL_ORACLE}" == "1" ]]; then
   echo ">>> recall_oracle diagnostic requires eager: adding --disable-cuda-graph"
 fi
 
-# Radix cache: DS serves radix-off by default. To serve radix-on, set
-# RADIX_FIXTURE_ARTIFACT to a TABLE-FREE fixtures-passed state file (written by
-# validator.write_radix_fixture_state once the radix correctness probes pass on
-# this exact config). The authorization criterion is value-equivalence, not
-# cold/warm bit-identity: recall@2048 radix-on-vs-off within +/-0.5pp overall and
-# per length, cross-rank selection identity, a clean eviction/partial-hit/page-
-# boundary edge probe, no dense fallback, and the cold/warm selection flips
-# documented as value-neutral near-cutoff reshuffling. The launcher then passes
-# --double-sparsity-radix-fixture-artifact and drops --disable-radix-cache; the
-# validator re-verifies the schema + that the state matches this config before
-# permitting radix-on. (Legacy label-capture / FP8-scale fixtures and the
-# superseded bit-identity fixture no longer authorize table-free DS — rejected.)
-# SGLANG_DS_RADIX_OVERRIDE=1 is a developer-only escape hatch that enables
-# radix-on WITHOUT the artifact (used solely to run the radix fixtures, which
-# need radix reuse) — it is not the production serving mechanism.
-RADIX_FIXTURE_ARTIFACT="${RADIX_FIXTURE_ARTIFACT:-}"
+# Radix cache: radix-on is the VALIDATED DEFAULT for this op-point. RADIX_FIXTURE_ARTIFACT
+# defaults to the committed table-free fixtures-passed state file next to this script
+# (written by validator.write_radix_fixture_state once the radix correctness probes passed on
+# this exact config). The authorization criterion is value-equivalence, not cold/warm
+# bit-identity: recall@2048 radix-on-vs-off within +/-0.5pp overall and per length, cross-rank
+# selection identity, a clean eviction/partial-hit/page-boundary edge probe, no dense fallback,
+# and the cold/warm selection flips documented as value-neutral near-cutoff reshuffling. The
+# launcher passes --double-sparsity-radix-fixture-artifact and drops --disable-radix-cache; the
+# validator re-verifies the schema + that the state matches THIS boot's config and only then
+# permits radix-on (fail-closed: a config that does not match the artifact fingerprint is
+# refused). For a different config, regenerate the artifact; set RADIX_FIXTURE_ARTIFACT="" to
+# serve radix-off. (Legacy label-capture / FP8-scale fixtures and the superseded bit-identity
+# fixture no longer authorize table-free DS — rejected.)
+# SGLANG_DS_RADIX_OVERRIDE=1 is a developer-only escape hatch that enables radix-on WITHOUT an
+# artifact (used solely to (re)run the radix fixtures, which need radix reuse).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RADIX_FIXTURE_ARTIFACT="${RADIX_FIXTURE_ARTIFACT-${SCRIPT_DIR}/serve_double_sparsity_radix_fixture.json}"
 if [[ -n "${RADIX_FIXTURE_ARTIFACT}" ]]; then
   RADIX_ARGS=(--double-sparsity-radix-fixture-artifact "${RADIX_FIXTURE_ARTIFACT}")
 elif [[ "${SGLANG_DS_RADIX_OVERRIDE:-}" == "1" ]]; then

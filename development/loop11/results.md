@@ -1,11 +1,34 @@
 # Loop 11 Results — Authoritative Current State
 
 > Maintained rewrite-over-append: this document always reflects the loop's current state.
-> Last regenerated: Round 25, 2026-06-16. HEAD at round start: `7f8b4602d` (R24). R24 commits: `0a22aff86` (de-overclaim), `3de57d32b` (honest corrected probes), `7f8b4602d` (root-cause evidence + ledgers).
+> Last regenerated: Round 25, 2026-06-16. HEAD at round start: `7f8b4602d` (R24). R25 commits: `f82ec2c5d` (AC-8 metadata), `595d1efae` (score_capture diagnostic), `224322cb0` (DEC-10 radix re-scope to value-equivalence), `c43b894bd` (authorization evidence), + radix-on enablement (serve default).
 
 ## 1. Current state summary
 
-- **M0 COMPLETE; M1 COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 COMPLETE+VERIFIED (R21): TokenLabelTable DELETED (DEC-2), table-free is the one served default, capacity + AC-7 re-proven on the shipped path. M3 task7 IN PROGRESS (R22–R24): the table-free radix fixture gate-CODE is REPAIRED + AC-7 un-regressed; the HONEST corrected probes (R24) show radix-on is NOT cold/warm selection-equivalent (~2% top-2048 flip; L4096 recall −0.849pp) — root cause is inherent near-tie top-k cutoff sensitivity (cached fp8 bytes bit-identical), NOT a fixable byte bug (DEC-8). Owner DEC-9: R25 investigates determinism reduction before deciding radix-OFF-served vs accept-as-value-affecting.**
+- **M0 COMPLETE; M1 COMPLETE+VERIFIED (R9). M2 task5 COMPLETE+VERIFIED (R16); task6 COMPLETE+VERIFIED (R21): TokenLabelTable DELETED (DEC-2), table-free is the one served default, capacity + AC-7 re-proven on the shipped path. M3 task7 COMPLETE (R25): radix-on is AUTHORIZED for table-free DS under a re-scoped VALUE-equivalence criterion (owner DEC-10) and is the validated served default for the GLM-5.1-FP8 op-point (no-env-override boot ACCEPTED).** The cold/warm divergence (~2% top-2048 flip) is `v_h`-driven — a radix cache hit changes the decode query upstream of DS (cached fp8 latent bytes bit-identical; shared with the dense/DSA paths), NOT DS-fixable (DEC-9: pre-reduce scores differ, fp32 reduce does not help, radix-vs-fallback top-k identical). So cold/warm bit-identity was the wrong bar; the authorization is recall@2048 ±0.5pp (overall AND per length) + cross-rank identity + edge correctness + no-dense-fallback + documented value-neutral flips. **Recall-equivalence holds at robust n (DEC-11):** full sweep n=128/length, cache PROVEN engaged → L1024 +0.0 / L4096 +0.114 / L16384 −0.210 / overall −0.032pp, all within ±0.5pp. (Two measurement errors were caught and corrected this round: an early "0.0pp noise" run whose radix never engaged the cache (#cached-token:0), and an n=20 −0.849pp that was sampling noise vanishing at n=128.) M3 task8/task9 remain.**
+- **R25 — task7 COMPLETE: DEC-9 score-path resolution → DEC-10 value-equivalence re-scope → DEC-11 recall characterization → radix-on authorized.**
+  **DEC-9 (score-path parity, owner-directed):** the cold/warm divergence is in the per-rank PRE-reduce
+  absorbed score (differs at 17802/17802 flips), `fp32` reduce does NOT reduce flips (18980 ≥ 17802 bf16),
+  and radix-vs-fallback top-k are bit-identical → the divergence is `v_h` (decode query from the cached-vs-
+  fresh model forward), upstream of DS and NOT DS-fixable. DSA's own output is non-reproducible run-to-run
+  too (general nondeterminism), so cold/warm bit-identity is stricter than the shipped product's bar.
+  **DEC-10 (owner):** re-scope the table-free radix authorization from cold/warm SELECTED-INDEX bit-identity
+  to VALUE-equivalence; bump schema `tablefree_v1 → v2`; replace the bit-identity field with
+  `recall_equivalence_passed` + `cross_rank_selection_identity_passed` + `edge_probe_passed` +
+  `no_dense_fallback_passed` + `cold_warm_flips_value_neutral_documented` (each `is True`); fail-closed
+  REJECT both the legacy label schema AND the superseded `v1` bit-identity schema (`224322cb0`).
+  **DEC-11 (owner): characterize the recall miss properly.** Two errors were caught and corrected: an early
+  "0.0pp / noise" run whose radix-ON sweep never hit the cache (`#cached-token:0` throughout — measured
+  radix-off twice; `dec9_l4096_noise/INVALIDATED.md`); and the n=20 L4096 −0.849pp (reproduced R24 WITH
+  real hits) which was sampling noise — at n=144 (cache PROVEN, cached_tokens∈[320,640]) L4096 = +0.38pp
+  (CI [0.06,0.70]), and the authorizing full sweep n=128/length (cache proven per length) gives L1024 +0.0
+  / L4096 +0.114 / L16384 −0.210 / overall −0.032pp, all within ±0.5pp. **Authorization (all gates PASS,
+  raw-verified):** recall-equivalence + cross-rank identity (8 ranks) + edge correctness (eviction==cold,
+  no stale-slot) + no-dense-fallback (0 violations) + documented value-neutral flips → v2 artifact written
+  (sha `d98ab24b…`); **no-env-override boot ACCEPTED** (warm `cached_tokens=576`, authorizing WARNING
+  logged); negative-control REFUSED; AC-7 DSA default 410560 unchanged. radix-on is now the validated
+  served default (serve script defaults `RADIX_FIXTURE_ARTIFACT` to the committed artifact, fail-closed on
+  config mismatch). `runs/20260616_r25/`, `runs/20260616_r24/dec9_*`.
 - **R24 — task7: HONEST corrected radix probes (reversing the R23 overclaim) + root-cause characterization (owner DEC-8/DEC-9).**
   De-overclaimed the ledgers (`0a22aff86`), then re-ran on the committed gate (`3de57d32b`): **P1 cold/warm
   SELECTION equivalence FAIL** (IDENTICAL prompts, warm cached_tokens=3776 real hit, ALL 8 ranks, SELECTED-
