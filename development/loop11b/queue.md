@@ -44,7 +44,7 @@ record is `development/loop11b/plan.md`; this queue is the live status ledger (c
 ## Kickoff ideas / side issues (append-only; no silent deletions)
 
 Discovered by the task3 codex methodology review (queued — none block M-A; all bind to task8/M-B).
-Full review preserved at `development/loop11b/artifacts/task3_codex_methodology_review.md`.
+Full review preserved at `development/loop11b/runs/20260616_ma/task3_codex_methodology_review.md`.
 
 - SI-1 (task8, AC-9): `bench_serving.py` does NOT dump per-request `cached_tokens` / `cached_tokens_details`
   (they exist in `meta_info`, tokenizer_manager.py:1758, but RequestFuncOutput drops them, bench_serving.py:96/1901).
