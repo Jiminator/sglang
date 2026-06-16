@@ -96,3 +96,16 @@ Full review preserved at `development/loop11b/runs/20260616_ma/task3_codex_metho
 
 - `development/loop9/runs/20260610_m0/recall_baseline.json` — recall@2048 gate reference (survives node move).
 - loop-11 frozen serving ladder — DIRECTIONAL reference only; the locked sweep re-measures DSA on this node.
+
+## Round 1 (post-Codex review) — making the M-B verdict PUBLISHABLE
+Codex (R0 review) rejected the completion claim: comparator REFUSED, same-memory deferred, conc-64
+admission-capped, AC-4 not the spec'd guard, no reuse/no-op evidence, AC-8 ledger/push gaps. R1 fixes:
+- B1 DONE (`9af9d7835`): bench_serving emits per-request cached_tokens + DS no-op counters
+  (selected_tokens_mean/dense_fallback_total/total_tokens_mean) + fail-closed trial_evidence.py (AC-5/AC-9).
+- task10 cleanup DONE (`73338e539`): plan vocabulary stripped from serve-script operator output.
+- task8/7 RUNNING (`mb_v2.sh`, b51dxd116, ~3.5hr): clean re-run from ONE HEAD — 3 boots (DS@0.8, DSA@0.8,
+  DSA@0.85), a dedicated bs64/bs30 tax probe (AC-4), running-req PEAK capture (conc-64 ≥61?), BOTH op-points
+  (production_envelope + same_memory) with comparator ACCEPTANCE, per-DS-trial fail-closed evidence.
+- PENDING after mb_v2: task9 report from the accepted comparator output; task11 AC-8 (results.md/queue.md
+  rewrite, fix stale a4be98c4 capacity claim, evidence package, push — origin is the PUBLIC upstream so
+  push needs owner direction).
