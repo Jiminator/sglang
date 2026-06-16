@@ -19,9 +19,10 @@
 #
 # PRODUCTION launcher for table-free Double Sparsity on GLM-5.1-FP8. Boots radix-on via
 # the committed content-hash radix fixture (no dev override needed): the validator binds
-# the calibrated channel mask and authorizes radix-on for this exact config (DEC-1 pins the
-# mask's tensor-content SHA). SGLANG_DS_RADIX_OVERRIDE=1 is needed ONLY to (re)mint the radix
-# fixture (the DEC-12 probes require radix reuse) — see development/loop11b/RUNBOOK.md.
+# the calibrated channel mask and authorizes radix-on for this exact config (the fixture is
+# bound to the calibrated mask's tensor-content hash). SGLANG_DS_RADIX_OVERRIDE=1 is needed
+# ONLY to (re)mint the radix fixture (the radix-correctness probes require radix reuse) — see
+# development/loop11b/RUNBOOK.md.
 
 set -euo pipefail
 
@@ -165,16 +166,16 @@ echo "    recall_oracle    = ${RECALL_ORACLE} (eager: ${#CUDA_GRAPH_ARGS[@]} cud
 echo "    radix_cache      = $([[ -n "${RADIX_FIXTURE_ARTIFACT}" ]] && echo "ENABLED (fixture artifact: ${RADIX_FIXTURE_ARTIFACT})" || echo "disabled (no fixture artifact)")"
 echo "    log              = ${LOG_FILE}"
 echo ""
-echo "    *** SLO POSTURE — measured on GLM-5.1-FP8 (loop11b locked sweep, 2026-06-16) ***"
+echo "    *** SLO POSTURE — measured on GLM-5.1-FP8 (locked throughput sweep, 2026-06-16) ***"
 echo "    Table-free DS MEETS the client SLO (decode-TPS p50 >= 30, P99 TTFT < 22s) at"
 echo "    concurrency 16 and 32 (DS decode-TPS 40.7 / 34.1; TTFT 1.6s / 3.2s), but FAILS at"
 echo "    concurrency 64 (DS decode-TPS 26.98 < 30 AND P99 TTFT 25.12s > 22s). Native DSA also"
 echo "    misses the 30-TPS floor at conc 64 (26.3) — the throughput floor is hard for BOTH at"
 echo "    high concurrency on this node. DS decode throughput is competitive with DSA (ratio"
 echo "    0.98-1.03) and the per-step decode tax is preserved (TPOT ratio 0.974); DS's weakness"
-echo "    is conc-64 TTFT (1.86x DSA). See development/loop11b/runs/20260616_mb/DS_absolute_verdict.md."
-echo "    (Supersedes the loop8 decode-TPS ~23/17/17 figure, which predates the loop-10 per-step"
-echo "    win + the loop-11 table-free capacity lift.) The served default remains native DSA."
+echo "    is conc-64 TTFT (1.86x DSA). See the serving SLO report."
+echo "    (Supersedes the earlier decode-TPS ~23/17/17 figure, which predates the per-step decode"
+echo "    win + the table-free capacity lift.) The served default remains native DSA."
 
 exec python3 -m sglang.launch_server \
   --model-path "${MODEL_PATH}" \

@@ -29,7 +29,7 @@ boot() {  # $1=label $2=serve-cmd  -> sets SLOG
 }
 
 tax_probe() {  # $1=side  $2=conc  -> dedicated fixed-conc decode-window probe
-  local side="$1" c="$2" out="$V2/tax/${side}_c${c}.jsonl"
+  local side="$1" c="$2"; local out="$V2/tax/${side}_c${c}.jsonl"
   echo "--- tax probe $side conc=$c (warmup 20s, window 90s) $(date -u +%H:%M:%SZ) ---"
   python3 -m sglang.bench_serving --backend sglang --host "$HOST" --port "$PORT" --seed 7 \
     --dataset-name generated-shared-prefix --gsp-num-groups 1 --gsp-prompts-per-group $((c*4)) \
