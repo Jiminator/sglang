@@ -1,0 +1,43 @@
+{
+  "probe": "P2_recall_radix_off_vs_on_corrected",
+  "max_delta_pp": 0.5,
+  "sink_off": "/sgl-workspace/sglang/development/loop11b/runs/20260616_ma/mint/probes/gate_a_recall/sink_off.jsonl",
+  "sink_on": "/sgl-workspace/sglang/development/loop11b/runs/20260616_ma/mint/probes/gate_a_recall/sink_on.jsonl",
+  "radix_off_failures": {},
+  "radix_on_failures": {},
+  "per_length": {
+    "1024": {
+      "samples_off": 18720,
+      "samples_on": 18720,
+      "radix_off_pct": 100.0,
+      "radix_on_pct": 100.0,
+      "delta_pp": 0.0,
+      "within_bound": true
+    },
+    "4096": {
+      "samples_off": 18720,
+      "samples_on": 18720,
+      "radix_off_pct": 58.67,
+      "radix_on_pct": 58.387,
+      "delta_pp": -0.283,
+      "within_bound": true
+    },
+    "16384": {
+      "samples_off": 18720,
+      "samples_on": 18720,
+      "radix_off_pct": 36.186,
+      "radix_on_pct": 36.309,
+      "delta_pp": 0.123,
+      "within_bound": true
+    }
+  },
+  "overall": {
+    "radix_off_pct": 64.952,
+    "radix_on_pct": 64.899,
+    "delta_pp": -0.053,
+    "samples_off": 56160,
+    "samples_on": 56160
+  },
+  "verdict": "PASS",
+  "problems": []
+}
