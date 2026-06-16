@@ -610,6 +610,94 @@ class TestValidator(unittest.TestCase):
                 os.environ.pop("SGLANG_DS_ALLOW_PLACEHOLDER", None)
                 os.environ.pop("SGLANG_DS_ALLOW_NO_ADAPTER", None)
 
+    def test_apply_radix_fixture_artifact_authorizes_same_content_different_path(self):
+        """A mask regenerated with IDENTICAL tensor content authorizes the fixture
+        even at a different file path and a different created_at timestamp: the
+        fingerprint pins the tensor-content SHA, not the path or the full-file SHA."""
+        from sglang.srt.layers.attention.double_sparsity.validator import (
+            apply_radix_fixture_artifact,
+            write_radix_fixture_state,
+        )
+        from sglang.srt.layers.attention.double_sparsity.channel_mask import (
+            save_channel_mask,
+        )
+        import tempfile, os as _os
+
+        sel_t = torch.randint(0, 128, (2, 4, 16), dtype=torch.int32)
+        w_t = torch.randn(2, 4, 16, dtype=torch.float32)
+        with tempfile.TemporaryDirectory() as tmp:
+            mask_a = _os.path.join(tmp, "cm_a.safetensors")
+            save_channel_mask(
+                mask_a, sel_t, w_t, dtype="fp8_e4m3", head_dim=128,
+                page_size=64, label_dim=16, created_at="2026-05-20T00:00:00Z",
+            )
+            state = _os.path.join(tmp, "radix_state.json")
+            write_radix_fixture_state(
+                state,
+                server_args=self._radix_flip_args(mask_a),
+                recall_equivalence_passed=True,
+                cross_rank_selection_identity_passed=True,
+                edge_probe_passed=True,
+                no_dense_fallback_passed=True,
+                cold_warm_flips_value_neutral_documented=True,
+            )
+            # Regenerate the SAME tensors at a different path + timestamp.
+            mask_b = _os.path.join(tmp, "regen", "cm_b.safetensors")
+            _os.makedirs(_os.path.dirname(mask_b), exist_ok=True)
+            save_channel_mask(
+                mask_b, sel_t.clone(), w_t.clone(), dtype="fp8_e4m3", head_dim=128,
+                page_size=64, label_dim=16, created_at="2026-06-16T12:00:00Z",
+            )
+            os.environ.pop("SGLANG_DS_RADIX_OVERRIDE", None)
+            args = self._radix_flip_args(mask_b, artifact=state)
+            apply_radix_fixture_artifact(args)  # authorizes despite path/timestamp diff
+            self.assertTrue(
+                getattr(args, "_double_sparsity_radix_fixture_passed", False),
+                "same-content mask at a different path/timestamp must authorize",
+            )
+
+    def test_apply_radix_fixture_artifact_rejects_different_content_mask(self):
+        """A mask with DIFFERENT tensor content does NOT authorize a fixture minted
+        against the original mask (content-SHA mismatch, fail-closed)."""
+        from sglang.srt.layers.attention.double_sparsity.validator import (
+            apply_radix_fixture_artifact,
+            write_radix_fixture_state,
+        )
+        from sglang.srt.layers.attention.double_sparsity.channel_mask import (
+            save_channel_mask,
+        )
+        import tempfile, os as _os
+
+        sel_t = torch.randint(0, 128, (2, 4, 16), dtype=torch.int32)
+        w_t = torch.randn(2, 4, 16, dtype=torch.float32)
+        with tempfile.TemporaryDirectory() as tmp:
+            mask_a = _os.path.join(tmp, "cm_a.safetensors")
+            save_channel_mask(
+                mask_a, sel_t, w_t, dtype="fp8_e4m3", head_dim=128,
+                page_size=64, label_dim=16, created_at="2026-05-20T00:00:00Z",
+            )
+            state = _os.path.join(tmp, "radix_state.json")
+            write_radix_fixture_state(
+                state,
+                server_args=self._radix_flip_args(mask_a),
+                recall_equivalence_passed=True,
+                cross_rank_selection_identity_passed=True,
+                edge_probe_passed=True,
+                no_dense_fallback_passed=True,
+                cold_warm_flips_value_neutral_documented=True,
+            )
+            # A DIFFERENT-content mask at a different path.
+            mask_b = _os.path.join(tmp, "cm_b.safetensors")
+            save_channel_mask(
+                mask_b, (sel_t + 1) % 128, w_t + 1.0, dtype="fp8_e4m3", head_dim=128,
+                page_size=64, label_dim=16, created_at="2026-06-16T12:00:00Z",
+            )
+            os.environ.pop("SGLANG_DS_RADIX_OVERRIDE", None)
+            args = self._radix_flip_args(mask_b, artifact=state)
+            with self.assertRaises(ValueError) as ctx:
+                apply_radix_fixture_artifact(args)
+            self.assertIn("channel_mask_content_sha256", str(ctx.exception))
+
     def test_apply_radix_fixture_artifact_rejects_config_mismatch(self):
         """A state file recorded for a different config (tp_size) must NOT
         authorize this boot."""

@@ -449,16 +449,32 @@ RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA_V1 = "ds_radix_fixture_state_tablefree_v1"
 RADIX_FIXTURE_STATE_TABLEFREE_SCHEMA = "ds_radix_fixture_state_tablefree_v2"
 
 
-def _sha256_file(path: str) -> str:
-    with open(path, "rb") as fh:
-        return hashlib.sha256(fh.read()).hexdigest()
+def _channel_mask_content_sha256(path: str) -> str:
+    """Tensor-content SHA-256 of the channel mask (path/timestamp-independent).
+
+    Hashes the canonical channel selection/weights via the same routine the mask
+    writer embeds (``channel_mask.compute_content_sha256``), so a mask
+    regenerated with identical content authorizes the same boot regardless of
+    file path or the embedded ``created_at`` timestamp. The full-file SHA cannot
+    serve this role: ``created_at`` makes it change on every calibration.
+    """
+    from sglang.srt.layers.attention.double_sparsity.channel_mask import (
+        load_channel_mask,
+    )
+
+    # load_channel_mask recomputes the content hash over the canonical tensors
+    # and raises on a tamper/corrupt mask, so this is fail-closed.
+    return load_channel_mask(path).content_sha256
 
 
 def radix_fixture_config_fingerprint(server_args: "ServerArgs") -> dict:
     """Fingerprint the serving config the radix flip is bound to.
 
-    Includes the channel-mask file SHA so a flip recorded against one
-    calibrated mask cannot authorize a boot that swaps in a different mask.
+    Pins the channel mask by its TENSOR-CONTENT SHA (not the file path or the
+    full-file SHA): a flip recorded against one calibrated mask cannot authorize
+    a boot that swaps in a different-content mask, while a mask regenerated with
+    identical content authorizes regardless of path or the embedded
+    ``created_at`` timestamp (which makes the full-file SHA non-reproducible).
     """
     from sglang.srt.layers.attention.double_sparsity.config import (
         parse_double_sparsity_config,
@@ -470,8 +486,9 @@ def radix_fixture_config_fingerprint(server_args: "ServerArgs") -> dict:
         "tp_size": getattr(server_args, "tp_size", None),
         "page_size": getattr(server_args, "page_size", None),
         "kv_cache_dtype": getattr(server_args, "kv_cache_dtype", None),
-        "channel_mask_path": config.channel_mask_path,
-        "channel_mask_sha256": _sha256_file(config.channel_mask_path),
+        "channel_mask_content_sha256": _channel_mask_content_sha256(
+            config.channel_mask_path
+        ),
         # DS selects table-free (the only mode); pin it so a fixture from any other
         # selector mode cannot authorize this boot.
         "selector_mode": "table_free",
