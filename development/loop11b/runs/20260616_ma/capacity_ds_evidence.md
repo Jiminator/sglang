@@ -1,7 +1,11 @@
 # M-A capacity + "mask serves" evidence — DS radix-on (GRAPH), fresh 8×H200
 
 Boot: `capacity_probe.sh` → DS radix-on under `SGLANG_DS_RADIX_OVERRIDE=1` (graph mode, the
-production op-point) with the regenerated mask (`content_sha256=a4be98c4…`). One TP=8 server.
+production op-point). One TP=8 server. NOTE: this initial capacity probe used the first
+calibration (ld16, content `a4be98c4`, later superseded for recall — see provenance.json); the
+token_capacity is KV-pool math, INDEPENDENT of the mask content, and was reconfirmed at the
+production ld32 mask (`content_sha256=35155ac4…`) on the no-override authorization boot
+(`mint/probes/no_override/server_info.json`): identical `token_capacity=504640`.
 
 ## /server_info — locked op-point keys (AC-0.2 key set)
 
