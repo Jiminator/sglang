@@ -12,7 +12,7 @@ OUT="$HERE/probes/gate_a_recall"; mkdir -p "$OUT"
 LOG="$OUT/stage.log"; exec > >(tee "$LOG") 2>&1
 echo "=== loop11b GATE A recall off-vs-on $(date -u +%FT%TZ) HEAD=$(git rev-parse --short HEAD) ==="
 MODE="${1:-full}"
-if [[ "$MODE" == "smoke" ]]; then LENGTHS="1024"; NUM=2; else LENGTHS="1024 4096 16384"; NUM=20; fi
+if [[ "$MODE" == "smoke" ]]; then LENGTHS="1024"; NUM=2; else LENGTHS="1024 4096 16384"; NUM="${NUM_OVERRIDE:-20}"; fi
 mkdir -p "$REPO/.sglang_ds_oracle"
 CMP="$REPO/development/loop11/runs/20260616_r24/tablefree_radix/p2_recall_compare.py"
 
