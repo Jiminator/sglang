@@ -189,7 +189,7 @@ class SchedulerBatchResultProcessor:
           - clears `req.customized_info["double_sparsity"]`,
           - stores the failure summary on `req.per_request_summary`,
           - calls `req.set_finish_with_abort(...)`,
-          - immediately calls `req.check_finished()` so `finished_reason`
+          - immediately calls `req.update_finish_state()` so `finished_reason`
             is materialised on the current scheduler step.
 
         Callers must run this BEFORE token append, logprob/grammar/
@@ -222,7 +222,7 @@ class SchedulerBatchResultProcessor:
                 f"Double Sparsity {error_class}: {error_message}"
             )
         # Materialise finished_reason on the current step.
-        req.check_finished()
+        req.update_finish_state()
         return True
 
     def _maybe_collect_per_request_summary(
