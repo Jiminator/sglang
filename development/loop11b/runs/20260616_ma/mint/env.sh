@@ -11,7 +11,7 @@ REPO=/sgl-workspace/sglang
 # Regenerated mask (loop11b task4). DEC-1 pins the tensor-content SHA, so the path is
 # free; the serve default and these configs point at the durable cluster-storage copy.
 MASK=/cluster-storage/models/glm51-fp8-channel-mask-s256.safetensors
-MASK_CONTENT_SHA256=a4be98c4c4989ea828b6ac128968af72336994b04cc1b6086408dbb208aa800d
+MASK_CONTENT_SHA256=35155ac46ad79fa82e531138434ff35708e2d8c2932889323a21a455342a9b00
 
 # DS table-free serving config (the op-point the fixture fingerprint binds to). The
 # recall_oracle / selection_capture variants append the per-probe toggles.

@@ -35,11 +35,12 @@ from sglang.srt.server_args import ServerArgs  # noqa: E402
 from sglang.srt.layers.attention.double_sparsity import validator  # noqa: E402
 
 GLM = "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db"
-# REGENERATED loop11b channel mask. DEC-1 pins the tensor-content sha, so the fingerprint
-# computed below must be a4be98c4…; the path here is the durable cluster-storage copy.
+# REGENERATED loop11b channel mask (loop8 DEC-3 recipe: fp8_e4m3, label_dim 32). DEC-1 pins
+# the tensor-content sha, so the fingerprint computed below must be 35155ac4…; the path here
+# is the durable cluster-storage copy.
 MASK = "/cluster-storage/models/glm51-fp8-channel-mask-s256.safetensors"
 EXPECTED_MASK_CONTENT_SHA256 = (
-    "a4be98c4c4989ea828b6ac128968af72336994b04cc1b6086408dbb208aa800d"
+    "35155ac46ad79fa82e531138434ff35708e2d8c2932889323a21a455342a9b00"
 )
 DS_CFG = (
     '{"top_k": 2048, "page_size": 64, '
