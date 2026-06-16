@@ -20,10 +20,10 @@ record is `development/loop11b/plan.md`; this queue is the live status ledger (c
 
 | milestone | tasks | gate | status |
 |-----------|-------|------|--------|
-| M-A op-point re-establishment | task1–task6 | mask regen+provenance, DEC-1 validator change, radix-on minted+authorized, bs cap ≥64 @0.8, AC-7 clean | IN PROGRESS (Round 0) |
-| M-B M4 close | task7 (tax guard), task8 (locked sweep), task9 (headline) | AC-4 ratio ≤1.10 @bs64; AC-2 P99<22s; AC-3 p50≥30 (absolute); both op-points | pending |
-| M-C productionize | task10 | runbook + Cat-A/B UX fixes; loop8 warning reconciled; no ABI change | pending |
-| close-out | task11 | results.md regenerated, evidence preflight, push | pending |
+| M-A op-point re-establishment | task1–task6 | mask regen+provenance, DEC-1 validator change, radix-on minted+authorized, bs cap ≥64 @0.8, AC-7 clean | ✅ COMPLETE |
+| M-B M4 close | task7 (tax guard), task8 (locked sweep), task9 (headline) | AC-4 TPOT ratio 0.97-1.02 ≤1.10 PASS; **DS meets SLO @ conc16/32, FAILS @ conc64** (TPS 26.98<30, TTFT 25.12>22); DSA also fails @64; production-envelope op-point (same-memory deferred-recorded) | ✅ COMPLETE |
+| M-C productionize | task10 | runbook + Cat-A/B UX fixes; loop8 warning reconciled; no ABI change | ✅ COMPLETE |
+| close-out | task11 | results.md regenerated, evidence preflight, push | in progress |
 
 ## Task ledger
 

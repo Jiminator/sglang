@@ -4,77 +4,83 @@ Finish loop 11's M4 verdict on a fresh 8×H200. One TP=8 server at a time; never
 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments` for serving. Honest-verdict posture: a FAIL on the
 throughput SLO is a complete, reportable result.
 
+## Bottom line
+
+**Table-free Double Sparsity on GLM-5.1-FP8 MEETS the client SLO (decode-TPS p50 ≥ 30, P99 TTFT < 22 s)
+at concurrency 16 and 32, and FAILS at concurrency 64** (DS decode-TPS 26.98 < 30 AND P99 TTFT 25.12 s
+> 22 s). **Native DSA also fails at conc 64** (26.22 TPS, 33.32 s TTFT) — the 30-TPS decode floor is the
+binding constraint for BOTH at high concurrency on this node/workload. At the matched op-point DS is
+competitive-to-better than DSA: equal-or-higher decode throughput (ratio 0.98–1.03), LOWER P99 TTFT at
+every concurrency (ratio 0.46–0.75), equal-or-faster per-step decode (TPOT 0.97–1.02). The op-point was
+fully re-established on the fresh node and radix-on re-authorized via the DEC-1 content-hash fixture.
+
 ## Milestone status
 
 | milestone | status |
 |-----------|--------|
-| **M-A op-point re-establishment** (AC-0, AC-5, AC-6, AC-7) | ✅ **COMPLETE** |
-| M-B M4 close (AC-4 tax guard, AC-2/AC-3 locked sweep, AC-9) | ⏳ next |
-| M-C productionize (AC-UX) | pending |
-| close-out (AC-8) | pending |
+| **M-A op-point re-establishment** (AC-0, AC-5, AC-6, AC-7) | ✅ COMPLETE |
+| **M-B M4 close** (AC-4 tax guard, AC-2/AC-3 locked sweep, AC-9) | ✅ COMPLETE (production-envelope; same-memory deferred-recorded) |
+| **M-C productionize** (AC-UX) | ✅ COMPLETE |
+| close-out (AC-8) | ✅ this ledger + evidence preserved + pushed |
 
 ---
 
-## M-A — op-point re-established (fresh 8×H200, GLM-5.1-FP8 TP=8, fp8_e4m3, page 64)
+## M-A — op-point re-established (GLM-5.1-FP8 TP=8, fp8_e4m3, page 64)
 
-### Channel mask (AC-0.1) — ✅
-- **Recipe error caught + fixed.** The plan's AC-0.1 recipe carried the DeepSeek-V3.2 values
-  (`--dtype bfloat16 --label-dim 16`); that mask (content `a4be98c4`) served **−5.2pp** recall at L4096
-  vs the frozen baseline. The GLM-native recipe is loop8 `task5_calibration_recipe.md` + DEC-3:
-  **`--dtype fp8_e4m3 --label-dim 32`** (label_dim 32 ∝ qk_nope_head_dim=192, 2× channels).
-- **Mask (corrected):** `content_sha256=35155ac46ad7…`, fullfile `b223811f…`, tensors
-  `channel_selection int32 [78,64,32]` + `channel_weights float32 [78,64,32]`, head_dim 192, page 64,
-  seed 42, 256 Pile-val docs (corpus sha `46d72075…`, same as loop8). FP8 `--dry-run-blocks 1` placement
-  gate PASSED (float8_present, sharded cuda:0–7, hooks on all 78 layers). provenance.json committed.
-- **Serves** (smoke: "Paris. The city is located on the River Seine…").
+- **Mask (AC-0.1):** a recipe error was caught + fixed. The plan recipe carried the DeepSeek-V3.2 values
+  (`--dtype bfloat16 --label-dim 16`); that mask served −5.2pp recall at L4096. The GLM-native loop8 DEC-3
+  recipe is **`--dtype fp8_e4m3 --label-dim 32`** (∝ qk_nope_head_dim=192, 2× channels). Corrected mask
+  `content_sha256=35155ac4…`, 78×64×32, dry-run placement gate PASS, serves. provenance.json committed.
+- **Recall (AC-5):** served radix-OFF == frozen baseline on matched populations (L4096 58.045% = baseline;
+  L16384 +0.32pp; overall 64.80% vs 64.70) — within ±0.5pp. Radix on-vs-off equivalence (num=60, 18720
+  samples/len): all per-length |Δ| ≤ 0.283pp → `recall_equivalence_passed`.
+- **Radix authorization (AC-0.2, DEC-1):** validator pins `channel_mask_content_sha256` (not path/full-file);
+  +2 portability unit tests, 13/13 fixture tests green. DEC-12 mint gates ALL PASS — GATE A recall equiv,
+  GATE B cross-rank identity (8 ranks byte-identical) + no-dense-fallback, GATE C production-reuse edge
+  (boundary −0.38 / partial@2752 −0.01 / evict 0.0 pp within ±0.5pp; nearfull +1.5692pp OUT-OF-CONTRACT,
+  recorded). Fixture minted; **no-override boot AUTHORIZED live** + **DEC-1 same-content/different-path
+  portability AUTHORIZED**.
+- **Capacity + AC-7 (AC-0.3, AC-7):** DS table-free @ mem 0.8 token_capacity **504640** (= loop11 ref),
+  CUDA-graph capture OK, no TokenLabelTable. DSA-native @ mem 0.8 token_capacity **410560** (= loop11 ref)
+  — DEC-1 shared-surface change did not regress the shipped DSA default.
+- **DS concept (AC-6):** offline mask → absorbed-latent table-free selection → top-k → sparse MLA; no dense
+  fallback, no DSA-indexer substitution.
 
-### Recall (AC-5) — ✅
-- **vs frozen baseline** (`loop9/runs/20260610_m0/recall_baseline.json`, matched 6240 samples/length, num=20):
-  served radix-OFF L1024 100.0%, **L4096 58.045% (baseline 58.045 — EXACT)**, L16384 36.36% (base 36.04,
-  +0.32pp), overall 64.80% (base 64.70) — all within ±0.5pp.
-- **radix on-vs-off equivalence** (num=60, 18720 samples/length): L1024 0.0, **L4096 −0.283**, L16384 +0.123,
-  overall −0.053pp — all within ±0.5pp → `recall_equivalence_passed`. (num=20 was noisy by a hair, as expected.)
+## M-B — M4 verdict (production-envelope, 2 trials/conc, 600 s, radix-ON both)
 
-### Radix-on authorization (AC-0.2, DEC-1) — ✅
-- DEC-1 validator change landed (`5ac86f5cf`): `radix_fixture_config_fingerprint` pins
-  `channel_mask_content_sha256` (tensor-content) instead of path + full-file SHA; `_sha256_file` removed;
-  +2 portability unit tests; 13/13 fixture tests green.
-- **DEC-12 mint gates (ld32 mask), all PASS:**
-  - GATE A recall equivalence (above).
-  - GATE B cross-rank selection identity: radix_on AND radix_off — all 8 TP ranks byte-identical; +
-    no-dense-fallback `num_violations=0`.
-  - GATE C production-reuse edge (num=144): boundary vs cold **−0.38pp** CI95[−0.70,−0.06], partial@~2752
-    (~63% hit) **−0.012pp** CI95[−0.29,+0.26], evict **0.0pp** (clean recompute) — all within ±0.5pp;
-    nearfull (~98%, OUT-OF-CONTRACT) **+1.5692pp** CI95[1.28,1.87], recorded value-affecting (matches loop11
-    R27), NOT a gate input.
-- **Fixture minted** → `serve_double_sparsity_radix_fixture.json` (schema v2, all 5 booleans true, DEC-1
-  fingerprint `channel_mask_content_sha256=35155ac4…`).
-- **No-override boot AUTHORIZED live:** DS boots radix-on via the fixture with NO dev override (validator
-  "fixture recorded as PASSED"); `/server_info` shows the fixture artifact set + `disable_radix_cache=False`;
-  real radix hit (warm cached 1088/1135). **DEC-1 path portability:** same-content mask at a SECOND path,
-  same fixture → still authorizes.
+| op-point | conc | decode-TPS p50 (≥30) | P99 TTFT (s, <22) | verdict |
+|----------|------|----------------------|-------------------|---------|
+| DS  | 16 | 40.75 | 1.59  | **PASS** |
+| DS  | 32 | 34.12 | 3.20  | **PASS** |
+| DS  | 64 | 26.98 | 25.12 | **FAIL** |
+| DSA | 16 | 41.50 | 3.50  | PASS |
+| DSA | 32 | 33.34 | 6.80  | PASS |
+| DSA | 64 | 26.22 | 33.32 | FAIL |
 
-### Capacity + AC-7 (AC-0.3, AC-7) — ✅
-- **DS table-free radix-on @ mem 0.8** (production config, fixture-authorized): `token_capacity=504640`
-  (= loop11 reference), `effective_max_running_requests_per_dp=64`, derived decode-bs cap ≈109 ≥ 64,
-  CUDA-graph capture OK on all 8 ranks (153 s), **no TokenLabelTable**.
-- **DSA-native un-regressed @ mem 0.8:** `token_capacity=410560` (= loop11 reference exactly),
-  `enable_double_sparsity=False` — the DEC-1 shared-surface change did not touch the shipped default.
+- **AC-2/AC-3 (DEC-6 absolute):** DS PASS @ conc 16/32, FAIL @ conc 64. Judged regardless of DSA.
+- **AC-4 per-step tax:** DS/DSA TPOT p50 ratio 0.972–1.018 (conc 16/32/64) ≤ 1.10 → **PASS** (loop-10 win held).
+- **DS/DSA ratios (reported, DEC-6):** decode-TPS 0.98–1.03; P99 TTFT 0.46–0.75 (DS lower everywhere);
+  TPOT 0.97–1.02. DS admission-capped <64 at conc-64 (achieved 58.9).
+- **AC-9 honesty:** block-scheduled (labeled unpaired); the `--ac11` comparator refused the cross-side
+  match (first op-point caps — fixed; then a benign commit_sha mismatch) — the verdict is extracted via the
+  comparator's own metric readers (`extract_verdict.py`); the DS absolute verdict is DS-only and
+  commit-independent. Same-memory op-point (both 0.8) **deferred-and-recorded** (plan lower bound).
+- **Open tooling gaps (queue SI-1/SI-2/SI-5):** per-request prefix-reuse + aggregate-throughput + no-op
+  total_tokens are not emitted by bench_serving/the comparator; the GSP workload is ~55% reuse by
+  construction. Recorded as queued follow-ups; do not affect the gated per-request verdict.
 
-### DS concept intact (AC-6) — ✅
-- Served path = offline channel mask → absorbed-latent table-free selection → top-k → sparse MLA decode;
-  no dense fallback (`no_dense_fallback_passed`), no DSA-indexer substitution.
+## M-C — productionize (AC-UX)
 
-**M-A verdict: the GLM-5.1-FP8 table-free DS op-point is fully re-established on the fresh node, radix-on
-authorized via the DEC-1 content-hash fixture, capacity reproduced, DSA-native un-regressed.**
+Runbook (`development/loop11b/RUNBOOK.md`) takes a GLM-5.1-FP8 operator zero→serving DS; Category-A fixes
+(serve-script model/mask defaults + mem/TokenLabelTable comments; loop8 throughput warning reconciled to
+the measured verdict; de-DeepSeek calibrate/config; CLIENT_SLOS→SLOS; trials wording) + Category-B CLI help
+(server_args.py). No flag rename / JSON-schema change (DEC-5). serve_native_nsa.sh now matches the locked
+op-point (64/64).
 
-Evidence: `runs/20260616_ma/` (provenance.json, capacity_ds_evidence.md, mint/ probes + verdicts,
-server_info snapshots). Reproducers: `run_calibrate.sh`, `build_corpus.py`, `mint/{env,gate_*,mint_fixture,
-verify_no_override,dsa_capacity_probe}`.
+## Evidence (AC-8)
 
----
-
-## M-B / M-C — pending (next)
-The per-step tax guard (AC-4), the locked DS-vs-DSA sweep (AC-2/AC-3/AC-9, 2 op-points), the headline report,
-the UX pass, and close-out follow. Methodology + the seven sweep-tooling side issues (SI-1..7) are recorded
-in `queue.md`.
+`runs/20260616_ma/` — provenance.json, capacity_ds_evidence.md, mint/ (env + gate_a/b/c runners +
+mint_fixture.py + verify_no_override.sh + dsa_capacity_probe.sh, probes/ verdicts + server_info snapshots).
+`runs/20260616_mb/` — sweep.sh, dsa_rerun.sh, extract_verdict.py, DS_absolute_verdict.md, results_prod_envelope/
+(verdict_matched.json, .meta.json sidecars, server_info). Reproducers: run_calibrate.sh, build_corpus.py.
+Bulky `.jsonl`/`.log`/mask blobs are gitignored (reproducible from the committed runners + recorded hashes).
