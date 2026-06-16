@@ -1,0 +1,11 @@
+probe=gate_a_recall_equivalence (radix off vs on, SAME trial set, eager recall_oracle)
+lengths=1024 4096 16384 num=60 decode_steps=4
+off_sweep_rc=0 on_sweep_rc=0 compare_rc=0
+status=PASS
+--- compare summary ---
+[recall-compare] -> /sgl-workspace/sglang/development/loop11b/runs/20260616_ma/mint/probes/gate_a_verdict.json
+  OVERALL  off=64.952%  on=64.899%  delta=-0.053pp
+    L  1024: off=100.0%  on=100.0%  delta=0.0pp  samples(off/on)=18720/18720  within=True
+    L  4096: off=58.67%  on=58.387%  delta=-0.283pp  samples(off/on)=18720/18720  within=True
+    L 16384: off=36.186%  on=36.309%  delta=0.123pp  samples(off/on)=18720/18720  within=True
+  VERDICT: PASS
