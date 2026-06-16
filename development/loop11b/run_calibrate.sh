@@ -25,8 +25,12 @@ OUT="${OUT:-/cluster-storage/models/glm51-fp8-channel-mask-s256.safetensors}"
 # not affect any server.
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-ARGS=( --model "$MODEL" --dtype bfloat16 --kv-cache-dtype fp8_e4m3 --tp 8
-  --label-dim 16 --page-size 64 --num-samples 256 --block-size 512 --seed 42
+# GLM-native recipe (loop8 DEC-3, validated 2026-06-07): --dtype fp8_e4m3 and
+# --label-dim 32 (NOT the DeepSeek-V3.2 values bfloat16/16 — label_dim 32 is
+# proportionate to GLM's qk_nope_head_dim=192 and retains 2x the channels, which
+# the recall gate requires). Same corpus/num-samples/block-size/seed as dsv32.
+ARGS=( --model "$MODEL" --dtype fp8_e4m3 --kv-cache-dtype fp8_e4m3 --tp 8
+  --label-dim 32 --page-size 64 --num-samples 256 --block-size 512 --seed 42
   --dataset "$CORPUS" --output "$OUT" )
 if [[ "$MODE" == "dryrun" ]]; then
   ARGS+=( --dry-run-blocks 1 )
