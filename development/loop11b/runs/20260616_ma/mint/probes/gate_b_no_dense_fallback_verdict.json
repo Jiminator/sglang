@@ -1,0 +1,19 @@
+{
+  "probe": "P4_no_dense_fallback",
+  "top_k": 2048,
+  "capdirs": [
+    "/sgl-workspace/sglang/development/loop11b/runs/20260616_ma/mint/probes/gate_b_crossrank/cap_radix_on",
+    "/sgl-workspace/sglang/development/loop11b/runs/20260616_ma/mint/probes/gate_b_crossrank/cap_radix_off"
+  ],
+  "files_scanned": 48,
+  "rows_checked": 3744,
+  "rows_full_sparse_budget(seq>=top_k,vl==top_k)": 3744,
+  "rows_short_context(seq<top_k)": 0,
+  "seq_len_range": [
+    3816,
+    3818
+  ],
+  "num_violations": 0,
+  "violations_sample": [],
+  "status": "PASS"
+}
