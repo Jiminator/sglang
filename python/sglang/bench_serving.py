@@ -105,6 +105,11 @@ class RequestFuncOutput:
     error: str = ""
     output_len: int = 0
     start_time: float = 0.0
+    # Final-chunk response meta_info we want to keep per-request: prefix-reuse
+    # (cached_tokens / cached_tokens_details) and the Double Sparsity NO-OP
+    # counters (sparsity_rate / selected_tokens / dense_fallback). Stays {} for
+    # backends/datasets that never populate it.
+    output_meta: dict = field(default_factory=dict)
 
     @staticmethod
     def init_new(request_func_input: RequestFuncInput):
@@ -651,6 +656,7 @@ async def async_request_sglang_generate(
         output.start_time = st
         most_recent_timestamp = st
         last_output_len = 0
+        last_meta_info = None
         try:
             async with session.post(
                 url=api_url, json=payload, headers=headers
@@ -667,6 +673,13 @@ async def async_request_sglang_generate(
                             pass
                         else:
                             data = json.loads(chunk)
+
+                            # Keep the most recent meta_info we saw. The final
+                            # (aggregating) chunk carries the fully-accumulated
+                            # cached_tokens + Double Sparsity per-request stats;
+                            # last-write-wins lands on that final chunk.
+                            if isinstance(data, dict) and data.get("meta_info"):
+                                last_meta_info = data["meta_info"]
 
                             # NOTE: Some completion API might have a last
                             # usage summary response without a token so we
@@ -695,6 +708,21 @@ async def async_request_sglang_generate(
 
                     output.generated_text = generated_text
                     output.latency = latency
+                    # Carry per-request prefix-reuse + Double Sparsity NO-OP
+                    # counters from the final meta_info. Robust to absence:
+                    # cached_tokens is only set by the sglang /generate path,
+                    # and meta_info["double_sparsity"] only exists when DS is on.
+                    if last_meta_info is not None:
+                        ds = last_meta_info.get("double_sparsity") or {}
+                        output.output_meta = {
+                            "cached_tokens": last_meta_info.get("cached_tokens"),
+                            "cached_tokens_details": last_meta_info.get(
+                                "cached_tokens_details"
+                            ),
+                            "sparsity_rate": ds.get("sparsity_rate"),
+                            "selected_tokens": ds.get("selected_tokens"),
+                            "dense_fallback": ds.get("dense_fallback"),
+                        }
                     # Fail closed on an HTTP 200 that produced no decoded token:
                     # if no streamed chunk carried a non-empty "text", `ttft` was
                     # never set and `output_len` still holds the *requested* count
@@ -1815,6 +1843,37 @@ async def benchmark(
             effective_output_len = int(args.random_output_len or 0)
         per_epoch_num_prompts = int(getattr(args, "num_prompts", 0))
         measured_num_prompts_total = per_epoch_num_prompts * measured_epochs
+
+        # Double Sparsity NO-OP aggregates the comparator reads, pulled from each
+        # output's output_meta (populated only by the sglang /generate path when
+        # those keys are present). For non-DS / non-sglang runs the lists are
+        # empty and every aggregate stays None — additive only. The matching
+        # per-request arrays (incl. cached_tokens, from which cached_fraction =
+        # cached_tokens / prompt_tokens is derived downstream) are emitted in
+        # result_details below. total_tokens is DERIVED, not measured:
+        #     total_tokens = selected_tokens / sparsity_rate   (per request, sparsity_rate > 0)
+        dense_fallback_vals = []
+        selected_tokens_vals = []
+        total_tokens_vals = []
+        for o in outputs:
+            m = getattr(o, "output_meta", None) or {}
+            df = m.get("dense_fallback")
+            if df is not None:
+                dense_fallback_vals.append(df)
+            st_ = m.get("selected_tokens")
+            if st_ is not None:
+                selected_tokens_vals.append(st_)
+            sr = m.get("sparsity_rate")
+            if st_ is not None and sr:
+                total_tokens_vals.append(st_ / sr)
+
+        def _mean_or_none(xs):
+            return (sum(xs) / len(xs)) if xs else None
+
+        selected_tokens_mean = _mean_or_none(selected_tokens_vals)
+        total_tokens_mean = _mean_or_none(total_tokens_vals)
+        dense_fallback_total = sum(dense_fallback_vals) if dense_fallback_vals else None
+
         result = {
             # Arguments
             "tag": getattr(args, "tag", None),
@@ -1875,6 +1934,11 @@ async def benchmark(
             "median_decode_throughput_tps": metrics.median_decode_throughput_tps,
             "min_decode_throughput_tps": metrics.min_decode_throughput_tps,
             "p10_decode_throughput_tps": metrics.p10_decode_throughput_tps,
+            # Double Sparsity NO-OP aggregates the comparator reads. Null when
+            # the run carried no DS per-request counters (non-DS / non-sglang).
+            "selected_tokens_mean": selected_tokens_mean,
+            "dense_fallback_total": dense_fallback_total,
+            "total_tokens_mean": total_tokens_mean,
         }
     else:
         print(f"Error running benchmark for request rate: {request_rate}")
@@ -1905,6 +1969,25 @@ async def benchmark(
         "itls": [output.itl for output in outputs],
         "generated_texts": [output.generated_text for output in outputs],
         "errors": [output.error for output in outputs],
+        # Per-request prefix-reuse + Double Sparsity NO-OP counters. Each entry
+        # is None for requests whose response meta_info lacked the key (non-DS /
+        # non-sglang runs produce all-None lists). See result["*_mean"] aggregates.
+        "cached_tokens": [
+            (getattr(o, "output_meta", None) or {}).get("cached_tokens")
+            for o in outputs
+        ],
+        "dense_fallback": [
+            (getattr(o, "output_meta", None) or {}).get("dense_fallback")
+            for o in outputs
+        ],
+        "selected_tokens": [
+            (getattr(o, "output_meta", None) or {}).get("selected_tokens")
+            for o in outputs
+        ],
+        "sparsity_rate": [
+            (getattr(o, "output_meta", None) or {}).get("sparsity_rate")
+            for o in outputs
+        ],
     }
 
     # Append results to a JSONL file
