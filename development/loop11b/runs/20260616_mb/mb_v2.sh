@@ -47,6 +47,9 @@ tax_probe ds 64; tax_probe ds 30
 echo "=== DS sweep (2 trials x conc [$CONCURRENCIES] x 600s) $(date -u +%H:%M:%SZ) ==="
 RESULTS_DIR="$V2/ds080" MODE=double_sparsity bash "$REPO/development/benchmark.sh"; echo ">>> DS sweep rc=$?"
 echo ">>> DS running-req peak (all trials): $(peak_running "$SLOG")"
+# Abort-path evidence (R1 crash-fix): the DS selector can sanitize a rare row under
+# radix prefix reuse; the fixed abort path must degrade THAT request, not crash the server.
+echo ">>> DS selector_runtime_errors=$(grep -ac selector_runtime_error "$SLOG") server_crashed=$(grep -ac 'SIGQUIT received' "$SLOG")"
 teardown; gpu_idle_wait
 
 # ---------- DSA @ mem 0.8 (same-memory) ----------
