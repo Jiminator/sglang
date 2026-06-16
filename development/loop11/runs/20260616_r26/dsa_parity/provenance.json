@@ -1,0 +1,13 @@
+{
+  "probe": "DSA_native_radix_reuse_selection_parity",
+  "question": "Is the radix heavy-reuse selection-recall deviation DS-specific, or does the shipped DSA-native default show it too?",
+  "runtime_base_head": "f87bdc665409cbdf9e5e0b42578bf65de44b0e9f",
+  "op_point": "GLM-5.1-FP8 TP=8 fp8_e4m3 page64 mem0.8 max-running64 EAGER(--disable-cuda-graph) DSA-native(no --enable-double-sparsity) dsa_prefill/decode flashmla_kv; expandable_segments NEVER set",
+  "primary_metric_feasibility": "NOT FEASIBLE client-only. --enable-return-indexer-topk surfaces PHYSICAL kv-cache slot indices (page_table_size_1 values via fast_topk_transform_fused, sgl-kernel/python/sgl_kernel/top_k.py:45-80), NOT logical token positions. Under radix reuse, logical->physical mapping is arbitrary (cached slots), so cross-arm (fresh vs reuse) LOGICAL needle selection-recall cannot be computed from the HTTP client without a new server-side debug field (raw logical topk OR req_to_token export). The prompt forbids new production code. Row-2047 all-select reconstruction trick covers only needles with token positions <=2047, but 77/144 NIAH needles at L4096 exceed 2047 (needle_end max=2809). Confirmed independently by Codex (gpt-5.5 xhigh).",
+  "metric_used": "FALLBACK: end-to-end greedy NIAH answer-recall, DSA-native, paired fresh (radix-off) vs heavy-reuse (radix-on, L1024 same-seed warmup seeds shared ~4288-token prefix). Coarser than indexer-topk selection-recall; saturation reported explicitly.",
+  "needle_population": "144 matched NIAH needles, seed_base=1000, L4096 (~4333 prompt tokens), depth 0.35-0.65 (same construction as DS R26 edge probe edge_highn_driver.py)",
+  "constraints": "one TP=8 server at a time; teardown to ~0 MiB between arms; kill all at end; no new production code",
+  "outcome": "INCONCLUSIVE via fallback: fresh-vs-fresh nondeterminism noise floor ~77% (48-needle determinism control, both runs cached==0) dwarfs the reuse effect; answer-recall delta -4.86pp CI[-11.81,+2.08] crosses zero; output-divergence 74.3% < 77% floor. Cannot confirm or refute DSA matching DS +1.57pp under the +-0.5pp bar.",
+  "deterministic_inference_path": "NOT viable: --enable-deterministic-inference requires fa3/triton for GlmMoeDsaForCausalLM (server_args.py:4093-4097), which replaces DSA sparse selection with dense attention. Cannot zero the noise floor while keeping DSA selection.",
+  "heavy_reuse_construction": "DS R26 partial-arm: warm L4096 prompt P, then measure P+PARTIAL_TAIL (radix reuses ~4288 aligned tokens). Fresh measures the same P+PARTIAL_TAIL with radix-off. cached: fresh all 0, reuse all 4288-4352 (mean 4293, n_ge4000=144/144)."
+}

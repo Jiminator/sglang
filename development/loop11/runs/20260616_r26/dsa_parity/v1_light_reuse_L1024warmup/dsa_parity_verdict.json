@@ -1,0 +1,69 @@
+{
+  "probe": "DSA_native_radix_reuse_parity_fallback",
+  "metric": "FALLBACK end-to-end greedy NIAH answer-recall (reuse - fresh), paired by needle",
+  "primary_metric_infeasible_reason": "enable_return_indexer_topk returns PHYSICAL kv-slot indices not logical positions; cross-arm logical needle selection-recall not computable client-only under radix reuse (arbitrary logical->physical remap). 77/144 needles exceed the row-2047 reconstruction ceiling. No new production code allowed.",
+  "length": 4096,
+  "page_size": 64,
+  "index_topk": 2048,
+  "max_delta_pp": 0.5,
+  "min_needles": 128,
+  "n_needles_matched": 144,
+  "cache_engagement": {
+    "fresh_cached_dist": {
+      "n": 144,
+      "min": 0,
+      "max": 0,
+      "mean": 0.0,
+      "median": 0,
+      "n_zero": 144,
+      "n_gt0": 0,
+      "n_ge4000": 0
+    },
+    "reuse_cached_dist": {
+      "n": 144,
+      "min": 320,
+      "max": 640,
+      "mean": 491.1,
+      "median": 512,
+      "n_zero": 0,
+      "n_gt0": 144,
+      "n_ge4000": 0
+    },
+    "fresh_is_clean_control": true,
+    "reuse_engaged_heavy": true
+  },
+  "answer_recall": {
+    "fresh_recall_pct": 100.0,
+    "reuse_recall_pct": 100.0,
+    "paired_delta_reuse_minus_fresh_pp": {
+      "mean": 0.0,
+      "std": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "ci95_bootstrap": [
+        0.0,
+        0.0
+      ],
+      "ci_iters": 20000
+    },
+    "saturated_both_100pct": true,
+    "within_pm0_5pp_bar": true
+  },
+  "exact_output_divergence": {
+    "n_needles": 144,
+    "n_divergent": 48,
+    "divergence_rate_pct": 33.3333,
+    "note": "temp=0 greedy: divergent text = selection/numeric difference fresh vs reuse on the SAME needle. 0% = bit-identical selection."
+  },
+  "ds_reference": {
+    "ds_selection_recall_delta_pp": 1.57,
+    "ds_ci95": [
+      1.28,
+      1.87
+    ],
+    "edge_bar_pp": 0.5
+  },
+  "verdict": "DSA answer-recall delta within +-0.5pp BUT the metric SATURATED (both arms 100%) -> answer-recall cannot discriminate; see exact_output_divergence_rate as the sharper selection signal",
+  "status": "VALID",
+  "problems": []
+}

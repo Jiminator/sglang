@@ -1,0 +1,22 @@
+DSA-native server-config proof (from live serve.log server_args lines, this run, HEAD f87bdc665):
+
+fresh arm (radix-OFF control):
+  attention_backend='dsa'  dsa_prefill_backend='flashmla_kv'  dsa_decode_backend='flashmla_kv'
+  enable_double_sparsity=False   disable_radix_cache=True   disable_cuda_graph=True
+  enable_dp_attention=False  mem_fraction_static=0.8  max_running_requests=64  page_size=64
+  kv_cache_dtype='fp8_e4m3'  tp_size=8   PYTORCH_CUDA_ALLOC_CONF UNSET (no expandable_segments)
+  enable_return_indexer_topk=False (PRIMARY metric not used; see verdict)
+
+reuse arm (radix-ON, shipped default):
+  attention_backend='dsa'  dsa_prefill_backend='flashmla_kv'  dsa_decode_backend='flashmla_kv'
+  enable_double_sparsity=False   disable_radix_cache=False  disable_cuda_graph=True
+  enable_dp_attention=False  mem_fraction_static=0.8  max_running_requests=64  page_size=64
+  kv_cache_dtype='fp8_e4m3'  tp_size=8   PYTORCH_CUDA_ALLOC_CONF UNSET (no expandable_segments)
+
+Cache engagement (raw meta_info cached_tokens, per arm):
+  fresh : all 144 reqs cached_tokens == 0           (clean radix-OFF control)
+  reuse : all 144 reqs cached_tokens in [4288,4352], mean 4292.9, n>=4000 = 144/144  (HEAVY ~4288)
+  determinism control (radix-OFF, 48 needles x2): both runs cached_tokens == 0
+
+Smoke (both arms): "OK:Paris. Distance from London to Paris is 343 km..." (coherent).
+One TP=8 server at a time; teardown to ~0 MiB between arms; all killed at end (nvidia-smi all 0 MiB).

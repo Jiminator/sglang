@@ -1,0 +1,80 @@
+{
+  "probe": "DSA_native_radix_reuse_parity_fallback",
+  "metric": "FALLBACK end-to-end greedy NIAH answer-recall (reuse - fresh), paired by needle",
+  "primary_metric_infeasible_reason": "enable_return_indexer_topk returns PHYSICAL kv-slot indices not logical positions; cross-arm logical needle selection-recall not computable client-only under radix reuse (arbitrary logical->physical remap). 77/144 needles exceed the row-2047 reconstruction ceiling. No new production code allowed.",
+  "length": 4096,
+  "page_size": 64,
+  "index_topk": 2048,
+  "max_delta_pp": 0.5,
+  "min_needles": 128,
+  "n_needles_matched": 144,
+  "cache_engagement": {
+    "fresh_cached_dist": {
+      "n": 144,
+      "min": 0,
+      "max": 0,
+      "mean": 0.0,
+      "median": 0,
+      "n_zero": 144,
+      "n_gt0": 0,
+      "n_ge4000": 0
+    },
+    "reuse_cached_dist": {
+      "n": 144,
+      "min": 4288,
+      "max": 4352,
+      "mean": 4292.9,
+      "median": 4288,
+      "n_zero": 0,
+      "n_gt0": 144,
+      "n_ge4000": 144
+    },
+    "fresh_is_clean_control": true,
+    "reuse_engaged_heavy": true
+  },
+  "answer_recall": {
+    "fresh_recall_pct": 18.75,
+    "reuse_recall_pct": 13.8889,
+    "paired_delta_reuse_minus_fresh_pp": {
+      "mean": -4.8611,
+      "std": 43.1777,
+      "min": -100.0,
+      "max": 100.0,
+      "ci95_bootstrap": [
+        -11.8056,
+        2.0833
+      ],
+      "ci_iters": 20000
+    },
+    "saturated_both_100pct": false,
+    "within_pm0_5pp_bar": false
+  },
+  "exact_output_divergence": {
+    "n_needles": 144,
+    "n_divergent": 107,
+    "divergence_rate_pct": 74.3056,
+    "note": "temp=0 greedy: fresh-vs-reuse divergent text on byte-IDENTICAL prompt (P+PARTIAL_TAIL). NOT a valid reuse signal -- see determinism_control: it is WITHIN the nondeterminism noise floor."
+  },
+  "determinism_control": {
+    "design": "Same radix-OFF DSA-native server, each measured prompt (P+PARTIAL_TAIL) issued TWICE, both cached_tokens==0. Establishes the run-to-run nondeterminism noise floor at this op-point.",
+    "n_needles": 48,
+    "fresh_vs_fresh_divergent": 37,
+    "noise_floor_divergence_pct": 77.08,
+    "run1_cached_gt0": 0,
+    "run2_cached_gt0": 0,
+    "implication": "DSA at this op-point (TP=8, EAGER, fp8 KV, no --enable-deterministic-inference) is HIGHLY nondeterministic: ~77% of bit-identical greedy requests produce different output. The 74.3% fresh-vs-reuse output divergence is BELOW this 77% floor, so it is explained ENTIRELY by nondeterminism, NOT by radix reuse. The -4.86pp answer-recall delta (CI [-11.81,+2.08] crossing zero) is likewise consistent with pure noise -- a fresh-vs-fresh recall delta would swing several pp from this same floor."
+  },
+  "ds_reference": {
+    "ds_selection_recall_delta_pp": 1.57,
+    "ds_ci95": [
+      1.28,
+      1.87
+    ],
+    "edge_bar_pp": 0.5,
+    "note": "DS measured a DETERMINISTIC per-decode-step SELECTION-RECALL oracle (recall_at_k on logical needle positions captured inside the attention kernel), NOT end-to-end greedy text. That oracle is insensitive to decode-sampling/MoE nondeterminism, which is why DS resolved +1.57pp with a tight CI. The apples-to-apples DSA equivalent (indexer-topk logical selection-recall) is INFEASIBLE client-only (see primary_metric_infeasible_reason)."
+  },
+  "deterministic_inference_not_viable": "Checked --enable-deterministic-inference as a way to zero the noise floor and isolate a clean reuse signal. NOT viable for this question: server_args._handle_deterministic_inference (server_args.py:4093-4097) REQUIRES attention_backend in {fa3, triton} for deepseek-family models (GlmMoeDsaForCausalLM is in the list) and rejects anything else with ValueError. The DSA sparse backend ('dsa' + flashmla_kv) is NOT allowed; deterministic mode would replace it with DENSE fa3/triton attention -- eliminating the query-dependent sparse top-k SELECTION that is the entire subject of the measurement. So nondeterminism cannot be removed while keeping DSA selection active, by flags alone.",
+  "verdict": "INCONCLUSIVE via the fallback. The end-to-end answer-recall fallback CANNOT resolve a +-0.5pp (or even +-5pp) reuse effect on DSA at this op-point because the run-to-run NONDETERMINISM noise floor (~77% greedy-output divergence; several-pp recall swings) DWARFS the effect size. The fresh-vs-reuse output divergence (74.3%) is BELOW the fresh-vs-fresh floor (77%), and the recall delta CI crosses zero. So this experiment can NEITHER confirm DSA deviates like DS (+1.57pp) NOR confirm DSA stays within +-0.5pp. A definitive DSA-vs-DS parity verdict requires the DETERMINISTIC per-step indexer LOGICAL selection-recall oracle (the apples-to-apples analogue of what DS measured) -- which needs a new server-side debug field (raw logical indexer top-k or req_to_token export) since enable_return_indexer_topk surfaces only physical slots; the task constraints forbid new production code, and --enable-deterministic-inference disables DSA selection. NET: the +-0.5pp edge bar cannot be evaluated against the shipped DSA default with client-only tools at this op-point.",
+  "status": "VALID_DATA_INCONCLUSIVE_VERDICT",
+  "problems": []
+}
