@@ -43,7 +43,43 @@ record is `development/loop11b/plan.md`; this queue is the live status ledger (c
 
 ## Kickoff ideas / side issues (append-only; no silent deletions)
 
-- (none yet)
+Discovered by the task3 codex methodology review (queued — none block M-A; all bind to task8/M-B).
+Full review preserved at `development/loop11b/artifacts/task3_codex_methodology_review.md`.
+
+- SI-1 (task8, AC-9): `bench_serving.py` does NOT dump per-request `cached_tokens` / `cached_tokens_details`
+  (they exist in `meta_info`, tokenizer_manager.py:1758, but RequestFuncOutput drops them, bench_serving.py:96/1901).
+  → add a request-metadata sidecar so prefix-reuse (~55%) is captured from request metadata, not inferred from GSP shape.
+- SI-2 (task8, AC-5): no per-request/aggregate `total_tokens` for the no-op proof; comparator reads
+  `selected_tokens_mean`/`dense_fallback_total`/`total_tokens_mean` (benchmark_compare.py:255) and DS emits
+  `selected_tokens`/`sparsity_rate`/`dense_fallback` (metrics.py) → add `total_tokens` or derive (recorded formula).
+- SI-3 (task8, AC-3/DEC-6): `--ac11` currently GATES the DS/DSA ratio and exits nonzero on ratio failure
+  (benchmark_compare.py:1323) — conflicts with DEC-6 (judge DS on the ABSOLUTE SLO; ratio is competitive-position
+  reporting). → make the ratio report-only (keep the absolute 30/22 gate) AND lower `AC11_MIN_TRIALS` 3→2 (bc.py:310;
+  refusal checks use only that constant, bc.py:1199; `_median` handles even counts, bc.py:319).
+- SI-4 (task8, DEC-4): `--ac11` reports medians only (`_median_metrics`, bc.py:326); DEC-4 needs min/median/max
+  for decode-TPS, P99 TTFT, achieved concurrency, throughput.
+- SI-5 (task8, AC-3): aggregate `output_throughput`/`total_throughput` emitted by bench_serving (bench_serving.py:1848)
+  but not carried by the comparator → report (NOT gate).
+- SI-6 (task8, AC-9): `_bench_meta_writer.py` sidecar lacks boot-order + GPU thermal/clock → extend for the run-order ledger.
+- SI-7 (task8+task10): `benchmark.sh`/`benchmark_baseline.sh` default `TRIALS=3` + "independent trials" wording
+  → 2 repeated stability trials + reworded (the wording fix is also a task10 UX-A item).
+
+## Sweep methodology (task8/M-B design — distilled from task3 codex review)
+
+- **Run order:** one TP=8 server at a time. Per op-point, paired adjacent boots, alternate side by trial:
+  `c{16,32,64} t1: DSA→DS`, `t2: DS→DSA`; same per-conc seed (213/431/31234). Block-scheduled (all DSA then all DS)
+  → LABEL unpaired, diagnostic-only. Log per boot: op_point_id, pair_id, logical_trial_id, side, boot_sequence,
+  exact cmd/env (prove no `expandable_segments`), `/server_info` snapshot, GPU thermal/clock at 4 points, log+JSONL paths.
+- **Two op-points, SEPARATE comparator invocations + artifact trees** (do not mix in one `--ac11`):
+  `production_envelope` (DS 0.8 / DSA 0.85), `same_memory_080` (both 0.8). Comparator ignores cross-side mem
+  (bc.py:527) but enforces within-side constant (bc.py:900). Both radix-ON (refuses mismatch, bc.py:286).
+- **Recall comparability:** boot DS recall-oracle (eager), run
+  `loop7/niah_oracle_sweep.py --lengths 1024 4096 16384 --num 20 --decode-steps 4`, gate with
+  `loop9/oracle_recall_summary.py --baseline loop9/runs/20260610_m0/recall_baseline.json --max-delta-pp 0.5`
+  (fails on length-set / per-length sample-count mismatch; baseline = 6240 samples/length × 20 trials). If served-fp8
+  is not comparable, define + record a fresh served-fp8 baseline.
+- **Admission cap:** if DS achieved-conc < nominal (bc.py:1017), LABEL the row admission-capped, judge DS vs the
+  absolute SLO, treat lower-conc reruns as diagnostics only.
 
 ## Decisions in force (owner-resolved; see plan.md "Pending User Decisions")
 
