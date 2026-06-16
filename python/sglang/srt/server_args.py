@@ -6087,7 +6087,7 @@ class ServerArgs:
             "--enable-double-sparsity",
             action="store_true",
             help=(
-                "Enable standalone Double Sparsity selection for DeepSeek-V3.2 (FP8). "
+                "Enable standalone Double Sparsity selection (e.g. GLM-5.1-FP8). "
                 "Mutually exclusive with --enable-hisparse and does NOT require PD disaggregation."
             ),
         )
@@ -6100,7 +6100,7 @@ class ServerArgs:
                 "JSON string for Double Sparsity. Required fields: top_k, page_size, "
                 "channel_mask_path, device_buffer_size. Example: "
                 '\'{"top_k": 2048, "page_size": 64, '
-                '"channel_mask_path": "/models/dsv32-fp8-channel-mask.safetensors", '
+                '"channel_mask_path": "/cluster-storage/models/glm51-fp8-channel-mask-s256.safetensors", '
                 '"device_buffer_size": 4096}\'.'
             ),
         )

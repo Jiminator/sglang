@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bench_serving sweep — gsp, 4096 ISL / 512 OSL, ~55% prefix cache hit
 #
-# Canonical client workload for zai-org/GLM-5.1 (FP8) per development/CLIENT_SLOS.md
+# Canonical client workload for zai-org/GLM-5.1 (FP8) per development/SLOS.md
 # (rebased 2026-06-07): 4096 ISL, 512 OSL, max-concurrency 64 / min 16, ~55% prefix
 # cache hit. The model is resolved server-side, so this driver is model-agnostic —
 # point PORT at a GLM-5.1 (FP8) server (DS or native-DSA). bench_serving now emits
@@ -52,9 +52,11 @@ declare -A SEEDS=( [16]=213 [32]=431 [64]=31234 )
 # Override CONCURRENCIES (space-separated) for a narrower sweep.
 CONCURRENCIES="${CONCURRENCIES:-16 32 64}"
 
-# AC-11 spec: >= 3 independent trials per concurrency, fixed seed family,
-# 120s warmup, 600s measurement window. TRIALS=3 is the minimum the
-# comparator accepts; operators can override for additional headroom.
+# AC-11 spec (DEC-4): the locked sweep is 2 repeated run-to-run-stability trials
+# per concurrency at the SAME per-conc seed (these are repeated measurements for
+# variance, NOT independent samples — report min/median/max), 120s warmup, 600s
+# measurement window. The comparator floor is now 2 trials; this script keeps a
+# default of 3 for extra headroom (operators can override TRIALS).
 TRIALS="${TRIALS:-3}"
 WARMUP_SECONDS="${WARMUP_SECONDS:-120}"
 MEASUREMENT_WINDOW_S="${MEASUREMENT_WINDOW_S:-600}"

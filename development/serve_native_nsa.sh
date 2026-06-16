@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Reference SGLang server invocation for the native_nsa baseline.
 #
-# Targets DeepSeek-V3.2 (FP8) on a single H200 node, 8-way TP, page=64,
+# Targets GLM-5.1-FP8 on a single H200 node, 8-way TP, page=64,
 # matching the locked operating point. Pair with
 # development/benchmark_baseline.sh to populate the native_nsa column of the
 # two-column comparison.
@@ -46,13 +46,14 @@ HOST="${HOST:-127.0.0.1}"
 TP_SIZE="${TP_SIZE:-8}"
 KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-fp8_e4m3}"
 PAGE_SIZE="${PAGE_SIZE:-64}"
-# DeepSeek-V3.2 FP8 sharded TP=8 is ~84 GB of weights per rank. The stock
+# GLM-5.1-FP8 sharded TP=8 is ~84 GB of weights per rank. The stock
 # default mem-fraction (0.897) reserves the rest for the KV pool and leaves
 # almost no physical headroom for the flashmla attention kernel's workspace
 # (~1 GB) at the 4096-ISL benchmark shape, so the baseline OOMs the moment
 # bench_serving drives real traffic. 0.85 leaves ~20 GB/rank of runtime
-# headroom while keeping a large KV pool. (The DS launcher uses 0.6 because
-# it additionally reserves a per-rank TokenLabelTable; the baseline does not.)
+# headroom while keeping a large KV pool. (The DS launcher serves table-free
+# at 0.8 — the absorbed-latent selector reads the resident MLA latent, so
+# there is no per-rank TokenLabelTable to reserve.)
 MEM_FRACTION_STATIC="${MEM_FRACTION_STATIC:-0.85}"
 # Fixed server seed so a paired DS-vs-baseline SLO comparison is seed-matched
 # (the only intended column differences are DS enablement/config + DS mem fraction).

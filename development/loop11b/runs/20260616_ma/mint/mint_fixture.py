@@ -4,7 +4,7 @@ loop11b port of loop-11 R27 write_v2_artifact.py: same FAIL-CLOSED logic (re-der
 pass flag from the RAW gate verdicts and REFUSES — returns non-zero, writes nothing —
 unless every gate is a real PASS), but the ServerArgs it builds points double_sparsity_config
 at the REGENERATED channel mask so radix_fixture_config_fingerprint pins
-channel_mask_content_sha256 == a4be98c4c4989ea828b6ac128968af72336994b04cc1b6086408dbb208aa800d
+channel_mask_content_sha256 == 35155ac46ad79fa82e531138434ff35708e2d8c2932889323a21a455342a9b00
 (DEC-1: the fingerprint pins the tensor-CONTENT sha, not the file path / full-file sha).
 Calls validator.write_radix_fixture_state with the EXACT serving ServerArgs for this op-point
 so the config fingerprint matches the no-override boot.

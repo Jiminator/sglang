@@ -113,7 +113,7 @@ _DEFAULT_ANCHOR_MODE = "off"
 _DEFAULT_ANCHOR_BUDGET = 0
 
 
-_DEFAULT_TOP_K = 2048           # matches DeepSeek-V3.2 index_topk (max tokens per request)
+_DEFAULT_TOP_K = 2048           # matches the model's intrinsic index_topk (max tokens per request)
 # Default compact selector score width: a prefix window comfortably covering
 # the served decode windows while shrinking the per-call cross-TP score
 # reduce ~40x vs the full req_to_token width. The full width is always

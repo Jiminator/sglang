@@ -12,22 +12,26 @@ blocks of 512 tokens each. ``--dataset`` overrides with a path to an external
 newline-delimited corpus. ``--allow-synthetic`` enables a small NIAH-shaped
 synthetic fallback reserved for CI and developer smoke tests only.
 
-Production recipe (DeepSeek-V3.2 on H200 cluster, FP8 serving) — the exact
-command that produced the committed mask (see
-``runs/20260528_dsv32_mvp/calibration_provenance.md``):
+Production recipe (GLM-5.1-FP8 on H200 cluster, FP8 serving) — the loop8 DEC-3
+recipe that produced the committed mask (see
+``development/loop11b/run_calibrate.sh`` + the calibration provenance):
 
     python -m sglang.srt.layers.attention.double_sparsity.calibrate \\
-        --model /cluster-storage/models/deepseek-ai/DeepSeek-V3.2 \\
-        --dtype bfloat16 --kv-cache-dtype fp8_e4m3 --tp 8 \\
-        --output /models/dsv32-fp8-channel-mask.safetensors \\
-        --label-dim 16 --page-size 64 --num-samples 256 --block-size 512 \\
+        --model /cluster-storage/models/.../GLM-5.1-FP8 \\
+        --dtype fp8_e4m3 --kv-cache-dtype fp8_e4m3 --tp 8 \\
+        --output /cluster-storage/models/glm51-fp8-channel-mask-s256.safetensors \\
+        --label-dim 32 --page-size 64 --num-samples 256 --block-size 512 \\
         --seed 42 \\
-        --dataset runs/20260528_dsv32_mvp/calib_corpus_pileval.txt -v
+        --dataset development/loop11b/artifacts/calib_corpus_pileval.txt -v
+
+(``--label-dim 32`` is GLM-proportionate — it covers GLM's wider
+``qk_nope_head_dim``; the earlier DeepSeek-V3.2 mask used ``--dtype bfloat16
+--label-dim 16``. ``--dtype`` is a model-load hint only; see below.)
 
 ``--dtype`` is a recorded forward-stability hint only — it no longer feeds the
 load: the checkpoint is loaded in its native (FP8) dtype via
 ``torch_dtype="auto"`` and HF/Accelerate shards it across the visible GPUs via
-``device_map="auto"`` (V3.2 FP8 is ~671 GB and does not fit one rank). ``--tp``
+``device_map="auto"`` (a large FP8 checkpoint does not fit one rank). ``--tp``
 is likewise recorded metadata; it does NOT spawn a distributed group, so set it
 to match the serving TP (8) for provenance fidelity while ``device_map="auto"``
 does the actual sharding. ``--kv-cache-dtype`` is what goes into the mask
@@ -355,10 +359,11 @@ def _load_calibration_model(model_path: str, use_cuda: bool):
     """Load the calibration model + tokenizer + resolved config.
 
     Loads the checkpoint in its native dtype (no bf16/fp16 upcast) and lets
-    HF/Accelerate shard modules across the visible GPUs. DeepSeek-V3.2 is FP8
-    block-quantized on disk (~671GB); a bf16 load would roughly double the
-    footprint and pin the model to one device, neither of which fits one H200.
-    ``--dtype`` is the recorded forward-stability hint and no longer feeds the load.
+    HF/Accelerate shard modules across the visible GPUs. A large FP8
+    block-quantized checkpoint (e.g. GLM-5.1-FP8) loaded as bf16 would roughly
+    double the footprint and pin the model to one device, neither of which fits
+    one H200. ``--dtype`` is the recorded forward-stability hint and no longer
+    feeds the load.
     """
     try:
         from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -856,7 +861,7 @@ def calibrate(args: argparse.Namespace) -> str:
 def _make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="python -m sglang.srt.layers.attention.double_sparsity.calibrate",
-        description="Calibrate the Double Sparsity channel mask file for DeepSeek-V3.2 (FP8).",
+        description="Calibrate the Double Sparsity channel mask file (e.g. GLM-5.1-FP8).",
     )
     p.add_argument("--model", required=True, help="HuggingFace ID or local path.")
     p.add_argument(
@@ -935,7 +940,7 @@ def _make_parser() -> argparse.ArgumentParser:
             "--model is not a local path. Reserved for CI fixtures and dev "
             "smoke tests; the resulting mask is NOT valid for production "
             "serving. Without this flag a HuggingFace repo ID (e.g. "
-            "deepseek-ai/DeepSeek-V3.2) is loaded via "
+            "zai-org/GLM-5.1-FP8) is loaded via "
             "AutoModelForCausalLM.from_pretrained."
         ),
     )

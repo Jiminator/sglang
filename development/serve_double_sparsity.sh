@@ -2,7 +2,7 @@
 # Reference SGLang server invocation for the standalone Double Sparsity path.
 #
 # Mirrors development/serve_native_nsa.sh but adds --enable-double-sparsity
-# and --double-sparsity-config. Targets DeepSeek-V3.2 (FP8) on a single H200
+# and --double-sparsity-config. Targets GLM-5.1-FP8 on a single H200
 # node, 8-way TP, page=64. Double Sparsity and HiSparse are mutually
 # exclusive: enabling both at startup is rejected by the launch validator.
 #
@@ -17,12 +17,11 @@
 #   --disable-piecewise-cuda-graph
 #   --page-size 64
 #
-# DEV-ONLY launcher. The DS startup validator refuses --enable-double-sparsity
-# The page-table adapter is now in place; production deployments boot
-# without any DS dev-override environment variable. The previous
-# adapter-bypass and placeholder-selector overrides were removed;
-# production must call bind_runtime_data with a real channel mask +
-# page signature table before serving.
+# PRODUCTION launcher for table-free Double Sparsity on GLM-5.1-FP8. Boots radix-on via
+# the committed content-hash radix fixture (no dev override needed): the validator binds
+# the calibrated channel mask and authorizes radix-on for this exact config (DEC-1 pins the
+# mask's tensor-content SHA). SGLANG_DS_RADIX_OVERRIDE=1 is needed ONLY to (re)mint the radix
+# fixture (the DEC-12 probes require radix reuse) — see development/loop11b/RUNBOOK.md.
 
 set -euo pipefail
 

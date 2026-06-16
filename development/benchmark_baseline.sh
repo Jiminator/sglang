@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bench_serving sweep — native_nsa baseline (DeepSeek-V3.2 FP8, single-instance)
+# bench_serving sweep — native_nsa baseline (GLM-5.1-FP8, single-instance)
 #
 # Mirrors development/benchmark.sh exactly except for the output file tagging
 # (MODE=native_nsa) so the downstream two-column report (development/
@@ -48,8 +48,10 @@ declare -A SEEDS=( [16]=213 [32]=431 [64]=31234 )
 # Default sweep: AC-9 plan-locked conc 16 / 32 / 64 (matches benchmark.sh).
 CONCURRENCIES="${CONCURRENCIES:-16 32 64}"
 
-# AC-11 spec: >= 3 independent trials per concurrency. TRIALS=3 is the
-# minimum the comparator accepts.
+# AC-11 spec (DEC-4): 2 repeated run-to-run-stability trials per concurrency at
+# the SAME per-conc seed (repeated measurements for variance, NOT independent
+# samples — report min/median/max). The comparator floor is now 2 trials; this
+# script keeps a default of 3 for extra headroom (matches benchmark.sh).
 TRIALS="${TRIALS:-3}"
 WARMUP_SECONDS="${WARMUP_SECONDS:-120}"
 MEASUREMENT_WINDOW_S="${MEASUREMENT_WINDOW_S:-600}"

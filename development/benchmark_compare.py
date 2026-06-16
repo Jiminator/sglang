@@ -30,15 +30,18 @@ The tool exposes two CLI modes:
 
 * Single-trial AC-7/AC-8 report (legacy): pass ``--baseline`` and
   ``--ds`` to compare one DSA JSONL against one DS JSONL.
-* Three-trial AC-11 directional report: pass ``--ac11`` along with
+* AC-11 directional report: pass ``--ac11`` along with
   ``--ac11-baseline-results`` and ``--ac11-ds-results`` lists. Each
-  side requires >= 3 trial JSONLs per concurrency; the comparator
-  groups by concurrency, takes per-field medians, and enforces the
-  AC-11 gates (DS TPS >= 95% of DSA TPS; DS P99 TTFT <= 1.10 * DSA
-  P99 TTFT). Exit codes: 0 = all gates pass, 3 = at least one gate
-  failed (Markdown output names the failing concurrencies + emits a
-  profiling obligation), 2 = input refusal (too few trials, missing
-  concurrency, or mismatched per-trial operating point).
+  side requires >= 2 trial JSONLs per concurrency (DEC-4: 2 repeated
+  run-to-run-stability trials at the same per-conc seed, NOT independent
+  samples); the comparator groups by concurrency and takes per-field
+  medians. The GATE is the absolute client SLO (DS decode-TPS p50 >= 30
+  AND P99 TTFT < 22 s); the DS/DSA TPS and P99-TTFT ratios are REPORTED
+  for competitive position only, NOT gated (DEC-6). Exit codes: 0 = SLO
+  gate passes, 3 = at least one gate failed (Markdown output names the
+  failing concurrencies + emits a profiling obligation), 2 = input
+  refusal (too few trials, missing concurrency, or mismatched per-trial
+  operating point).
 """
 
 from __future__ import annotations
@@ -85,7 +88,7 @@ class RunMetrics:
     # Achieved (effective) concurrency that bench_serving actually sustained
     # (the JSONL ``concurrency`` float), as opposed to the nominal
     # ``--max-concurrency``. Surfaced in the AC-11 report so a DS column that
-    # is admission/queue-bound (e.g. DS at mem 0.6 with a small KV pool) is
+    # is admission/queue-bound (e.g. DS at mem 0.8 vs DSA at 0.85) is
     # visible against DSA's near-nominal concurrency, not hidden (#F).
     achieved_concurrency: Optional[float] = None
 
@@ -528,12 +531,13 @@ _DS_ONLY_SERVER_ARG_KEYS = frozenset({
 # comparison and so must not refuse the run:
 #   - ``random_seed``: a per-boot RNG seed (pure telemetry; the workload seed
 #     is matched separately via the sidecar ``seed``).
-#   - ``mem_fraction_static``: DS and DSA legitimately differ here — DS
-#     reserves a per-rank TokenLabelTable on top of the V3.2 FP8 weights and
-#     serves at 0.6, while the baseline serves at ~0.85. This asymmetry is the
-#     root of the effective-vs-nominal concurrency gap, which the AC-11 report
-#     surfaces explicitly (achieved concurrency per side) rather than hiding —
-#     it is NOT a locked Option B field, so it is recorded, not used to refuse.
+#   - ``mem_fraction_static``: DS and DSA legitimately differ here — table-free
+#     DS serves at 0.8 (the absorbed-latent selector reads the resident MLA
+#     latent, so there is no per-rank TokenLabelTable to reserve), while the
+#     baseline serves at ~0.85. This asymmetry is the root of the effective-vs-
+#     nominal concurrency gap, which the AC-11 report surfaces explicitly
+#     (achieved concurrency per side) rather than hiding — it is NOT a locked
+#     Option B field, so it is recorded, not used to refuse.
 _AC11_IGNORED_SERVER_ARG_KEYS = frozenset({
     "random_seed",
     "mem_fraction_static",
@@ -921,8 +925,8 @@ def _validate_per_side_agreement(metas: List[Dict], paths: List[str], *, side: s
                 f"with first trial {paths[0]}."
             )
         # mem_fraction_static is recorded-not-matched ACROSS sides (DSA 0.85
-        # vs DS 0.6 is the sanctioned asymmetry, so it is excluded from the
-        # normalized projection above), but it must be CONSTANT WITHIN a side
+        # vs table-free DS 0.8 is the sanctioned asymmetry, so it is excluded
+        # from the normalized projection above), but it must be CONSTANT WITHIN a side
         # — otherwise the comparator would median across per-side mismatched
         # launch knobs (e.g. DSA 0.85/0.80/0.75) without refusing.
         m_memfrac = (m.get("server_args") or {}).get("mem_fraction_static")
@@ -1014,9 +1018,9 @@ def _render_ac11_markdown(
             overall_fail_reasons.append(f"conc={conc}: {gate['reason']}")
     rows.append("")
 
-    # Effective-vs-nominal concurrency (#F): DS at mem 0.6 reserves a per-rank
-    # TokenLabelTable on top of the V3.2 FP8 weights, so its KV pool is smaller
-    # and it can be admission/queue-bound at high nominal concurrency. Surface
+    # Effective-vs-nominal concurrency (#F): table-free DS serves at mem 0.8 vs
+    # DSA's 0.85, so its KV pool is slightly smaller and it can be admission/
+    # queue-bound at high nominal concurrency. Surface
     # the ACHIEVED concurrency each side actually sustained so a TTFT gap that
     # is partly an admission artifact (not pure per-request latency) is visible.
     rows.append("## Effective vs nominal concurrency (#F)")
@@ -1376,21 +1380,22 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--ac11",
         action="store_true",
         help=(
-            "AC-11 directional comparator mode. Accepts >=3 trial JSONLs per "
-            "mode per concurrency via --ac11-baseline-results / "
-            "--ac11-ds-results; computes per-concurrency medians and "
-            "enforces DS TPS >= 0.95 * DSA TPS and DS P99 TTFT <= 1.10 * "
-            "DSA P99 TTFT. Exit 0 on pass, 3 on gate failure, 2 on input "
+            "AC-11 directional comparator mode. Accepts >=2 trial JSONLs per "
+            "mode per concurrency (DEC-4) via --ac11-baseline-results / "
+            "--ac11-ds-results; computes per-concurrency medians and gates on "
+            "the absolute client SLO (DS decode-TPS p50 >= 30 AND P99 TTFT < "
+            "22 s). The DS/DSA TPS and P99-TTFT ratios are reported, not gated "
+            "(DEC-6). Exit 0 on pass, 3 on gate failure, 2 on input "
             "refusal (too few trials, mismatched concurrency set)."
         ),
     )
     parser.add_argument(
         "--ac11-baseline-results", nargs="+", default=None,
-        help="AC-11 mode only: paths to >=3 DSA baseline trial JSONLs per concurrency.",
+        help="AC-11 mode only: paths to >=2 DSA baseline trial JSONLs per concurrency (DEC-4).",
     )
     parser.add_argument(
         "--ac11-ds-results", nargs="+", default=None,
-        help="AC-11 mode only: paths to >=3 DS trial JSONLs per concurrency.",
+        help="AC-11 mode only: paths to >=2 DS trial JSONLs per concurrency (DEC-4).",
     )
     parser.add_argument(
         "--baseline", default=None,
