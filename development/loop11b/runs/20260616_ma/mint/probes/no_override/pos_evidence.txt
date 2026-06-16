@@ -1,0 +1,5 @@
+[1] POSITIVE no-override radix-ON boot (GRAPH mode): status=ACCEPTED smoke=OK:Paris. The city is located on the River Seine in the north o
+    disable_radix_cache=False  fixture_artifact=set:/sgl-workspace/sglang/development/serve_double_sparsity_radix_fixture.json  warm_prompt_tokens=1135  warm_cached_tokens=1088
+    artifact=/sgl-workspace/sglang/development/serve_double_sparsity_radix_fixture.json sha256=1f66348ca382753717aff06ebb933ee5b91d379600823ce4b8d9725a5c2dd60c
+    mask=/cluster-storage/models/glm51-fp8-channel-mask-s256.safetensors content_sha256=35155ac46ad79fa82e531138434ff35708e2d8c2932889323a21a455342a9b00
+    authorizing WARNING: [2026-06-16 15:10:38] DS radix-cache fixture recorded as PASSED for this ServerArgs; validator will now accept --disable-radix-cache removal. Source: record_radix_fixture_passed(). artifact=/sgl-workspace/sglang/development/serve_double_sparsity_radix_fixture.json artifact_sha256=1f66348ca382753717aff06ebb933ee5b91d379600823ce4b8d9725a5c2dd60c
