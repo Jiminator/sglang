@@ -92,6 +92,13 @@ fi
 
 mkdir -p "${LOG_DIR}"
 
+# Match the locked op-point (and serve_double_sparsity.sh) so the AC-11 comparator accepts the
+# cross-side operating point: cap running requests + captured CUDA-graph batch sizes at the
+# workload concurrency ceiling. The stock DSA defaults leave these uncapped (cuda_graph_max_bs
+# 512 / max_running_requests auto), which a DS-vs-DSA comparison must not differ on.
+MAX_RUNNING_REQUESTS="${MAX_RUNNING_REQUESTS:-64}"
+CUDA_GRAPH_MAX_BS="${CUDA_GRAPH_MAX_BS:-64}"
+
 LOG_FILE="${LOG_DIR}/server_native_nsa_$(date +%Y%m%d-%H%M%S).log"
 echo ">>> Starting native_nsa baseline server"
 echo "    model        = ${MODEL_PATH}"
@@ -111,6 +118,8 @@ exec python3 -m sglang.launch_server \
   --tp-size "${TP_SIZE}" \
   --kv-cache-dtype "${KV_CACHE_DTYPE}" \
   --mem-fraction-static "${MEM_FRACTION_STATIC}" \
+  --max-running-requests "${MAX_RUNNING_REQUESTS}" \
+  --cuda-graph-max-bs "${CUDA_GRAPH_MAX_BS}" \
   --page-size "${PAGE_SIZE}" \
   --dsa-prefill-backend flashmla_kv \
   --dsa-decode-backend flashmla_kv \
