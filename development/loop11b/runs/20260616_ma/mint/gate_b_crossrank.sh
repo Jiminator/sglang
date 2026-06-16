@@ -40,7 +40,7 @@ run_path radix_off --disable-radix-cache; OFF_RC=$?
 echo "=== no-dense-fallback scan $(date -u +%H:%M:%SZ) ==="
 NDF_RC=99
 if [[ -f "$NDF" ]]; then
-  python "$NDF" --capture-dirs "$OUT/cap_radix_on" "$OUT/cap_radix_off" \
+  python "$NDF" --capdirs "$OUT/cap_radix_on" "$OUT/cap_radix_off" \
     --out "$HERE/probes/gate_b_no_dense_fallback_verdict.json" 2>&1 | tee "$OUT/ndf.log"
   NDF_RC=${PIPESTATUS[0]}
 else
