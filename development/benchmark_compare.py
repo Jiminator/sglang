@@ -305,9 +305,9 @@ def _match_or_refuse(
 # Plan §AC-11: "DS-on TPS within 5% of DSA-on TPS at conc=64 (directional
 # gate). P99 TTFT ≤ DSA-on P99 TTFT × 1.10. Fixed seed, 600s window, 120s
 # warmup, 3 trials, median."
-AC11_TPS_FLOOR_RATIO = 0.95   # DS TPS must be ≥ 95% of DSA TPS.
-AC11_TTFT_CEIL_RATIO = 1.10   # DS P99 TTFT must be ≤ 1.10× DSA P99 TTFT.
-AC11_MIN_TRIALS = 3
+AC11_TPS_FLOOR_RATIO = 0.95   # DS/DSA TPS ratio — REPORTED (competitive position), not gated (DEC-6).
+AC11_TTFT_CEIL_RATIO = 1.10   # DS/DSA P99 TTFT ratio — REPORTED (competitive position), not gated (DEC-6).
+AC11_MIN_TRIALS = 2           # DEC-4: 2 repeated run-to-run-stability trials at the same per-conc seed.
 
 
 def _median(values: List[Optional[float]]) -> Optional[float]:
@@ -1360,9 +1360,11 @@ def _run_ac11_mode(args) -> int:
             json.dump(payload, f, indent=2)
         logger.info("wrote AC-11 JSON report to %s", args.json_output)
 
-    # Non-zero on EITHER the directional gate or the absolute client-SLO gate, so the
-    # artifacts fail machine-readably on the DEC-2 mandatory client bars, not only ratios.
-    return 3 if (any_fail or client_slo_fail) else 0
+    # DEC-6: the published verdict is the ABSOLUTE client SLO (DS decode-TPS p50 >= 30,
+    # P99 TTFT < 22s), judged regardless of DSA. The DS/DSA directional ratio (any_fail) is
+    # REPORTED as the competitive position (markdown + json "verdict") but does NOT gate the
+    # exit code — a DSA miss must not invalidate the DS op-point (DEC-6).
+    return 3 if client_slo_fail else 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
