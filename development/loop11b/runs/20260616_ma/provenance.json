@@ -1,0 +1,84 @@
+{
+  "artifact": "glm51-fp8-channel-mask-s256.safetensors",
+  "purpose": "Offline channel mask (channel_selection S_h, channel_weights w_c) consumed query-side by table-free Double Sparsity on GLM-5.1-FP8. Table-free scoring removed the per-token TokenLabelTable, NOT the mask.",
+  "regenerated_on": "2026-06-16",
+  "node": "fresh 8x NVIDIA H200 (143771 MiB/GPU), different physical node than loop 11 (released)",
+  "mask": {
+    "serving_path": "/cluster-storage/models/glm51-fp8-channel-mask-s256.safetensors",
+    "size_bytes": 639552,
+    "content_sha256": "a4be98c4c4989ea828b6ac128968af72336994b04cc1b6086408dbb208aa800d",
+    "fullfile_sha256": "832c457abe70061d9fd2a0bd7a79efd11765319cfb0a8ab87d0cbeb4d572496a",
+    "created_at": "2026-06-16T12:32:56.444007+00:00",
+    "tensors": {
+      "channel_selection": "int32 [78, 64, 16]",
+      "channel_weights": "float32 [78, 64, 16]"
+    },
+    "metadata": {
+      "dtype": "fp8_e4m3",
+      "head_dim": 192,
+      "page_size": 64,
+      "label_dim": 16,
+      "seed": 42,
+      "num_samples": 256,
+      "block_size": 512,
+      "schema_version": 1,
+      "calibration_source": "real"
+    },
+    "hash_note": "fullfile_sha256 is NOT reproducible across runs: save_channel_mask embeds created_at in the safetensors metadata. content_sha256 (tensor bytes only) IS reproducible for the same calibration and is what DEC-1 pins."
+  },
+  "model": {
+    "name": "GLM-5.1-FP8",
+    "snapshot": "f396cf805182f4ca10fa675e1a99815b3ca384db",
+    "path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
+    "model_type": "glm_moe_dsa",
+    "num_hidden_layers": 78,
+    "num_attention_heads": 64,
+    "quantization": "fp8 e4m3, weight_block_size [128,128]"
+  },
+  "command": "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python3 -m sglang.srt.layers.attention.double_sparsity.calibrate --model /cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db --dtype bfloat16 --kv-cache-dtype fp8_e4m3 --tp 8 --label-dim 16 --page-size 64 --num-samples 256 --block-size 512 --seed 42 --dataset development/loop11b/artifacts/calib_corpus_pileval.txt --output /cluster-storage/models/glm51-fp8-channel-mask-s256.safetensors",
+  "runner": "development/loop11b/run_calibrate.sh {dryrun|full}",
+  "tp_note": "--tp 8 is provenance-only; calibrate.py runs a single-process forward pass and device_map='auto' shards the load across all 8 GPUs. No TP=8 distributed group is initialized; no TP=8 calibration semantics are implied.",
+  "kv_cache_dtype": "fp8_e4m3 (recorded metadata; must match the serving kv-cache-dtype)",
+  "corpus": {
+    "path": "development/loop11b/artifacts/calib_corpus_pileval.txt",
+    "tracked": false,
+    "tracked_note": "gitignored (.gitignore:283 artifacts/); committed-by-reference via the sha256 below + the reproducer.",
+    "sha256": "46d72075ed1d64831cf6777cf328b85ac025bb76cf36cc87675bfe5afa6535f0",
+    "size_bytes": 3692134,
+    "docs": 300,
+    "source": "mit-han-lab/pile-val-backup, validation split, in-order stream (deterministic)",
+    "filter": "first 300 docs with len(text.strip()) >= 1500 chars, whitespace-collapsed to one doc per line",
+    "reproducer": "development/loop11b/build_corpus.py",
+    "reproducibility_note": "byte-identical (same sha256) to the prior DeepSeek-V3.2 calibration corpus, confirming deterministic regeneration; the external --dataset path tokenizes one doc per line (block_size is recorded but applies only to the default pile-val block path)."
+  },
+  "preflight": {
+    "dry_run_blocks": 1,
+    "log": "development/loop11b/artifacts/calib_dryrun_20260616-121431.log",
+    "placement_report": "Loaded model parameter report: 2484 tensors; dtype histogram={'torch.bfloat16': 624, 'torch.float8_e4m3fn': 930, 'torch.float32': 930}; device histogram cuda:0..cuda:7; float8_present=True.",
+    "hooks": "DRY RUN complete: calibration hooks fired on all 78 layers (H=64, head_dim=192) over 1 block.",
+    "result": "PASS (fail-closed FP8 placement gate: no off-GPU params, multi-GPU sharding, float8 present)"
+  },
+  "full_run": {
+    "log": "development/loop11b/artifacts/calib_full_20260616-122345.log",
+    "result": "Wrote channel mask (content_sha256=a4be98c4c498, L=78 H=64 label_dim=16); exit 0."
+  },
+  "allocator_policy": {
+    "calibration": "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True (avoids the FP8 mid-load fragmentation OOM; the failed alloc is small while GiBs sit reserved-but-unallocated).",
+    "serving": "expandable_segments MUST NOT be set for serving (breaks custom-all-reduce IPC at GLM TP=8: cudaIpcGetMemHandle does not work on VMM memory). Calibration and serving are separate processes; the serve scripts also strip an inherited expandable_segments defensively."
+  },
+  "environment": {
+    "python": "3.12.3",
+    "torch": "2.11.0+cu130",
+    "cuda_torch": "13.0",
+    "driver": "580.105.08",
+    "sglang": "0.0.0.dev1+g11605767e",
+    "transformers": "5.8.1",
+    "accelerate": "1.14.0",
+    "datasets": "4.8.5",
+    "zstandard": "0.25.0",
+    "safetensors": "0.7.0"
+  },
+  "git_head": "5ac86f5cf7dc112d0a22bbb012f4b9bd5989e3ca",
+  "authorization": "RE-EARNED (not inherited). The released-node mask is gone; this is a freshly calibrated mask with a NEW tensor content_sha256 (a4be98c4...) that differs from the loop-11 fixture's pinned hash (340b6c0b..., which was a full-file SHA of the old mask). Under owner DEC-1 the validator now pins the tensor-content SHA + config fingerprint, so the radix-on fixture is RE-MINTED against this mask via the DEC-12 correctness probes. The previously committed serve_double_sparsity_radix_fixture.json (old path + full-file keys) no longer authorizes and is regenerated.",
+  "recall_comparability": "PENDING: the regenerated mask must clear AC-5 recall@2048 (+/-0.5pp vs the frozen loop9/runs/20260610_m0/recall_baseline.json, matched length-set + per-length sample-count) at first DS boot; recorded here after the served recall oracle runs."
+}
