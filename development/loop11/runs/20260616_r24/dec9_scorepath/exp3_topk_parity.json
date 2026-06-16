@@ -1,0 +1,60 @@
+{
+  "probe": "DEC9_scorepath_exp3_radix_vs_fallback_topk",
+  "max_top_k": 2048,
+  "comparisons": [
+    {
+      "dataset": "real",
+      "pair": "radix_vs_fallback",
+      "rows": 156,
+      "rows_membership_identical": 156,
+      "rows_order_identical": 156,
+      "total_member_symdiff": 0,
+      "first_divergence": null
+    },
+    {
+      "dataset": "real",
+      "pair": "radix_vs_reference",
+      "rows": 156,
+      "rows_membership_identical": 156,
+      "rows_order_identical": 156,
+      "total_member_symdiff": 0,
+      "first_divergence": null
+    },
+    {
+      "dataset": "synthetic_tie",
+      "pair": "radix_vs_fallback",
+      "rows": 4,
+      "rows_membership_identical": 4,
+      "rows_order_identical": 4,
+      "total_member_symdiff": 0,
+      "first_divergence": null
+    },
+    {
+      "dataset": "synthetic_tie",
+      "pair": "radix_vs_reference",
+      "rows": 4,
+      "rows_membership_identical": 4,
+      "rows_order_identical": 4,
+      "total_member_symdiff": 0,
+      "first_divergence": null
+    }
+  ],
+  "real_rows": {
+    "n_rows": 156,
+    "width": 6093,
+    "ranks": [
+      0,
+      4
+    ]
+  },
+  "real_lengths": {
+    "radix_vs_fallback_len_mismatches": 0,
+    "radix_vs_reference_len_mismatches": 0
+  },
+  "synthetic_tie_stress": {
+    "width": 4096,
+    "bs": 4,
+    "note": "plateau of equal scores across the k=2048 cutoff forces tie-break"
+  },
+  "verdict": "IDENTICAL \u2014 radix, fallback, and reference top-k agree on membership and order"
+}

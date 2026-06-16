@@ -1,0 +1,19 @@
+{
+  "probe": "P4_no_dense_fallback",
+  "top_k": 2048,
+  "capdirs": [
+    "/sgl-workspace/sglang/development/loop11/runs/20260616_r25/radix_authorization_v2/gate_bc/cap_radix_on",
+    "/sgl-workspace/sglang/development/loop11/runs/20260616_r25/radix_authorization_v2/gate_bc/cap_edge"
+  ],
+  "files_scanned": 488,
+  "rows_checked": 38064,
+  "rows_full_sparse_budget(seq>=top_k,vl==top_k)": 19344,
+  "rows_short_context(seq<top_k)": 18720,
+  "seq_len_range": [
+    6,
+    4359
+  ],
+  "num_violations": 0,
+  "violations_sample": [],
+  "status": "PASS"
+}

@@ -1,0 +1,30 @@
+{
+  "probe": "DEC-9 DS table-free radix cold/warm SELECTION divergence — fix feasibility",
+  "runtime_base_commit": "f82ec2c5d",
+  "working_tree_note": "source changes for score_capture are UNCOMMITTED in the working tree at run time; git HEAD prints f82ec2c5d but the live import includes the score_capture instrument (config.py + score_capture.py + selection_kernel.py + deepseek_v2.py).",
+  "op_point": {
+    "model": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
+    "channel_mask": "/models/glm51-fp8-channel-mask-s256.safetensors",
+    "tp_size": 8,
+    "kv_cache_dtype": "fp8_e4m3",
+    "page_size": 64,
+    "mem_fraction_static": 0.8,
+    "max_running_requests": 64,
+    "cuda_graph_max_bs": 64,
+    "eager": true,
+    "expandable_segments": "NEVER (unset PYTORCH_CUDA_ALLOC_CONF)",
+    "ds_config_base": "{\"top_k\":2048,\"page_size\":64,\"channel_mask_path\":\"/models/glm51-fp8-channel-mask-s256.safetensors\",\"device_buffer_size\":4096,\"scorer_norm\":\"off\",\"head_agg\":\"max\",\"anchor_mode\":\"off\",\"anchor_budget\":0,\"recall_oracle\":false,\"enable_lifted_budget_decode\":false,\"lifted_budget_top_k\":0}"
+  },
+  "runs": {
+    "q1_control": {
+      "radix": "OFF (--disable-radix-cache)",
+      "captures": ["selection_capture"],
+      "code": "NO new code (selection_capture only)"
+    },
+    "q2_score": {
+      "radix": "ON (SGLANG_DS_RADIX_OVERRIDE=1)",
+      "captures": ["score_capture", "selection_capture"],
+      "code": "score_capture instrument (new)"
+    }
+  }
+}

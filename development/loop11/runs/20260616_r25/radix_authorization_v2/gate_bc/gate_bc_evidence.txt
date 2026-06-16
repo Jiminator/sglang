@@ -1,0 +1,7 @@
+=== GATE B+C evidence ===
+GATE B cross-rank: drv_rc=0
+  status PASS ranks [0, 1, 2, 3, 4, 5, 6, 7] identical True steps [30, 31, 32] layers 78 bs 1
+GATE B no_dense_fallback: scan_rc=0
+  status PASS files 488 rows 38064 full_budget 19344 violations 0
+GATE C edge correctness: drv_rc=1
+  cold recall 59.615 evict recall 59.615 evict delta_pp_vs_cold 0.0 prefix_evicted True overall_status FAIL

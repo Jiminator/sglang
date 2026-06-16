@@ -1,0 +1,5 @@
+=== R25 negative control + AC-7 ===
+NOTE: POSITIVE no-override boot NOT run — no passing v2 artifact (probes 1/3/5 FAILED).
+[NEG] radix-ON DS, NO artifact, NO override: refused=yes
+      refusal msg: ValueError: Double Sparsity requires --disable-radix-cache until the table-free radix fixture has been recorded as passing (server_args._double_sparsity_radix_fixture_passed = True). Set SGLANG_DS_RADIX_OVERRIDE=1 to override during development.
+[AC-7] DSA default: max_total_num_tokens=410560 expected=410560 -> MATCH kv_ranks=8 smoke=OK:Paris. Distance from London to Paris is 343 km, while direct

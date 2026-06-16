@@ -1,0 +1,56 @@
+{
+  "probe": "DEC-9 — is the DS table-free radix cold/warm SELECTION divergence fixable on the DS side?",
+  "runtime_base_commit": "f82ec2c5d",
+  "op_point": "GLM-5.1-FP8, TP=8, fp8_e4m3, page 64, mem 0.8, max-running 64, EAGER (--disable-cuda-graph), base DS config (no removed fields), score_reduce_dtype default = bf16",
+
+  "Q1_determinism_control": {
+    "setup": "radix OFF (--disable-radix-cache), selection_capture only, NO new code; two FRESH identical requests (both cached_tokens=0)",
+    "result_raw": {
+      "ranks_compared": [0, 1, 2, 3, 4, 5, 6, 7],
+      "total_rank_layer_pairs_compared": 624,
+      "total_rank_layer_pairs_bit_identical": 624,
+      "total_rank_layer_pairs_differ": 0,
+      "total_flipped_positions": 0
+    },
+    "verdict": "BIT-IDENTICAL — two fresh requests select the identical top-2048 on every rank (8) x DS layer (78). DS selection is DETERMINISTIC given inputs. The R24 cold/warm flip is therefore RADIX-SPECIFIC (the cached-decode path differs from a fresh-decode), NOT general run-to-run non-determinism. This also proves the cross-TP bf16 reduce is deterministic given identical inputs."
+  },
+
+  "Q2_score_trace": {
+    "setup": "radix ON (SGLANG_DS_RADIX_OVERRIDE=1), score_capture + selection_capture; COLD (fresh) then WARM (identical prompt, cached_tokens=6080); compare cold-vs-warm absorbed scores at the flipped logical positions (cold top-2048 XOR warm)",
+    "captured_score_dtype": "bf16 (the bf16-authoritative reduced view top-k consumed; dumped upcast to fp32, lossless)",
+    "result_raw_rank0_cached_prefix": {
+      "total_flipped_positions": 17830,
+      "flips_in_cached_prefix": 17802,
+      "flips_in_tail": 28,
+      "cached_prefix_flips_score_BIT_IDENTICAL": 246,
+      "cached_prefix_flips_score_DIFFER": 17556,
+      "fraction_score_differ": 0.9862,
+      "cached_prefix_flips_at_cutoff_boundary_tie": 151,
+      "abs_score_delta_at_differing_flips": {
+        "median": 0.056640625,
+        "p99": 0.32177734375,
+        "max": 0.73828125
+      },
+      "example_layer3": "cold_cutoff_kth=0.004272 vs warm_cutoff_kth=0.004395; a cold-only pos scores 0.00409 (< warm cutoff -> dropped warm), a warm-only pos scores 0.00488 (> warm cutoff). Real membership change driven by the score perturbation straddling the cutoff."
+    },
+    "both_ranks_consistent": "rank0 and rank4 produce identical numbers",
+    "verdict": "SCORES DIFFER at 98.6% of flips (17556 / 17802). The deltas are NOT epsilon — median |Δ|=0.057, p99=0.32, max=0.74, large relative to the per-layer cutoff. The top-k membership genuinely changed because the absorbed score itself differs cold-vs-warm. Only 246 (1.4%) flips are bit-identical (true ties). A deterministic tie-break would address only that 1.4% and is therefore NOT a fix."
+  },
+
+  "Q3_localization": {
+    "method": "inference from Q1 + Q2 + R24 (no separate v_h capture run; the chain isolates it decisively)",
+    "absorbed_score_identity": "score = max_h( v_h . dequant(latent) )",
+    "input_1_latent": "R24-proven BIT-IDENTICAL in the cached prefix (cold vs warm fp8+scale SHA equal at all cached-prefix positions; 0 differing positions)",
+    "input_2_reduce": "Q1-proven DETERMINISTIC (two fresh requests through the same bf16 custom-AR sum-reduce -> bit-identical scores). Given identical pre-reduce partials the reduce output is identical, so the reduce is NOT the source.",
+    "remaining_differing_input": "v_h = the decode query hidden state (the other multiplicand), produced by the model forward UPSTREAM of DS selection. Warm attends over reloaded/cached KV pages; cold attends over freshly-prefilled KV. That attention-output numeric path differs cold-vs-warm and feeds the query into DS. It is OUTSIDE the DS selector.",
+    "verdict": "The score difference originates in the QUERY-side v_h from the cached-vs-fresh model forward (upstream of DS), NOT in the DS score reduce or a top-k tie."
+  },
+
+  "FEASIBILITY_VERDICT": {
+    "a_deterministic_tie_break": "NOT VIABLE — viable only if scores are bit-identical at flips; Q2 shows 98.6% of flips have genuinely DIFFERING scores. A tie-break fixes at most the 1.4% true-tie flips.",
+    "b_reduce_order_pin": "NOT APPLICABLE / NOT THE FIX — viable only if scores differ but v_h is identical; Q1 proves the reduce is already deterministic, so there is no reduce-order non-determinism to pin. The differing input is v_h, not the reduce.",
+    "c_not_DS_fixable": "THIS IS THE ANSWER — the divergence is the v_h / model-forward numerics from cached-vs-fresh attention, upstream of DS selection. It cannot be fixed inside the DS selector. The DS selection is already a deterministic, bit-exact function of its inputs (Q1); it faithfully reflects a query that legitimately differs between the cached-decode and fresh-decode forward."
+  },
+
+  "bottom_line": "A DS-side determinism fix is NOT viable. The cold/warm top-2048 divergence is not a DS selection bug and not a tie-break/reduce-order problem; it is the upstream model-forward producing a (slightly) different decode query v_h when the prefix is served from radix-cached KV vs freshly prefilled KV. DS selection is provably deterministic given its inputs (Q1) and consumes a byte-identical latent (R24); the only differing input is the query, which is outside DS authority."
+}

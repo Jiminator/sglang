@@ -1,0 +1,200 @@
+{
+  "label": "B1_cold_vs_warm",
+  "a_tag": "B1_cold",
+  "b_tag": "B1_warm",
+  "a_cached_tokens": 0,
+  "b_cached_tokens": 0,
+  "a_prompt_tokens": 6090,
+  "b_prompt_tokens": 6090,
+  "prompt_sha256": "86165d70d90b26b0ccaa27eececa4d2ef2264a8ade6d3e9c80402a310b1a416b",
+  "continuation_identical": false,
+  "first_divergent_step": 9,
+  "max_abs_delta_logprob_per_step": 0.8426203343842644,
+  "max_abs_delta_logprob_step": 13,
+  "step0_topk_max_abs_delta_logprob": 1.2790594100952148,
+  "step0_topk_token_set_identical": false,
+  "step0_topk_bit_identical": false,
+  "logprobs_bit_identical": false,
+  "per_step_delta": [
+    {
+      "step": 0,
+      "tok_a": 576,
+      "tok_b": 576,
+      "same_token": true,
+      "logprob_a": -0.9960241317749023,
+      "logprob_b": -0.7125833034515381,
+      "abs_delta": 0.28344082832336426
+    },
+    {
+      "step": 1,
+      "tok_a": 21038,
+      "tok_b": 21038,
+      "same_token": true,
+      "logprob_a": -0.5089420676231384,
+      "logprob_b": -0.2993323504924774,
+      "abs_delta": 0.209609717130661
+    },
+    {
+      "step": 2,
+      "tok_a": 17148,
+      "tok_b": 17148,
+      "same_token": true,
+      "logprob_a": -0.9515482187271118,
+      "logprob_b": -0.8130148649215698,
+      "abs_delta": 0.138533353805542
+    },
+    {
+      "step": 3,
+      "tok_a": 315,
+      "tok_b": 315,
+      "same_token": true,
+      "logprob_a": -0.007372790016233921,
+      "logprob_b": -0.011729205958545208,
+      "abs_delta": 0.004356415942311287
+    },
+    {
+      "step": 4,
+      "tok_a": 220,
+      "tok_b": 220,
+      "same_token": true,
+      "logprob_a": -0.08496729284524918,
+      "logprob_b": -0.09782300889492035,
+      "abs_delta": 0.012855716049671173
+    },
+    {
+      "step": 5,
+      "tok_a": 18,
+      "tok_b": 18,
+      "same_token": true,
+      "logprob_a": -0.0020192726515233517,
+      "logprob_b": -0.003288577776402235,
+      "abs_delta": 0.0012693051248788834
+    },
+    {
+      "step": 6,
+      "tok_a": 99317,
+      "tok_b": 99317,
+      "same_token": true,
+      "logprob_a": -0.0002503081923350692,
+      "logprob_b": -0.00018749863374978304,
+      "abs_delta": 6.280955858528614e-05
+    },
+    {
+      "step": 7,
+      "tok_a": 19479,
+      "tok_b": 19479,
+      "same_token": true,
+      "logprob_a": -0.5464832782745361,
+      "logprob_b": -0.40801483392715454,
+      "abs_delta": 0.1384684443473816
+    },
+    {
+      "step": 8,
+      "tok_a": 22809,
+      "tok_b": 22809,
+      "same_token": true,
+      "logprob_a": -0.4089503586292267,
+      "logprob_b": -0.3050500452518463,
+      "abs_delta": 0.10390031337738037
+    },
+    {
+      "step": 9,
+      "tok_a": 22633,
+      "tok_b": 11,
+      "same_token": false,
+      "logprob_a": -0.8651257157325745,
+      "logprob_b": -0.8402215242385864,
+      "abs_delta": 0.024904191493988037
+    },
+    {
+      "step": 10,
+      "tok_a": 264,
+      "tok_b": 1817,
+      "same_token": false,
+      "logprob_a": -0.16189327836036682,
+      "logprob_b": -0.07462616264820099,
+      "abs_delta": 0.08726711571216583
+    },
+    {
+      "step": 11,
+      "tok_a": 3974,
+      "tok_b": 27703,
+      "same_token": false,
+      "logprob_a": -0.05851781368255615,
+      "logprob_b": -0.37479647994041443,
+      "abs_delta": 0.3162786662578583
+    },
+    {
+      "step": 12,
+      "tok_a": 13867,
+      "tok_b": 429,
+      "same_token": false,
+      "logprob_a": -0.00019059749320149422,
+      "logprob_b": -0.6202882528305054,
+      "abs_delta": 0.6200976553373039
+    },
+    {
+      "step": 13,
+      "tok_a": 38627,
+      "tok_b": 264,
+      "same_token": false,
+      "logprob_a": -0.00020597243565134704,
+      "logprob_b": -0.8428263068199158,
+      "abs_delta": 0.8426203343842644
+    },
+    {
+      "step": 14,
+      "tok_a": 28897,
+      "tok_b": 3974,
+      "same_token": false,
+      "logprob_a": -0.0040893275290727615,
+      "logprob_b": -0.002782760886475444,
+      "abs_delta": 0.0013065666425973177
+    },
+    {
+      "step": 15,
+      "tok_a": 916,
+      "tok_b": 13867,
+      "same_token": false,
+      "logprob_a": -0.00035589560866355896,
+      "logprob_b": -0.00030882356804795563,
+      "abs_delta": 4.707204061560333e-05
+    }
+  ],
+  "a_continuation_ids": [
+    576,
+    21038,
+    17148,
+    315,
+    220,
+    18,
+    99317,
+    19479,
+    22809,
+    22633,
+    264,
+    3974,
+    13867,
+    38627,
+    28897,
+    916
+  ],
+  "b_continuation_ids": [
+    576,
+    21038,
+    17148,
+    315,
+    220,
+    18,
+    99317,
+    19479,
+    22809,
+    11,
+    1817,
+    27703,
+    429,
+    264,
+    3974,
+    13867
+  ]
+}

@@ -1,0 +1,105 @@
+{
+  "probe": "DEC-9 score-PATH parity (pre/post reduce, fp32 reduce, radix-vs-fallback top-k)",
+  "runtime_base_commit": "f82ec2c5d",
+  "op_point": "GLM-5.1-FP8 TP=8 fp8_e4m3 page64 mem0.8 max-running64 EAGER radix-ON",
+  "exp1_pre_vs_post_reduce": {
+    "source": "bf16 reduce pass (the production default; the pass that flips)",
+    "bf16_cached_tokens_warm": 6080,
+    "rank0": {
+      "total_flipped_positions": 17830,
+      "flips_in_cached_prefix": 17802,
+      "flips_in_tail": 28,
+      "pre_reduce_captured": true,
+      "POST_reduce_prefix_flips_BIT_IDENTICAL": 246,
+      "POST_reduce_prefix_flips_DIFFER": 17556,
+      "POST_reduce_abs_delta_median": 0.056640625,
+      "POST_reduce_abs_delta_p99": 0.32177734375,
+      "POST_reduce_abs_delta_max": 0.73828125,
+      "PRE_reduce_prefix_flips_BIT_IDENTICAL": 0,
+      "PRE_reduce_prefix_flips_DIFFER": 17802,
+      "PRE_reduce_prefix_flips_MISSING": 0,
+      "PRE_reduce_abs_delta_median": 0.013454779982566833,
+      "PRE_reduce_abs_delta_p99": 0.09820416569709778,
+      "PRE_reduce_abs_delta_max": 0.17686530016362667
+    },
+    "rank4": {
+      "total_flipped_positions": 17830,
+      "PRE_reduce_prefix_flips_BIT_IDENTICAL": 0,
+      "PRE_reduce_prefix_flips_DIFFER": 17802,
+      "POST_reduce_prefix_flips_DIFFER": 17556
+    }
+  },
+  "exp2_flip_count_bf16_vs_fp32": {
+    "bf16": {
+      "warm_cached_tokens": 6080,
+      "rank0_total_flips": 17830,
+      "rank0_prefix_flips": 17802,
+      "rank4_total_flips": 17830
+    },
+    "fp32": {
+      "warm_cached_tokens": 6080,
+      "rank0_total_flips": 19008,
+      "rank0_prefix_flips": 18980,
+      "rank4_total_flips": 19008
+    }
+  },
+  "exp3_radix_vs_fallback_topk": {
+    "verdict": "IDENTICAL \u2014 radix, fallback, and reference top-k agree on membership and order",
+    "real_rows": {
+      "n_rows": 156,
+      "width": 6093,
+      "ranks": [
+        0,
+        4
+      ]
+    },
+    "real_lengths": {
+      "radix_vs_fallback_len_mismatches": 0,
+      "radix_vs_reference_len_mismatches": 0
+    },
+    "comparisons": [
+      {
+        "dataset": "real",
+        "pair": "radix_vs_fallback",
+        "rows": 156,
+        "rows_membership_identical": 156,
+        "rows_order_identical": 156,
+        "total_member_symdiff": 0,
+        "first_divergence": null
+      },
+      {
+        "dataset": "real",
+        "pair": "radix_vs_reference",
+        "rows": 156,
+        "rows_membership_identical": 156,
+        "rows_order_identical": 156,
+        "total_member_symdiff": 0,
+        "first_divergence": null
+      },
+      {
+        "dataset": "synthetic_tie",
+        "pair": "radix_vs_fallback",
+        "rows": 4,
+        "rows_membership_identical": 4,
+        "rows_order_identical": 4,
+        "total_member_symdiff": 0,
+        "first_divergence": null
+      },
+      {
+        "dataset": "synthetic_tie",
+        "pair": "radix_vs_reference",
+        "rows": 4,
+        "rows_membership_identical": 4,
+        "rows_order_identical": 4,
+        "total_member_symdiff": 0,
+        "first_divergence": null
+      }
+    ]
+  },
+  "FEASIBILITY_VERDICT": {
+    "exp3_topk_path": "AGREE \u2014 radix, fallback, and reference top-k produce identical membership and order on the same scores; the top-k path is NOT the culprit.",
+    "exp2_fp32_reduce": "FP32 REDUCE DOES NOT REDUCE THE FLIPS (bf16=17802, fp32=18980); the bf16 reduce is NOT the culprit.",
+    "exp1_pre_reduce": "PRE-REDUCE SCORES ALREADY DIFFER at 17802/17802 prefix flips (median |\u0394|=0.013454779982566833) => the divergence is upstream in the per-rank score (v_h), present BEFORE the cross-TP reduce.",
+    "FEASIBILITY": "NOT DS-FIXABLE \u2014 pre-reduce scores already differ cold-vs-warm (exp-1) and fp32 reduce does not zero flips (exp-2): the divergence is genuinely upstream in v_h (the cached vs fresh model forward), outside DS authority."
+  }
+}

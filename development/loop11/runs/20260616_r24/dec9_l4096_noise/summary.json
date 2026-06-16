@@ -1,0 +1,42 @@
+{
+  "experiment": "ExpA — is the R24 P2 radix-ON L4096 recall@2048 breach (-0.849pp) sampling noise?",
+  "runtime_base_commit": "f82ec2c5d",
+  "model": "GLM-5.1-FP8",
+  "envelope": "TP8 / fp8_e4m3 / page64 / mem0.8 / max-running 64 / cuda-graph-max-bs 64 / EAGER (--disable-cuda-graph) (expandable_segments NEVER set)",
+  "ds_config": "table-free recall_oracle=true, top_k 2048, page_size 64, channel_mask glm51-fp8-channel-mask-s256, device_buffer_size 4096, scorer_norm off, head_agg max, anchor off",
+  "method": "Reused the EXACT R24 P2 harness (r24_env.sh op-point + niah_oracle_sweep.py + the same recall@2048 extraction as p2_recall_compare.py). For each server --random-seed S in {20260607,20260608,20260609,20260610}: booted DS EAGER recall_oracle radix-OFF (--disable-radix-cache), ran NIAH L4096+L16384 num=20 decode-steps=4; teardown; booted radix-ON (SGLANG_DS_RADIX_OVERRIDE=1); ran the SAME sweep; teardown. Plus a higher-n L4096 num=80 (idx 0..79, a DIFFERENT/larger trial set) radix-OFF then radix-ON, seed 20260607. One TP=8 server at a time; teardown to ~0 MiB between all 10 boots.",
+  "honesty_notes": [
+    "The NIAH sweep has NO --seed knob: prompts are deterministic in (length, idx) with prompt-seed 1000+idx, so the TRIAL SET is identical across all four server --random-seed boots. Greedy temp0 decode is deterministic given inputs, so off and on recall are byte-stable across seeds (per-seed std=0). This is EXPECTED, not 4 truly-independent draws.",
+    "The INDEPENDENT signal therefore comes from (a) the higher-n run, which sweeps a DIFFERENT, larger trial set (idx 0..79 vs 0..19) and still gives off-on=0.0pp at L4096, and (b) the direct apples-to-apples off-vs-on comparison reproducing R24's exact radix-OFF number but NOT its radix-ON drop.",
+    "recall@2048 'samples' per length-bin = 20 trials x 78 DS layers x 4 decode steps = 6240 (num=80 -> 24960); these are CORRELATED within a run, so within-run SE is not used for the verdict."
+  ],
+  "per_length_per_seed": {
+    "L4096": {
+      "per_seed_off_pct": {"20260607": 58.0449, "20260608": 58.0449, "20260609": 58.0449, "20260610": 58.0449},
+      "per_seed_on_pct":  {"20260607": 58.0449, "20260608": 58.0449, "20260609": 58.0449, "20260610": 58.0449},
+      "per_seed_off_minus_on_pp": {"20260607": 0.0, "20260608": 0.0, "20260609": 0.0, "20260610": 0.0},
+      "cross_seed_delta_mean": 0.0, "min": 0.0, "max": 0.0, "std": 0.0,
+      "higher_n_num80_off_pct": 59.0144, "higher_n_num80_on_pct": 59.0144, "higher_n_off_minus_on_pp": 0.0,
+      "samples_per_seed_bin": 6240, "higher_n_samples": 24960
+    },
+    "L16384": {
+      "per_seed_off_pct": {"20260607": 36.3622, "20260608": 36.3622, "20260609": 36.3622, "20260610": 36.3622},
+      "per_seed_on_pct":  {"20260607": 36.234, "20260608": 36.234, "20260609": 36.234, "20260610": 36.234},
+      "per_seed_off_minus_on_pp": {"20260607": 0.1282, "20260608": 0.1282, "20260609": 0.1282, "20260610": 0.1282},
+      "cross_seed_delta_mean": 0.1282, "min": 0.1282, "max": 0.1282, "std": 0.0,
+      "samples_per_seed_bin": 6240
+    }
+  },
+  "comparison_to_R24_P2": {
+    "R24_P2_L4096": {"radix_off": 58.045, "radix_on": 57.196, "delta_off_minus_on_pp": 0.849, "verdict_then": "FAIL (>0.5pp)"},
+    "this_run_L4096": {"radix_off": 58.0449, "radix_on": 58.0449, "delta_off_minus_on_pp": 0.0},
+    "note": "radix-OFF L4096 reproduces R24 EXACTLY (58.045 == 58.0449). R24's radix-ON 57.196 did NOT reproduce: this run's radix-ON equals radix-OFF (no drop). The -0.849pp was therefore NOT a stable property of the radix-ON path.",
+    "R24_P2_L16384": {"radix_off": 36.362, "radix_on": 36.715, "delta_off_minus_on_pp": -0.353},
+    "this_run_L16384": {"radix_off": 36.3622, "radix_on": 36.234, "delta_off_minus_on_pp": 0.128, "note": "radix-OFF reproduces R24 exactly; radix-ON differs from R24 (36.234 vs 36.715) but stays within +-0.5pp; the R24 +0.353pp and this +0.128pp have OPPOSITE-magnitude small noise, both within bound."}
+  },
+  "verdict": {
+    "L4096": "NOISE — the R24 -0.849pp did NOT reproduce. radix-OFF==radix-ON (0.0pp) on the identical 4-seed trial set AND on the larger num=80 trial set. |delta| well within +-0.5pp.",
+    "L16384": "NOISE — off-on = +0.128pp, within +-0.5pp; R24's -0.353pp and this +0.128pp are both small and within bound (sign not stable)."
+  },
+  "cleanup": "All 10 boots torn down to ~0 MiB between each; final nvidia-smi all 8 GPUs 0 MiB; no lingering sglang processes; expandable_segments never set."
+}

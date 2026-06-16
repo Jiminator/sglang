@@ -1,0 +1,20 @@
+{
+  "probe": "P5_cold_warm_flips_value_neutral_documented",
+  "claim": "Cold/warm selected-index flips are value-neutral near-cutoff reshuffling, NOT a bit-identity claim. A radix cache hit changes the decode query upstream of DS selection (cached fp8 latent bytes are bit-identical), so the top-k reshuffles a small fraction of borderline tokens; recall is unchanged.",
+  "citation_1_symdiff": {
+    "source": "development/loop11/runs/20260616_r24/tablefree_radix/p1_selection_verdict.json",
+    "symdiff_pct_of_selected_per_rank": [],
+    "cross_rank_identical_both_passes": true,
+    "is_small_near_cutoff_fraction(<5pct)": false,
+    "r24_note": "all_cold_eq_warm=False cross_rank_identical=True"
+  },
+  "citation_2_recall_neutral": {
+    "source": "development/loop11/runs/20260616_r25/radix_authorization/probes/p1_recall_verdict.json",
+    "r25_recall_equivalence_verdict": "FAIL",
+    "overall_delta_pp": -0.165,
+    "recall_equivalence_passed": false
+  },
+  "documented": false,
+  "status": "FAIL",
+  "reason": "symdiff_small=False (pcts=[]) recall_pass=False"
+}

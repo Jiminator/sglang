@@ -1,0 +1,101 @@
+{
+  "probe": "DEC9_Q1_determinism_control_two_fresh_radix_OFF",
+  "identical_prompt": true,
+  "prompt_chars": 24583,
+  "fresh1_prompt_tokens": 6090,
+  "fresh1_cached_tokens": 0,
+  "fresh2_prompt_tokens": 6090,
+  "fresh2_cached_tokens": 0,
+  "ranks_compared": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "per_rank": {
+    "0": {
+      "fresh1_first_step": 7,
+      "fresh2_first_step": 10,
+      "n_layers_compared": 78,
+      "n_layers_bit_identical": 78,
+      "n_layers_differ": 0,
+      "total_flipped_positions": 0,
+      "layer_diff_detail": []
+    },
+    "1": {
+      "fresh1_first_step": 7,
+      "fresh2_first_step": 10,
+      "n_layers_compared": 78,
+      "n_layers_bit_identical": 78,
+      "n_layers_differ": 0,
+      "total_flipped_positions": 0,
+      "layer_diff_detail": []
+    },
+    "2": {
+      "fresh1_first_step": 7,
+      "fresh2_first_step": 10,
+      "n_layers_compared": 78,
+      "n_layers_bit_identical": 78,
+      "n_layers_differ": 0,
+      "total_flipped_positions": 0,
+      "layer_diff_detail": []
+    },
+    "3": {
+      "fresh1_first_step": 7,
+      "fresh2_first_step": 10,
+      "n_layers_compared": 78,
+      "n_layers_bit_identical": 78,
+      "n_layers_differ": 0,
+      "total_flipped_positions": 0,
+      "layer_diff_detail": []
+    },
+    "4": {
+      "fresh1_first_step": 7,
+      "fresh2_first_step": 10,
+      "n_layers_compared": 78,
+      "n_layers_bit_identical": 78,
+      "n_layers_differ": 0,
+      "total_flipped_positions": 0,
+      "layer_diff_detail": []
+    },
+    "5": {
+      "fresh1_first_step": 7,
+      "fresh2_first_step": 10,
+      "n_layers_compared": 78,
+      "n_layers_bit_identical": 78,
+      "n_layers_differ": 0,
+      "total_flipped_positions": 0,
+      "layer_diff_detail": []
+    },
+    "6": {
+      "fresh1_first_step": 7,
+      "fresh2_first_step": 10,
+      "n_layers_compared": 78,
+      "n_layers_bit_identical": 78,
+      "n_layers_differ": 0,
+      "total_flipped_positions": 0,
+      "layer_diff_detail": []
+    },
+    "7": {
+      "fresh1_first_step": 7,
+      "fresh2_first_step": 10,
+      "n_layers_compared": 78,
+      "n_layers_bit_identical": 78,
+      "n_layers_differ": 0,
+      "total_flipped_positions": 0,
+      "layer_diff_detail": []
+    }
+  },
+  "aggregate": {
+    "n_ranks": 8,
+    "total_rank_layer_pairs_compared": 624,
+    "total_rank_layer_pairs_bit_identical": 624,
+    "total_rank_layer_pairs_differ": 0,
+    "total_flipped_positions": 0
+  },
+  "verdict": "BIT_IDENTICAL \u2014 two fresh requests select identical top-k on every rank+layer; DS selection deterministic given inputs; R24 flip is RADIX-SPECIFIC"
+}

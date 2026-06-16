@@ -1,0 +1,66 @@
+{
+  "probe": "L4096_highn_paired_recall_characterization",
+  "length_words": 4096,
+  "max_delta_pp": 0.5,
+  "n_needles_matched": 144,
+  "matched_population": {
+    "off_ids": 144,
+    "on_ids": 144,
+    "matched": 144,
+    "off_only": [],
+    "on_only": [],
+    "paired_by_request_id": true
+  },
+  "cache_engagement": {
+    "radix_on_cached_tokens_dist": {
+      "n": 144,
+      "min": 320,
+      "max": 640,
+      "mean": 491.11,
+      "median": 512,
+      "n_zero": 0,
+      "n_gt0": 144
+    },
+    "radix_off_cached_tokens_dist": {
+      "n": 144,
+      "min": 0,
+      "max": 0,
+      "mean": 0.0,
+      "median": 0,
+      "n_zero": 144,
+      "n_gt0": 0
+    },
+    "on_engaged": true,
+    "off_is_clean_control": true
+  },
+  "per_needle_recall_pct": {
+    "mean_off": 60.1518,
+    "mean_on": 59.7712,
+    "unit": "needle (mean over matched needles of per-needle recall@2048)"
+  },
+  "paired_delta_off_minus_on_pp": {
+    "mean": 0.3806,
+    "std": 1.9736,
+    "min": -4.1667,
+    "max": 6.7308,
+    "ci95_bootstrap": [
+      0.0645,
+      0.7011
+    ],
+    "ci_iters": 20000
+  },
+  "record_pooled_recall_pct": {
+    "off": 60.1518,
+    "on": 59.7712,
+    "delta_off_minus_on_pp": 0.3806,
+    "off_records": 44928,
+    "on_records": 44928,
+    "note": "layer/decode-step pooling (matches prior n=20 verdict method); NOT the paired unit"
+  },
+  "failures": {
+    "off": {},
+    "on": {}
+  },
+  "verdict": "INSIDE",
+  "invalid_reasons": []
+}

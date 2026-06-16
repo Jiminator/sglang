@@ -1,0 +1,12 @@
+probe=p1_recall_equivalence (radix off vs on, SAME trial set, eager recall_oracle)
+lengths=1024 4096 16384 num=20
+off_sweep_rc=0 on_sweep_rc=0 compare_rc=1
+status=FAIL
+--- compare summary ---
+[recall-compare] -> /sgl-workspace/sglang/development/loop11/runs/20260616_r25/radix_authorization/probes/p1_recall_verdict.json
+  OVERALL  off=64.802%  on=64.637%  delta=-0.165pp
+    L  1024: off=100.0%  on=100.0%  delta=0.0pp  samples(off/on)=6240/6240  within=True
+    L  4096: off=58.045%  on=57.196%  delta=-0.849pp  samples(off/on)=6240/6240  within=False
+    L 16384: off=36.362%  on=36.715%  delta=0.353pp  samples(off/on)=6240/6240  within=True
+  VERDICT: FAIL
+    - length 4096: radix on-off delta -0.849pp exceeds ±0.5pp (off=58.045% on=57.196%)

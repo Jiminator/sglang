@@ -1,0 +1,64 @@
+{
+  "probe": "P3_edge_probe_page64",
+  "length": 4096,
+  "page_size": 64,
+  "top_k": 2048,
+  "max_delta_pp": 0.5,
+  "cases": {
+    "cold_baseline": {
+      "cached_tokens": 0,
+      "prompt_tokens": 4344,
+      "recall2048": {
+        "samples": 312,
+        "hits": 186,
+        "pct": 59.615,
+        "failures": 0
+      }
+    },
+    "a_boundary_aligned_full_reuse": {
+      "cached_tokens": 4288,
+      "recall2048": {
+        "samples": 312,
+        "hits": 188,
+        "pct": 60.256,
+        "failures": 0
+      },
+      "delta_pp_vs_cold": 0.641,
+      "cache_hit": true,
+      "cached_is_page_multiple": true
+    },
+    "b_partial_page_hit": {
+      "cached_tokens": 4288,
+      "recall2048": {
+        "samples": 312,
+        "hits": 183,
+        "pct": 58.654,
+        "failures": 0
+      },
+      "delta_pp_vs_cold": -0.961,
+      "cache_hit": true,
+      "cached_is_page_multiple": true
+    },
+    "c_eviction_recompute": {
+      "cached_tokens": 0,
+      "recall2048": {
+        "samples": 312,
+        "hits": 186,
+        "pct": 59.615,
+        "failures": 0
+      },
+      "delta_pp_vs_cold": 0.0,
+      "prefix_evicted(cached_fell_vs_boundary)": true
+    }
+  },
+  "flush_cache_ok": true,
+  "needle_span_first_last": [
+    2151,
+    2159
+  ],
+  "status": "FAIL",
+  "problems": [
+    "a_boundary: recall@2048 60.256% deviates +0.641pp from cold 59.615% (>\u00b10.5pp) \u2014 possible stale-slot corruption",
+    "b_partial: recall@2048 58.654% deviates -0.961pp from cold 59.615% (>\u00b10.5pp) \u2014 possible stale-slot corruption"
+  ]
+}

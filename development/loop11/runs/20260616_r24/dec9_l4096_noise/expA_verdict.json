@@ -1,0 +1,128 @@
+{
+  "probe": "expA_l4096_radix_noise",
+  "seeds": [
+    20260607,
+    20260608,
+    20260609,
+    20260610
+  ],
+  "max_delta_pp": 0.5,
+  "per_seed": {
+    "20260607": {
+      "4096": {
+        "off_pct": 58.0449,
+        "on_pct": 58.0449,
+        "off_minus_on_pp": 0.0,
+        "samples_off": 6240,
+        "samples_on": 6240
+      },
+      "16384": {
+        "off_pct": 36.3622,
+        "on_pct": 36.234,
+        "off_minus_on_pp": 0.1282,
+        "samples_off": 6240,
+        "samples_on": 6240
+      }
+    },
+    "20260608": {
+      "4096": {
+        "off_pct": 58.0449,
+        "on_pct": 58.0449,
+        "off_minus_on_pp": 0.0,
+        "samples_off": 6240,
+        "samples_on": 6240
+      },
+      "16384": {
+        "off_pct": 36.3622,
+        "on_pct": 36.234,
+        "off_minus_on_pp": 0.1282,
+        "samples_off": 6240,
+        "samples_on": 6240
+      }
+    },
+    "20260609": {
+      "4096": {
+        "off_pct": 58.0449,
+        "on_pct": 58.0449,
+        "off_minus_on_pp": 0.0,
+        "samples_off": 6240,
+        "samples_on": 6240
+      },
+      "16384": {
+        "off_pct": 36.3622,
+        "on_pct": 36.234,
+        "off_minus_on_pp": 0.1282,
+        "samples_off": 6240,
+        "samples_on": 6240
+      }
+    },
+    "20260610": {
+      "4096": {
+        "off_pct": 58.0449,
+        "on_pct": 58.0449,
+        "off_minus_on_pp": 0.0,
+        "samples_off": 6240,
+        "samples_on": 6240
+      },
+      "16384": {
+        "off_pct": 36.3622,
+        "on_pct": 36.234,
+        "off_minus_on_pp": 0.1282,
+        "samples_off": 6240,
+        "samples_on": 6240
+      }
+    }
+  },
+  "cross_seed_delta_stats": {
+    "4096": {
+      "n_seeds": 4,
+      "deltas_off_minus_on_pp": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "mean": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "std": 0.0,
+      "straddles_zero": false
+    },
+    "16384": {
+      "n_seeds": 4,
+      "deltas_off_minus_on_pp": [
+        0.1282,
+        0.1282,
+        0.1282,
+        0.1282
+      ],
+      "mean": 0.1282,
+      "min": 0.1282,
+      "max": 0.1282,
+      "std": 0.0,
+      "straddles_zero": false
+    }
+  },
+  "higher_n_L4096": {
+    "length": 4096,
+    "off_pct": 59.0144,
+    "on_pct": 59.0144,
+    "off_minus_on_pp": 0.0,
+    "samples_off": 24960,
+    "samples_on": 24960
+  },
+  "verdict_L4096": {
+    "verdict": "NOISE",
+    "notes": [
+      "higher-n off-minus-on=+0.0000pp within=True",
+      "mean=+0.0000pp |mean|<=0.5=True straddles0=False all-on-lower=False"
+    ]
+  },
+  "verdict_L16384": {
+    "verdict": "NOISE",
+    "notes": [
+      "mean=+0.1282pp |mean|<=0.5=True straddles0=False all-on-lower=True"
+    ]
+  },
+  "problems": []
+}

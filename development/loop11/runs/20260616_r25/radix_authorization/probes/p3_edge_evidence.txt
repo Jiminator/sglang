@@ -1,0 +1,8 @@
+probe=p3_edge_probe (radix-ON, EAGER, recall_oracle+selection_capture) drv_rc=1
+--- verdict ---
+status FAIL
+cold_baseline {'cached_tokens': 0, 'recall2048': {'samples': 312, 'hits': 186, 'pct': 59.615, 'failures': 0}}
+a_boundary_aligned_full_reuse {'cached_tokens': 4288, 'recall2048': {'samples': 312, 'hits': 188, 'pct': 60.256, 'failures': 0}, 'delta_pp_vs_cold': 0.641, 'cache_hit': True}
+b_partial_page_hit {'cached_tokens': 4288, 'recall2048': {'samples': 312, 'hits': 183, 'pct': 58.654, 'failures': 0}, 'delta_pp_vs_cold': -0.961, 'cache_hit': True}
+c_eviction_recompute {'cached_tokens': 0, 'recall2048': {'samples': 312, 'hits': 186, 'pct': 59.615, 'failures': 0}, 'delta_pp_vs_cold': 0.0}
+problems ['a_boundary: recall@2048 60.256% deviates +0.641pp from cold 59.615% (>±0.5pp) — possible stale-slot corruption', 'b_partial: recall@2048 58.654% deviates -0.961pp from cold 59.615% (>±0.5pp) — possible stale-slot corruption']

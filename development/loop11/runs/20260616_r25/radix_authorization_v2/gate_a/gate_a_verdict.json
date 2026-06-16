@@ -1,0 +1,156 @@
+{
+  "probe": "GATE_A_recall_equivalence_multilen",
+  "lengths": [
+    1024,
+    4096,
+    16384
+  ],
+  "max_delta_pp": 0.5,
+  "rule": "PASS iff |mean paired delta| <= max_delta_pp OVERALL and for EVERY length (on the MEAN); every length's radix-ON arm must hit cache (else INVALID). CI reported for transparency.",
+  "per_length": {
+    "1024": {
+      "length": 1024,
+      "n_needles_matched": 128,
+      "matched_off_ids": 128,
+      "matched_on_ids": 128,
+      "recall_off_pct": 100.0,
+      "recall_on_pct": 100.0,
+      "paired_delta_off_minus_on_pp": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "ci95_bootstrap": [
+          0.0,
+          0.0
+        ]
+      },
+      "cache_engagement": {
+        "radix_on_cached_tokens_dist": {
+          "n": 128,
+          "min": 64,
+          "max": 128,
+          "mean": 88.5,
+          "median": 64,
+          "n_zero": 0,
+          "n_gt0": 128
+        },
+        "radix_off_cached_tokens_dist": {
+          "n": 128,
+          "min": 0,
+          "max": 0,
+          "mean": 0.0,
+          "median": 0,
+          "n_zero": 128,
+          "n_gt0": 0
+        },
+        "on_engaged": true,
+        "off_is_clean_control": true
+      },
+      "within_bound_on_mean": true,
+      "verdict": "WITHIN",
+      "invalid_reasons": []
+    },
+    "4096": {
+      "length": 4096,
+      "n_needles_matched": 128,
+      "matched_off_ids": 128,
+      "matched_on_ids": 128,
+      "recall_off_pct": 59.9234,
+      "recall_on_pct": 59.8094,
+      "paired_delta_off_minus_on_pp": {
+        "mean": 0.1139,
+        "std": 0.9622,
+        "min": -1.9231,
+        "max": 2.4038,
+        "ci95_bootstrap": [
+          -0.0551,
+          0.2792
+        ]
+      },
+      "cache_engagement": {
+        "radix_on_cached_tokens_dist": {
+          "n": 128,
+          "min": 320,
+          "max": 640,
+          "mean": 488.5,
+          "median": 512,
+          "n_zero": 0,
+          "n_gt0": 128
+        },
+        "radix_off_cached_tokens_dist": {
+          "n": 128,
+          "min": 0,
+          "max": 0,
+          "mean": 0.0,
+          "median": 0,
+          "n_zero": 128,
+          "n_gt0": 0
+        },
+        "on_engaged": true,
+        "off_is_clean_control": true
+      },
+      "within_bound_on_mean": true,
+      "verdict": "WITHIN",
+      "invalid_reasons": []
+    },
+    "16384": {
+      "length": 16384,
+      "n_needles_matched": 128,
+      "matched_off_ids": 128,
+      "matched_on_ids": 128,
+      "recall_off_pct": 36.5059,
+      "recall_on_pct": 36.7162,
+      "paired_delta_off_minus_on_pp": {
+        "mean": -0.2103,
+        "std": 1.9632,
+        "min": -6.0897,
+        "max": 4.8077,
+        "ci95_bootstrap": [
+          -0.5484,
+          0.1302
+        ]
+      },
+      "cache_engagement": {
+        "radix_on_cached_tokens_dist": {
+          "n": 128,
+          "min": 1472,
+          "max": 2752,
+          "mean": 2064.5,
+          "median": 2048,
+          "n_zero": 0,
+          "n_gt0": 128
+        },
+        "radix_off_cached_tokens_dist": {
+          "n": 128,
+          "min": 0,
+          "max": 0,
+          "mean": 0.0,
+          "median": 0,
+          "n_zero": 128,
+          "n_gt0": 0
+        },
+        "on_engaged": true,
+        "off_is_clean_control": true
+      },
+      "within_bound_on_mean": true,
+      "verdict": "WITHIN",
+      "invalid_reasons": []
+    }
+  },
+  "overall": {
+    "n_needles": 384,
+    "mean_delta_off_minus_on_pp": -0.0321,
+    "std": 1.2661,
+    "ci95_bootstrap": [
+      -0.1603,
+      0.0947
+    ],
+    "within_bound_on_mean": true
+  },
+  "hard_failures": {
+    "off": {},
+    "on": {}
+  },
+  "verdict": "PASS"
+}

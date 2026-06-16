@@ -1,0 +1,20 @@
+{
+  "probe": "P4_no_dense_fallback",
+  "top_k": 2048,
+  "capdirs": [
+    "development/loop11/runs/20260616_r25/radix_authorization/probes/p2_cross_rank/cap_radix_on",
+    "development/loop11/runs/20260616_r25/radix_authorization/probes/p2_cross_rank/cap_radix_off",
+    "development/loop11/runs/20260616_r25/radix_authorization/probes/p3_edge/cap_edge"
+  ],
+  "files_scanned": 512,
+  "rows_checked": 39936,
+  "rows_full_sparse_budget(seq>=top_k,vl==top_k)": 21216,
+  "rows_short_context(seq<top_k)": 18720,
+  "seq_len_range": [
+    6,
+    4359
+  ],
+  "num_violations": 0,
+  "violations_sample": [],
+  "status": "PASS"
+}

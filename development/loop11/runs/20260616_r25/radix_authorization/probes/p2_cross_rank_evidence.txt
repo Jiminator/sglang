@@ -1,0 +1,15 @@
+probe=p2_cross_rank_selection_identity (selection_capture, EAGER, 8 TP ranks)
+radix_on_driver_rc=0 radix_off_driver_rc=0
+--- radix_on ---
+status PASS
+ranks_present [0, 1, 2, 3, 4, 5, 6, 7]
+all_ranks_identical_all_steps True
+common_steps [30, 31, 32]
+reason None
+--- radix_off ---
+status PASS
+ranks_present [0, 1, 2, 3, 4, 5, 6, 7]
+all_ranks_identical_all_steps True
+common_steps [30, 31, 32]
+reason None
+status=PASS

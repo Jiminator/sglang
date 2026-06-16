@@ -1,0 +1,166 @@
+{
+  "note": "L4096 per-trial recall@2048 off vs on. ALL 20 trials jitter (both signs); net aggregate off=58.045% on=57.196% delta=-0.849pp BREACHES the 0.5pp per-length bar. Real radix cache hits confirmed in serve_on.log (#cached-token 1500-2100/trial). The bidirectional jitter is the documented near-cutoff reshuffle (cache hit changes decode query upstream of DS selection); it is NOT stale-slot corruption (corruption would be uniform), but the L4096 aggregate exceeds the bar so recall_equivalence is a real FAIL.",
+  "expA_radix_on_L4096_was_58.045(==off)": "ExpA drew a run where radix-ON recall equaled off (no per-trial divergence); R25 reproduced the R24 -0.849pp. The breach is NOT relabeled noise.",
+  "per_trial": {
+    "L4096-i0": {
+      "off_pct": 61.538,
+      "on_pct": 60.256,
+      "delta_pp": -1.282,
+      "off_hits": 192,
+      "on_hits": 188,
+      "n": 312
+    },
+    "L4096-i1": {
+      "off_pct": 61.218,
+      "on_pct": 62.821,
+      "delta_pp": 1.603,
+      "off_hits": 191,
+      "on_hits": 196,
+      "n": 312
+    },
+    "L4096-i2": {
+      "off_pct": 58.974,
+      "on_pct": 59.295,
+      "delta_pp": 0.321,
+      "off_hits": 184,
+      "on_hits": 185,
+      "n": 312
+    },
+    "L4096-i3": {
+      "off_pct": 59.615,
+      "on_pct": 56.41,
+      "delta_pp": -3.205,
+      "off_hits": 186,
+      "on_hits": 176,
+      "n": 312
+    },
+    "L4096-i4": {
+      "off_pct": 58.013,
+      "on_pct": 60.577,
+      "delta_pp": 2.564,
+      "off_hits": 181,
+      "on_hits": 189,
+      "n": 312
+    },
+    "L4096-i5": {
+      "off_pct": 58.974,
+      "on_pct": 58.013,
+      "delta_pp": -0.962,
+      "off_hits": 184,
+      "on_hits": 181,
+      "n": 312
+    },
+    "L4096-i6": {
+      "off_pct": 54.808,
+      "on_pct": 58.974,
+      "delta_pp": 4.167,
+      "off_hits": 171,
+      "on_hits": 184,
+      "n": 312
+    },
+    "L4096-i7": {
+      "off_pct": 63.462,
+      "on_pct": 61.218,
+      "delta_pp": -2.244,
+      "off_hits": 198,
+      "on_hits": 191,
+      "n": 312
+    },
+    "L4096-i8": {
+      "off_pct": 58.974,
+      "on_pct": 55.769,
+      "delta_pp": -3.205,
+      "off_hits": 184,
+      "on_hits": 174,
+      "n": 312
+    },
+    "L4096-i9": {
+      "off_pct": 59.615,
+      "on_pct": 57.692,
+      "delta_pp": -1.923,
+      "off_hits": 186,
+      "on_hits": 180,
+      "n": 312
+    },
+    "L4096-i10": {
+      "off_pct": 61.538,
+      "on_pct": 57.051,
+      "delta_pp": -4.487,
+      "off_hits": 192,
+      "on_hits": 178,
+      "n": 312
+    },
+    "L4096-i11": {
+      "off_pct": 57.372,
+      "on_pct": 50.641,
+      "delta_pp": -6.731,
+      "off_hits": 179,
+      "on_hits": 158,
+      "n": 312
+    },
+    "L4096-i12": {
+      "off_pct": 54.808,
+      "on_pct": 54.167,
+      "delta_pp": -0.641,
+      "off_hits": 171,
+      "on_hits": 169,
+      "n": 312
+    },
+    "L4096-i13": {
+      "off_pct": 56.731,
+      "on_pct": 54.808,
+      "delta_pp": -1.923,
+      "off_hits": 177,
+      "on_hits": 171,
+      "n": 312
+    },
+    "L4096-i14": {
+      "off_pct": 54.808,
+      "on_pct": 55.769,
+      "delta_pp": 0.962,
+      "off_hits": 171,
+      "on_hits": 174,
+      "n": 312
+    },
+    "L4096-i15": {
+      "off_pct": 56.09,
+      "on_pct": 55.769,
+      "delta_pp": -0.321,
+      "off_hits": 175,
+      "on_hits": 174,
+      "n": 312
+    },
+    "L4096-i16": {
+      "off_pct": 56.41,
+      "on_pct": 57.051,
+      "delta_pp": 0.641,
+      "off_hits": 176,
+      "on_hits": 178,
+      "n": 312
+    },
+    "L4096-i17": {
+      "off_pct": 58.333,
+      "on_pct": 59.936,
+      "delta_pp": 1.603,
+      "off_hits": 182,
+      "on_hits": 187,
+      "n": 312
+    },
+    "L4096-i18": {
+      "off_pct": 55.769,
+      "on_pct": 55.449,
+      "delta_pp": -0.321,
+      "off_hits": 174,
+      "on_hits": 173,
+      "n": 312
+    },
+    "L4096-i19": {
+      "off_pct": 53.846,
+      "on_pct": 52.244,
+      "delta_pp": -1.603,
+      "off_hits": 168,
+      "on_hits": 163,
+      "n": 312
+    }
+  }
+}

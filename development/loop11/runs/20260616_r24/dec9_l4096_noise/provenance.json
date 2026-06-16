@@ -1,0 +1,21 @@
+{
+  "probe": "ExpA — is the R24 P2 radix-ON L4096 recall@2048 breach (-0.849pp) sampling noise?",
+  "runtime_base_commit": "f82ec2c5d",
+  "model": "GLM-5.1-FP8",
+  "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
+  "channel_mask": "/models/glm51-fp8-channel-mask-s256.safetensors",
+  "tokenizer_file": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db/tokenizer.json",
+  "envelope": "TP8 / fp8_e4m3 / page64 / mem0.8 / max-running 64 / cuda-graph-max-bs 64 / EAGER (--disable-cuda-graph) (expandable_segments NEVER set)",
+  "ds_config": "{\"top_k\":2048,\"page_size\":64,\"channel_mask_path\":\"/models/glm51-fp8-channel-mask-s256.safetensors\",\"device_buffer_size\":4096,\"scorer_norm\":\"off\",\"head_agg\":\"max\",\"anchor_mode\":\"off\",\"anchor_budget\":0,\"recall_oracle\":true,\"enable_lifted_budget_decode\":false,\"lifted_budget_top_k\":0}",
+  "reuse_note": "Reuses R24 harness verbatim: r24_env.sh op-point + niah_oracle_sweep.py + the SAME recall@2048 extraction as p2_recall_compare.py. No new production code.",
+  "seed_semantics": "The NIAH sweep has NO --seed knob; prompts are deterministic in (length, idx) with prompt-seed 1000+idx, so the TRIAL SET is identical across all boots. The four 'distinct seeds' (20260607..20260610) are the server --random-seed; off vs on are paired within each seed on the IDENTICAL trial set.",
+  "design": [
+    "For seed S in {20260607,20260608,20260609,20260610}: boot DS EAGER recall_oracle, radix-OFF (--disable-radix-cache), run NIAH sweep L4096+L16384 num=20 decode-steps=4; teardown; boot radix-ON (SGLANG_DS_RADIX_OVERRIDE=1) run SAME sweep; teardown.",
+    "Higher-n: L4096 num=80 seed 20260607, radix-OFF then radix-ON.",
+    "Aggregate per-seed off/on recall@2048 per length; paired (off-on) delta pp; cross-seed mean/min/max/std; higher-n point estimate.",
+    "expandable_segments NEVER set (unset PYTORCH_CUDA_ALLOC_CONF). One TP=8 server at a time; teardown to ~0 MiB between every boot."
+  ],
+  "working_tree_note": "git HEAD prints f82ec2c5d but the working tree carries the UNCOMMITTED dec9 score_capture instrument (config.py +15, selection_kernel.py +31, deepseek_v2.py +3, all ADDITIVE, gated behind score_capture=False). ExpA used recall_oracle=true and did NOT enable score_capture, so the recall_oracle path is the committed-HEAD logic — confirmed by radix-OFF L4096 reproducing R24 P2 exactly (58.045%).",
+  "boot_command_off": "python -m sglang.launch_server --model-path <GLM> --tp-size 8 --kv-cache-dtype fp8_e4m3 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --random-seed <S> --trust-remote-code --host 127.0.0.1 --port 30000 --mem-fraction-static 0.8 --max-running-requests 64 --cuda-graph-max-bs 64 --enable-double-sparsity --double-sparsity-config '<DS_CFG recall_oracle:true>' --disable-cuda-graph --disable-radix-cache",
+  "boot_command_on": "SGLANG_DS_RADIX_OVERRIDE=1 python -m sglang.launch_server <same as off, WITHOUT --disable-radix-cache>"
+}

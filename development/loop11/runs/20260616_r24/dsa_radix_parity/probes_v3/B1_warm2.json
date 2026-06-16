@@ -1,0 +1,212 @@
+{
+  "tag": "B1_warm2",
+  "prompt_sha256": "86165d70d90b26b0ccaa27eececa4d2ef2264a8ade6d3e9c80402a310b1a416b",
+  "prompt_chars": 24583,
+  "prompt_tokens": 6090,
+  "completion_tokens": 16,
+  "cached_tokens": 6080,
+  "finish_reason": {
+    "type": "length",
+    "length": 16
+  },
+  "n_steps_captured": 16,
+  "continuation_token_ids": [
+    576,
+    21038,
+    17148,
+    315,
+    220,
+    18,
+    99317,
+    19479,
+    22809,
+    22633,
+    264,
+    3974,
+    13867,
+    38627,
+    28897,
+    916
+  ],
+  "per_step": [
+    {
+      "step": 0,
+      "logprob": -0.6869438886642456,
+      "token_id": 576,
+      "token_text": null
+    },
+    {
+      "step": 1,
+      "logprob": -0.4349943995475769,
+      "token_id": 21038,
+      "token_text": null
+    },
+    {
+      "step": 2,
+      "logprob": -0.7837371826171875,
+      "token_id": 17148,
+      "token_text": null
+    },
+    {
+      "step": 3,
+      "logprob": -0.005287946667522192,
+      "token_id": 315,
+      "token_text": null
+    },
+    {
+      "step": 4,
+      "logprob": -0.09591495245695114,
+      "token_id": 220,
+      "token_text": null
+    },
+    {
+      "step": 5,
+      "logprob": -0.0028330450877547264,
+      "token_id": 18,
+      "token_text": null
+    },
+    {
+      "step": 6,
+      "logprob": -0.00024101213784888387,
+      "token_id": 99317,
+      "token_text": null
+    },
+    {
+      "step": 7,
+      "logprob": -0.6808198094367981,
+      "token_id": 19479,
+      "token_text": null
+    },
+    {
+      "step": 8,
+      "logprob": -0.3840339779853821,
+      "token_id": 22809,
+      "token_text": null
+    },
+    {
+      "step": 9,
+      "logprob": -0.7728641629219055,
+      "token_id": 22633,
+      "token_text": null
+    },
+    {
+      "step": 10,
+      "logprob": -0.23667190968990326,
+      "token_id": 264,
+      "token_text": null
+    },
+    {
+      "step": 11,
+      "logprob": -0.11478421837091446,
+      "token_id": 3974,
+      "token_text": null
+    },
+    {
+      "step": 12,
+      "logprob": -5.006664650863968e-05,
+      "token_id": 13867,
+      "token_text": null
+    },
+    {
+      "step": 13,
+      "logprob": -4.3748852476710454e-05,
+      "token_id": 38627,
+      "token_text": null
+    },
+    {
+      "step": 14,
+      "logprob": -0.0031137813348323107,
+      "token_id": 28897,
+      "token_text": null
+    },
+    {
+      "step": 15,
+      "logprob": -7.855583680793643e-05,
+      "token_id": 916,
+      "token_text": null
+    }
+  ],
+  "step0_topk_logprobs": [
+    {
+      "logprob": -0.6869438886642456,
+      "token_id": 576
+    },
+    {
+      "logprob": -2.311944007873535,
+      "token_id": 362
+    },
+    {
+      "logprob": -2.811944007873535,
+      "token_id": 39350
+    },
+    {
+      "logprob": -2.936944007873535,
+      "token_id": 220
+    },
+    {
+      "logprob": -3.936944007873535,
+      "token_id": 8884
+    },
+    {
+      "logprob": -4.061944007873535,
+      "token_id": 21754
+    },
+    {
+      "logprob": -4.374444007873535,
+      "token_id": 508
+    },
+    {
+      "logprob": -4.436944007873535,
+      "token_id": 2009
+    },
+    {
+      "logprob": -4.499444007873535,
+      "token_id": 38762
+    },
+    {
+      "logprob": -4.561944007873535,
+      "token_id": 5209
+    },
+    {
+      "logprob": -4.561944007873535,
+      "token_id": 8115
+    },
+    {
+      "logprob": -4.999444007873535,
+      "token_id": 5443
+    },
+    {
+      "logprob": -4.999444007873535,
+      "token_id": 320
+    },
+    {
+      "logprob": -5.061944007873535,
+      "token_id": 758
+    },
+    {
+      "logprob": -5.124444007873535,
+      "token_id": 330
+    },
+    {
+      "logprob": -5.124444007873535,
+      "token_id": 9255
+    },
+    {
+      "logprob": -5.186944007873535,
+      "token_id": 1096
+    },
+    {
+      "logprob": -5.186944007873535,
+      "token_id": 5692
+    },
+    {
+      "logprob": -5.249444007873535,
+      "token_id": 256
+    },
+    {
+      "logprob": -5.374444007873535,
+      "token_id": 25726
+    }
+  ],
+  "text": " The passage consists of 316 identical sentences describing a quick brown fox jumping over"
+}

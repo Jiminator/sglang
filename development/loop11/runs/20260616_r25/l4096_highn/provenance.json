@@ -1,0 +1,89 @@
+{
+  "task": "L4096 high-n radix on/off recall@2048 characterization (is the -0.849pp miss real or sampling noise?)",
+  "characterization_only": true,
+  "no_radix_authorizing_artifact_written": true,
+  "no_override_path_booted": false,
+  "gate": "stays closed",
+  "runtime_base": "224322cb0",
+  "head_full": "224322cb0d004a1703bdc1f55f730db22e7535df",
+  "torch": "2.11.0+cu130",
+  "started_utc": "2026-06-15T23:32:57Z",
+  "completed_utc": "2026-06-16T00:08:37Z",
+  "gpus": "8x H200 (143771 MiB each); idle 0 MiB at start AND at end (all 8 = 0 MiB)",
+  "one_server_at_a_time": "confirmed (OFF booted, swept, torn down to gpus-idle; THEN ON booted)",
+  "all_killed_at_end": "confirmed (no sglang procs; all 8 GPUs 0 MiB)",
+  "op_point": {
+    "model": "GLM-5.1-FP8",
+    "tp_size": 8,
+    "kv_cache_dtype": "fp8_e4m3",
+    "page_size": 64,
+    "mem_fraction_static": 0.8,
+    "max_running_requests": 64,
+    "cuda_graph": "EAGER (--disable-cuda-graph)",
+    "dsa_prefill_backend": "flashmla_kv",
+    "dsa_decode_backend": "flashmla_kv",
+    "expandable_segments": "NEVER set (PYTORCH_CUDA_ALLOC_CONF unset)",
+    "random_seed": 20260607
+  },
+  "ds_config": {
+    "table_free": true,
+    "recall_oracle": true,
+    "scorer_norm": "off",
+    "head_agg": "max",
+    "top_k": 2048,
+    "page_size": 64,
+    "channel_mask_path": "/models/glm51-fp8-channel-mask-s256.safetensors",
+    "device_buffer_size": 4096,
+    "anchor_mode": "off"
+  },
+  "sweep": {
+    "length_words": 4096,
+    "num_needles": 144,
+    "decode_steps": 4,
+    "seed_base": 1000,
+    "warmup_length": 1024,
+    "warmup_note": "Each L4096-iN measured trial is preceded by an L1024-iN warmup at the SAME seed; L1024-iN shares ~510-594 leading filler words with L4096-iN, so the longer prompt reuses that cached prefix. This is the EXACT cache-engagement mechanism of the proven niah_oracle_sweep (which ran L1024 before L4096 and got the same 320-640 cached-token reuse). Without it, L4096-only got #cached-token:0 throughout (first failed attempt); WITH it, all 144 measured L4096 hit cache.",
+    "note": "L4096 ONLY measured, per owner. Two boots on IDENTICAL prompt set (same seeds/needles). 144 measured + 144 warmup = 288 requests/arm."
+  },
+  "results": {
+    "n_needles_matched": 144,
+    "matched_population": "144/144 paired by request_id; off_only=[] on_only=[]",
+    "cache_engagement_proven": {
+      "radix_on_cached_tokens": "all 144 measured L4096 cached_tokens in [320,640], mean 491, median 512, n_gt0=144 (meta_info AND serve_on.log #cached-token agree)",
+      "radix_off_control": "all 144 measured L4096 cached_tokens == 0 (meta_info AND serve_off.log #cached-token agree)"
+    },
+    "recall_at_2048_pct": {"off": 60.1518, "on": 59.7712},
+    "paired_delta_off_minus_on_pp": {
+      "mean": 0.3806, "std": 1.9736, "min": -4.1667, "max": 6.7308,
+      "ci95_bootstrap_20000": [0.0645, 0.7011]
+    },
+    "verdict": "INSIDE",
+    "verdict_basis": "mean |delta| 0.3806pp <= 0.5pp. CI95 [0.0645,0.7011]pp: lower bound inside +/-0.5pp, upper bound 0.7011pp just outside. CI excludes 0 (a small real off>on bias at this n) but the mean is INSIDE the +/-0.5pp band. Prior n=20 reproduced -0.849pp (on-off) with CI straddling +/-0.5pp; at n=144 the point estimate fell to +0.3806pp (off-on) and tightened INSIDE.",
+    "evidence_files": [
+      "verdict.json (full stats)",
+      "per_needle_table.jsonl (144 paired rows: off_pct/on_pct/delta/cached)",
+      "index_off.jsonl / index_on.jsonl (per-request cached_tokens, 288 rows each)",
+      "sink_off.jsonl / sink_on.jsonl (raw oracle records, 89856 each)",
+      "logs/serve_off.log / logs/serve_on.log (scheduler #cached-token proof)",
+      "logs/stage.log (boot commands + readiness + smoke)"
+    ]
+  },
+  "boots": {
+    "off": "radix-OFF control: --disable-radix-cache; SGLANG_DS_RADIX_OVERRIDE unset; cached_tokens must be 0",
+    "on":  "radix-ON: SGLANG_DS_RADIX_OVERRIDE=1, NO --disable-radix-cache; cached_tokens must be >0 (proves engagement)"
+  },
+  "harness_reused": {
+    "op_point_env": "development/loop11/runs/20260616_r24/tablefree_radix/r24_env.sh (via r25_env.sh)",
+    "prompt_path": "development/loop7/niah_oracle_sweep.py helpers (h._niah_needle / h._make_niah_prompt) + DS recall oracle sink",
+    "proven_cache_engaging": "development/loop11/runs/20260616_r25/radix_authorization/probes/p1_recall/ (serve_on.log showed cached_tokens 320-2624; serve_off.log all 0)"
+  },
+  "new_harness_under_run_dir": [
+    "niah_highn_driver.py (oracle path + per-request cached_tokens capture; NO production code change)",
+    "run_highn.sh (two-boot driver, reuses r25_env)",
+    "analyze.py (per-needle paired delta + bootstrap CI + cache-engagement gates)"
+  ],
+  "boot_commands": {
+    "off": "python -m sglang.launch_server --model-path <GLM-5.1-FP8> --tp-size 8 --kv-cache-dtype fp8_e4m3 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --random-seed 20260607 --trust-remote-code --host 127.0.0.1 --port 30000 --mem-fraction-static 0.8 --max-running-requests 64 --cuda-graph-max-bs 64 --enable-double-sparsity --double-sparsity-config '{...recall_oracle:true...}' --disable-cuda-graph --disable-radix-cache",
+    "on":  "(same) ... --enable-double-sparsity --double-sparsity-config '{...recall_oracle:true...}' --disable-cuda-graph   [env SGLANG_DS_RADIX_OVERRIDE=1, NO --disable-radix-cache]"
+  }
+}

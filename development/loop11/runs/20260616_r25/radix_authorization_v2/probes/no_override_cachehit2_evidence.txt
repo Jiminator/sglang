@@ -1,0 +1,5 @@
+no_override_cachehit_rerun2 (corrected POST body)
+artifact=/sgl-workspace/sglang/development/loop11/runs/20260616_r25/radix_authorization_v2/ds_radix_fixture_state_tablefree_v2.json
+status=ACCEPTED  disable_radix_cache=False
+prompt_tokens=600 cold_cached_tokens=0 warm_cached_tokens=576 (prompt >> page_size=64)
+authorizing WARNING: [2026-06-16 01:29:55] DS radix-cache fixture recorded as PASSED for this ServerArgs; validator will now accept --disable-radix-cache removal. Source: record_radix_fixture_passed(). artifact=/sgl-workspace/sglang/development/loop11/runs/20260616_r25/radix_authorization_v2/ds_radix_fixture_state_tablefree_v2.json artifact_sha256=d98ab24b7f7e495b0923e95ad3a099b4496048e59a75a051fc35e756da0bde56

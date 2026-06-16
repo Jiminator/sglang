@@ -1,0 +1,35 @@
+{
+  "probe": "ExpB — does the shipped DSA-native default ride the radix v_h jitter? (cold vs warm output/logprob parity across a radix cache hit)",
+  "runtime_base_commit": "f82ec2c5d",
+  "model": "GLM-5.1-FP8",
+  "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
+  "channel_mask_note": "DSA-native default uses NO --enable-double-sparsity and NO channel mask. Channel mask path /models/glm51-fp8-channel-mask-s256.safetensors is the DS mask, unused here.",
+  "envelope": "TP8 / fp8_e4m3 / page64 / mem0.8 / max-running 64 / cuda-graph-max-bs 64 (expandable_segments NEVER set). B1 graph ON (shipped); B2 graph ON, radix OFF.",
+  "probe_level": "OUTPUT/LOGPROB via standard /generate API (return_logprob, logprob_start_len=0, top_logprobs_num=20). GREEDY decode temperature 0.0 top_k 1. NO new production code; DSA selection is not exposed by DS instruments, so divergence is observed at token-ids + token logprobs.",
+  "prompt": {
+    "source": "IDENTICAL deterministic ~6090-token text as the DS cold/warm probe (dec9_determinism/q2_score/q2_driver.py): base_sentence='The quick brown fox jumps over the lazy dog near the riverbank at dawn. ', n_sent=3800//12=316, prompt = ''.join(f'[{i}] {base_sentence}' for i in range(316)) + ' Summarize the passage above in one sentence.'",
+    "chars": 24583,
+    "sha256": "86165d70d90b26b0ccaa27eececa4d2ef2264a8ade6d3e9c80402a310b1a416b",
+    "reused_across_all_boots": true
+  },
+  "boots": {
+    "B1_radix_on_shipped": "python -m sglang.launch_server --model-path <GLM> --tp-size 8 --kv-cache-dtype fp8_e4m3 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --random-seed 20260607 --trust-remote-code --host 127.0.0.1 --port 30000 --mem-fraction-static 0.8 --max-running-requests 64 --cuda-graph-max-bs 64  (NO --enable-double-sparsity; shipped radix-default ON; graph ON). cold then warm (identical prompt).",
+    "B2_radix_off_control": "same as B1 + --disable-radix-cache. two fresh sends (fresh vs fresh)."
+  },
+  "run_evolution": {
+    "v1_probes": "graph-on; DISCARDED (graph-on made the radix-OFF control non-reproducible AND warm radix-missed).",
+    "v2_probes_v2": "EAGER; warm still radix-missed (cached_tokens=0) — PROBE BUG: logprob_start_len=0 disables radix prefix caching.",
+    "radixhit_diag": "single boot, --enable-cache-report, omit logprob_start_len; confirmed DSA-default radix HITS (short->64, medium->1024, 6090-tok->6080).",
+    "v3_probes_v3": "FINAL; probe fixed (logprob_start_len omitted); EAGER; B1 warm cached_tokens=6080 (real hit), B2 radix-OFF control."
+  },
+  "final_boot_commands": {
+    "B1_v3_radix_on_eager": "python -m sglang.launch_server --model-path <GLM> --tp-size 8 --kv-cache-dtype fp8_e4m3 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --disable-cuda-graph --random-seed 20260607 --trust-remote-code --host 127.0.0.1 --port 30000 --mem-fraction-static 0.8 --max-running-requests 64 --cuda-graph-max-bs 64  (NO --enable-double-sparsity; shipped radix-default ON)",
+    "B2_v3_radix_off_eager": "same + --disable-radix-cache",
+    "probe_params": "/generate return_logprob=true top_logprobs_num=20 temperature=0 top_k=1 max_new_tokens=16; logprob_start_len OMITTED (default) so radix prefix caching is preserved."
+  },
+  "rules_followed": [
+    "expandable_segments NEVER set (unset PYTORCH_CUDA_ALLOC_CONF).",
+    "One TP=8 server at a time; teardown to ~0 MiB between every boot (v1/v2/v3/diag).",
+    "No new production code; standard server API only."
+  ]
+}

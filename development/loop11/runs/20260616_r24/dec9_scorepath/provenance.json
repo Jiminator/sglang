@@ -1,0 +1,30 @@
+{
+  "probe": "DEC-9 DS radix-on cold/warm SELECTION divergence — rigorous score-PATH parity (owner directive, R24 scorepath)",
+  "runtime_base_commit": "f82ec2c5d",
+  "working_tree_note": "source changes for score_capture are UNCOMMITTED in the working tree at run time; git HEAD prints f82ec2c5d but the live import includes the score_capture instrument extended with PRE-reduce capture (config.py + score_capture.py + selection_kernel.py + deepseek_v2.py).",
+  "relation_to_prior": "extends 20260616_r24/dec9_determinism (Q2 captured only POST-reduce scores). This round adds: (exp1) PRE-reduce per-rank score snapshot before the cross-TP all-reduce; (exp2) fp32 reduce re-run; (exp3) radix-vs-fallback top-k parity on the same score tensor.",
+  "op_point": {
+    "model": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
+    "channel_mask": "/models/glm51-fp8-channel-mask-s256.safetensors",
+    "tp_size": 8,
+    "kv_cache_dtype": "fp8_e4m3",
+    "page_size": 64,
+    "mem_fraction_static": 0.8,
+    "max_running_requests": 64,
+    "cuda_graph_max_bs": 64,
+    "eager": true,
+    "radix": "ON (SGLANG_DS_RADIX_OVERRIDE=1, no --disable-radix-cache)",
+    "expandable_segments": "NEVER (unset PYTORCH_CUDA_ALLOC_CONF)",
+    "ds_config_base": "{\"top_k\":2048,\"page_size\":64,\"channel_mask_path\":\"/models/glm51-fp8-channel-mask-s256.safetensors\",\"device_buffer_size\":4096,\"scorer_norm\":\"off\",\"head_agg\":\"max\",\"anchor_mode\":\"off\",\"anchor_budget\":0,\"recall_oracle\":false,\"enable_lifted_budget_decode\":false,\"lifted_budget_top_k\":0,\"score_capture\":true,\"selection_capture\":true}"
+  },
+  "passes": {
+    "pass_bf16": {
+      "score_reduce_dtype": "bf16 (default)",
+      "yields": ["exp1 pre-vs-post reduce at flips", "exp2 bf16 flip count", "exp3 (offline on bf16 cold dumps)"]
+    },
+    "pass_fp32": {
+      "score_reduce_dtype": "fp32",
+      "yields": ["exp2 fp32 flip count"]
+    }
+  }
+}

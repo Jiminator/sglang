@@ -1,0 +1,41 @@
+{
+  "experiment": "ExpB — does the shipped DSA-native default ride the radix v_h jitter? (cold vs warm output/logprob parity across a radix cache hit)",
+  "runtime_base_commit": "f82ec2c5d",
+  "model": "GLM-5.1-FP8",
+  "envelope": "TP8 / fp8_e4m3 / page64 / mem0.8 / max-running 64 / cuda-graph-max-bs 64 (expandable_segments NEVER set). DSA-native default (NO --enable-double-sparsity).",
+  "probe": "OUTPUT/LOGPROB via standard /generate (return_logprob, top_logprobs_num=20). GREEDY temp0 top_k1. 16 decode steps. No new production code.",
+  "prompt": {"chars": 24583, "prompt_tokens_server": 6090, "sha256": "86165d70d90b26b0ccaa27eececa4d2ef2264a8ade6d3e9c80402a310b1a416b",
+    "source": "IDENTICAL deterministic text as the DS cold/warm probe (dec9_determinism q2_driver): '[i] The quick brown fox...' x316 + ' Summarize the passage above in one sentence.'"},
+  "runs": {
+    "v1_GRAPH_ON": "DISCARDED for the cold/warm verdict: graph-on made even the radix-OFF fresh-vs-fresh control non-reproducible AND the warm send got cached_tokens=0 (radix miss). Re-ran EAGER.",
+    "v2_EAGER_radix_miss": "EAGER, but warm still cached_tokens=0 — traced to a PROBE BUG: logprob_start_len=0 forces full-prompt input logprobs which DISABLES radix prefix caching. Diagnostic (radixhit_diag) confirmed DSA-default radix DOES hit when logprob_start_len is omitted (short->64, medium->1024, 6090-tok->6080).",
+    "v3_EAGER_radix_hit": "FINAL. Probe fixed (omit logprob_start_len). EAGER. B1 warm got a REAL radix hit (cached_tokens=6080); B2 radix-OFF control."
+  },
+  "FINAL_v3_results": {
+    "B1_radix_on": {
+      "cold_cached_tokens": 0, "warm_cached_tokens": 6080, "warm2_cached_tokens": 6080,
+      "positive_radix_hit": true,
+      "continuation_identical": false, "first_divergent_greedy_step": 9,
+      "max_abs_delta_output_logprob": 0.775, "max_abs_delta_output_logprob_step": 13,
+      "step0_topk_max_abs_delta_logprob": 2.1935, "step0_topk_token_set_identical": false
+    },
+    "B2_radix_off_control": {
+      "fresh1_cached_tokens": 0, "fresh2_cached_tokens": 0,
+      "continuation_identical": false, "first_divergent_greedy_step": 9,
+      "max_abs_delta_output_logprob": 0.861, "max_abs_delta_output_logprob_step": 13,
+      "step0_topk_max_abs_delta_logprob": 1.4699
+    }
+  },
+  "control_is_NOT_bit_identical": {
+    "finding": "The radix-OFF control (two FRESH identical requests, EAGER, no cache hit at all) is NOT bit-reproducible: step-0 top-k logprobs differ by ~1.47-1.50 in BOTH the v2 and v3 boots, and in v3 the greedy continuation flips at step 9 just like B1. (In v2 the v2-control continuation happened to stay identical — the step-9 argmax sits on a near-tie that tiny run-to-run noise flips. step0_topk_max_dlp v2=1.499, v3=1.470.)",
+    "implication": "Because the radix-OFF fresh-vs-fresh baseline ALREADY diverges by the same magnitude and at the same step as the radix-hit B1 cold-vs-warm, the probe CANNOT attribute B1's divergence specifically to the radix cache hit. The DSA-native GLM-5.1 decode is non-bit-reproducible run-to-run REGARDLESS of radix."
+  },
+  "verdict": {
+    "headline": "PARTIAL / HONEST-NEGATIVE on the radix-specific claim.",
+    "cold_warm_bit_identity": "The shipped DSA-native default does NOT meet a cold==warm bit-identity bar: B1 cold (fresh) vs warm (real radix hit, cached_tokens=6080) produce DIFFERENT step-0 logprobs (top-k |Δ| up to 2.19) and the greedy continuation diverges at step 9. So 'cold==warm bit-identity' is indeed a bar the shipped product does NOT meet.",
+    "but_not_radix_specific": "However the spec's discriminating condition (B1 warm!=cold WHILE B2 fresh==fresh bit-identical) is NOT satisfied: B2 fresh-vs-fresh is ALSO non-identical (diverges at the same step 9, comparable |Δ|). The non-reproducibility is a general run-to-run property of the GLM-5.1 DSA decode (numeric jitter in the all-reduce/MoE/indexer path), present even with radix fully OFF. The radix hit does NOT add a distinguishable extra divergence above that baseline.",
+    "honest_conclusion": "I CANNOT show that the DSA default specifically 'rides the radix v_h jitter', because the DSA default is not bit-reproducible even without radix. What is established: (1) the DSA-native radix cache DOES hit (cached_tokens 6080 on the identical 6090-token re-send), and (2) neither cold-vs-warm NOR fresh-vs-fresh is bit-identical at the OUTPUT/LOGPROB level for the shipped DSA default. The 'cold==warm bit-identity' criterion is stricter than the shipped product meets, but the gap is run-to-run numeric nondeterminism in general, not a radix-cache-specific effect isolable at the output level."
+  },
+  "caveat": "This OUTPUT-level probe cannot see DSA's internal indexer selection (not exposed by DS instruments). The DS-side dec9_determinism Q1 proved DS SELECTED-INDEX equality fresh-vs-fresh (integer top-k, a coarser quantity); raw output logprobs are a finer probe and jitter even when selected indices are stable. So 'DSA rides the radix v_h jitter at the selection level' is neither confirmed nor refuted here — only the OUTPUT/logprob level was observable, and at that level even fresh-vs-fresh is non-reproducible.",
+  "cleanup": "v1, v2, v3 + diagnostic each torn down to ~0 MiB between boots; final nvidia-smi all 8 GPUs 0 MiB; no lingering sglang processes; expandable_segments never set; one TP=8 server at a time."
+}

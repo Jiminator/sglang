@@ -1,0 +1,96 @@
+{
+  "run": "loop11_r25_table_free_DS_radix_on_authorization_value_equivalence_v2",
+  "date_utc": "2026-06-15",
+  "runtime_base_commit": "224322cb0",
+  "runtime_base_commit_full": "224322cb0d004a1703bdc1f55f730db22e7535df",
+  "model": "GLM-5.1-FP8",
+  "envelope": "TP8 / fp8_e4m3 / page64 / mem0.8 / max-running 64 / cuda-graph-max-bs 64 (EAGER --disable-cuda-graph for all probes; expandable_segments NEVER set; PYTORCH_CUDA_ALLOC_CONF unset)",
+  "ds_table_free_config": "top_k 2048, page_size 64, channel_mask /models/glm51-fp8-channel-mask-s256.safetensors (sha256 340b6c0bd40d6d7dcf4fef5ab2a9f096cf56d94bc844960500bcd72db65f08bd), device_buffer_size 4096, scorer_norm off, head_agg max, anchor off, selector_mode table_free",
+  "schema_targeted": "ds_radix_fixture_state_tablefree_v2",
+  "honesty_note": "Every verdict below is re-derived from the raw probe artifacts. No FAIL is relabeled noise. The R24/Exp-A 'L4096 breach is noise' verdict was an OVERCLAIM: at this HEAD the L4096 -0.849pp breach REPRODUCED. The artifact is NOT written. No passing v2 state file exists.",
+  "probes": {
+    "1_recall_equivalence": {
+      "status": "FAIL",
+      "boot": "radix-OFF (--disable-radix-cache) vs radix-ON (SGLANG_DS_RADIX_OVERRIDE=1), SAME NIAH trial set, lengths {1024,4096,16384}, num=20, decode-steps=4, recall_oracle=true, EAGER",
+      "overall": {"radix_off_pct": 64.802, "radix_on_pct": 64.637, "delta_pp": -0.165, "samples_off": 18720, "samples_on": 18720},
+      "per_length": {
+        "1024": {"radix_off_pct": 100.0, "radix_on_pct": 100.0, "delta_pp": 0.0, "within_bound": true, "samples": 6240},
+        "4096": {"radix_off_pct": 58.045, "radix_on_pct": 57.196, "delta_pp": -0.849, "within_bound": false, "samples": 6240},
+        "16384": {"radix_off_pct": 36.362, "radix_on_pct": 36.715, "delta_pp": 0.353, "within_bound": true, "samples": 6240}
+      },
+      "breach": "length 4096: radix on-off delta -0.849pp exceeds +/-0.5pp (off=58.045% on=57.196%)",
+      "root_cause": "Real radix cache hits occurred during the radix-ON sweep (serve_on.log: 40 prefill batches with #cached-token 1500-2100; NIAH prompts share filler-word prefixes). The cache hit changes the decode query upstream of DS selection, reshuffling near-cutoff tokens. ALL 20 L4096 trials jitter (both signs, -6.73 to +4.17pp; see p1_recall_L4096_pertrial_diag.json); the net L4096 aggregate landed at -0.849pp, over the 0.5pp bar. This is the documented near-cutoff reshuffle, NOT stale-slot corruption, but it BREACHES the per-length recall bar so recall_equivalence is a real FAIL.",
+      "vs_R24": "radix-OFF L4096 == R24 exactly (3622/6240 = 58.045%). radix-ON 57.196% == R24's 57.196% (3569/6240). The R24 P2 breach reproduced bit-for-bit at this HEAD.",
+      "vs_ExpA": "ExpA's saved radix-ON L4096 was 3622/6240 = 58.045% (== off, no per-trial divergence in that draw), which is why ExpA called it noise. R25 reproduced the divergence. The breach is NOT relabeled noise."
+    },
+    "2_cross_rank_selection_identity": {
+      "status": "PASS",
+      "boot": "radix-ON (SGLANG_DS_RADIX_OVERRIDE=1) and radix-OFF (--disable-radix-cache), each EAGER selection_capture=true",
+      "radix_on": {"status": "PASS", "ranks_present": [0,1,2,3,4,5,6,7], "all_ranks_identical_all_steps": true, "common_steps": [30,31,32], "layers": 78},
+      "radix_off": {"status": "PASS", "ranks_present": [0,1,2,3,4,5,6,7], "all_ranks_identical_all_steps": true, "common_steps": [30,31,32], "layers": 78},
+      "note": "Byte-identical (indices+lengths SHA256) across all 8 TP ranks at every captured decode step, within EACH path. Re-confirms R24 P1 cross_rank_identical at this HEAD."
+    },
+    "3_edge_probe_page64": {
+      "status": "FAIL",
+      "boot": "radix-ON EAGER, recall_oracle+selection_capture, L4096 idx3, page64, top_k2048, cold-baseline vs edge cases, +/-0.5pp vs cold",
+      "cold_baseline_pct": 59.615,
+      "a_boundary_aligned_full_reuse": {"cached_tokens": 4288, "cached_is_page_multiple": true, "recall_pct": 60.256, "delta_pp_vs_cold": 0.641, "within_bound": false},
+      "b_partial_page_hit": {"cached_tokens": 4288, "cached_is_page_multiple": true, "recall_pct": 58.654, "delta_pp_vs_cold": -0.961, "within_bound": false},
+      "c_eviction_recompute": {"flush_cache_ok": true, "cached_tokens_after_flush": 0, "prefix_evicted": true, "recall_pct": 59.615, "delta_pp_vs_cold": 0.0, "within_bound": true},
+      "no_stale_slot": "The eviction/recompute case (c) reproduces the cold baseline EXACTLY (0.0pp) after /flush_cache forced the prefix out — proving a recompute path is byte-equivalent to cold and NO stale slot is served. Corruption would have made (c) diverge too. The boundary (a) and partial (b) cache-HIT cases jitter +0.641 / -0.961pp (same near-cutoff reshuffle as probe 1; single-prompt n=312 layer-step records), which exceeds the strict +/-0.5pp bar -> FAIL. selected count valid everywhere (probe 4).",
+      "needle_span_first_last": [2151, 2159]
+    },
+    "4_no_dense_fallback": {
+      "status": "PASS",
+      "files_scanned": 512,
+      "rows_checked": 39936,
+      "rows_full_sparse_budget_seq_ge_topk_vl_eq_topk": 21216,
+      "rows_short_context_seq_lt_topk": 18720,
+      "seq_len_range": [6, 4359],
+      "num_violations": 0,
+      "note": "Across radix-ON, radix-OFF, and edge selection captures: every (layer,row) with seq_len>=2048 selected exactly 2048; short-context rows selected the whole context. Never an over-budget, zero, or full-dense degrade. DS selection ALWAYS returns a valid sparse top-k."
+    },
+    "5_cold_warm_flips_value_neutral_documented": {
+      "documented": false,
+      "status": "FAIL",
+      "reason": "The flips ARE real near-cutoff reshuffling (probe 1 per-trial diag: all 20 L4096 trials jitter both signs; R24 P1 comparator reason 'cold=476 warm=477' = adjacent-token swap; R24 summary symdiff 1.99%). But 'value-neutral' requires recall-neutral, and recall_equivalence FAILED at L4096 (-0.849pp). Cannot honestly document the flips as value-neutral when the recall gate it depends on did not hold."
+    }
+  },
+  "artifact": {
+    "written": false,
+    "schema": "ds_radix_fixture_state_tablefree_v2",
+    "reason": "write_artifact.py REFUSED (exit 2): recall_equivalence=False, edge_probe=False, cold_warm_flips_documented=False. No passing v2 state file exists. Per contract, no passing artifact is written when any probe fails.",
+    "derived_flags": {
+      "recall_equivalence_passed": false,
+      "cross_rank_selection_identity_passed": true,
+      "edge_probe_passed": false,
+      "no_dense_fallback_passed": true,
+      "cold_warm_flips_value_neutral_documented": false
+    }
+  },
+  "no_override_boot": {
+    "positive": "NOT RUN — requires a passing --double-sparsity-radix-fixture-artifact v2 state file, which was not authorized (probes failed). Honestly not run rather than fabricated.",
+    "negative_control": {
+      "status": "PASS (refused)",
+      "boot": "radix-ON DS, NO artifact, NO SGLANG_DS_RADIX_OVERRIDE",
+      "validator_refusal": "ValueError: Double Sparsity requires --disable-radix-cache until the table-free radix fixture has been recorded as passing (server_args._double_sparsity_radix_fixture_passed = True). Set SGLANG_DS_RADIX_OVERRIDE=1 to override during development.",
+      "note": "Fail-closed product mechanism confirmed: radix-on without an authorizing artifact and without the dev override is refused at boot."
+    }
+  },
+  "ac7_dsa_native_default": {
+    "status": "PASS",
+    "max_total_num_tokens": 410560,
+    "expected": 410560,
+    "result": "MATCH",
+    "kv_ranks_logging_410560": 8,
+    "smoke": "OK (Paris...)"
+  },
+  "cleanup": {
+    "one_server_at_a_time": true,
+    "full_teardown_between_boots": "every boot torn down to ~0 MiB (gpu_idle_wait confirmed between all 7 TP=8 boots: P1 off+on, P2 on+off, P3 edge, NEG, AC-7)",
+    "final_nvidia_smi": "all 8 GPUs 0 MiB",
+    "expandable_segments": "NEVER set (PYTORCH_CUDA_ALLOC_CONF unset throughout)",
+    "raw_pt": "removed (verdicts extracted; no raw .pt under the evidence dir)",
+    "committed": false
+  }
+}
