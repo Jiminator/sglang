@@ -1,0 +1,22 @@
+{
+  "round": "R27",
+  "contract": "DEC-12 production-representative-reuse edge gate",
+  "runtime_base": "0f73baa0d",
+  "head_at_run": "0f73baa0d257aa99937e2a7a428ddfb74e60e904",
+  "head_short": "0f73baa0d",
+  "op_point": "GLM-5.1-FP8 TP=8 fp8_e4m3 page64 mem0.8 max-running64 EAGER (--disable-cuda-graph), DS table-free recall_oracle=true top_k=2048 page_size=64 channel_mask=glm51-fp8-channel-mask-s256 device_buffer_size=4096 anchor=off; PYTORCH_CUDA_ALLOC_CONF UNSET (no expandable_segments)",
+  "arms": {
+    "cold": "radix-OFF, full L4096 P, cached MUST be 0 (control for boundary+evict)",
+    "cold_partial": "radix-OFF, prefix2752+tail (~2763 tok), cached MUST be 0 (MATCHED control for partial)",
+    "boundary": "radix-ON, warm L1024 -> measure L4096, page-aligned small reuse (cached ~320-640)",
+    "partial": "radix-ON, warm 2752-tok prefix -> request prefix+tail, production upper bound (cached ~2752)",
+    "nearfull": "radix-ON, warm full L4096 -> request L4096+tail, near-full reuse (cached ~4288); OUT-OF-CONTRACT characterization",
+    "evict": "radix-ON, warm -> flush_cache -> recompute (cached MUST fall to 0)"
+  },
+  "n_needles": {"cold": 144, "cold_partial": 136, "boundary": 144, "partial": 136, "nearfull": 144, "evict": 144},
+  "robust_n_min": 128,
+  "methodology_fix": "R27 v1 paired partial (prefix+tail ~2763 tok) against the full-L4096 cold (~4333 tok), conflating the radix effect with a prompt-LENGTH confound (+15.86pp). v2 added the cold_partial matched radix-OFF control issuing the IDENTICAL prefix+tail prompt; the production-reuse delta is then -0.0118pp (CI95 [-0.29,+0.26]), within +/-0.5pp.",
+  "verdict": "PASS (production-reuse cases within +/-0.5pp + eviction clean); near-full +1.57pp recorded out-of-contract",
+  "b1_fix": "runner final exit now includes AN_RC; SELFTEST=1 proves a FAIL analyzer forces nonzero runner exit",
+  "recorded_at": "2026-06-16T07:51:21Z"
+}

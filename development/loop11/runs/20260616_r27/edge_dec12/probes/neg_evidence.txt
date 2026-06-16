@@ -1,0 +1,1 @@
+[2] NEGATIVE control (no artifact, no override): refused=yes msg=ValueError: Double Sparsity requires --disable-radix-cache until the table-free radix fixture has been recorded as passing (server_args._double_sparsity_radix_fixture_passed = True). Set SGLANG_DS_RADIX_OVERRIDE=1 to override during development.
