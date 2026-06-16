@@ -1,7 +1,8 @@
 # R28 clean-archive reproduction proof — DEC-12 edge verdict from committed evidence ONLY
-# date_utc: 2026-06-16   commit: cab8c3f21
-# method: git archive HEAD <edge_ded12> | tar -x -C $TMP ; bash $TMP/.../reproduce.sh
+# date_utc: 2026-06-16   evidence commit: 36e97f89d
+# method: git archive 36e97f89d <edge_dec12> | tar -x -C $TMP ; bash $TMP/.../reproduce.sh
 # (the archive contains ONLY git-tracked files — the uncompressed index_*.jsonl are gitignored)
+# Re-verify: git merge-base --is-ancestor 36e97f89d HEAD  (the evidence commit is an ancestor of HEAD)
 
 ## tracked inputs in the archive (no uncompressed .jsonl):
 index_boundary.jsonl.gz
@@ -18,8 +19,8 @@ sink_nearfull.jsonl.gz
 sink_partial.jsonl.gz
   uncompressed index_*.jsonl in archive: 0 (expect 0)
 
-## reproduce.sh output (run inside the clean archive):
-[analyze_edge DEC-12] -> /tmp/tmp.gTn1JWivBs/repro_verdict.json
+## reproduce.sh output (run inside the clean archive of 36e97f89d):
+[analyze_edge DEC-12] -> /tmp/tmp.abzm0dKZm6/repro_verdict.json
   cold   cached dist : {'n': 144, 'min': 0, 'max': 0, 'mean': 0.0, 'median': 0, 'n_zero': 144, 'n_gt0': 0, 'n_page_multiple_gt0': 0}
   cprt   cached dist : {'n': 136, 'min': 0, 'max': 0, 'mean': 0.0, 'median': 0, 'n_zero': 136, 'n_gt0': 0, 'n_page_multiple_gt0': 0}  (matched control for partial)
   bnd    cached dist : {'n': 144, 'min': 320, 'max': 640, 'mean': 491.11, 'median': 512, 'n_zero': 0, 'n_gt0': 144, 'n_page_multiple_gt0': 144}

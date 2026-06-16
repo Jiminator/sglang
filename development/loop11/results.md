@@ -1,7 +1,7 @@
 # Loop 11 Results — Authoritative Current State
 
 > Maintained rewrite-over-append: this document always reflects the loop's current state.
-> Last regenerated: Round 28, 2026-06-16. R27: implemented owner DEC-12 (production-reuse edge contract) → radix-on RE-ENABLED + AUTHORIZED (boundary −0.38pp, partial@~2752 −0.01pp vs length-matched control, eviction 0.0pp; near-full +1.57pp out-of-contract; no-override boot ACCEPTED; AC-7 410560). R28 (this round): made the DEC-12 edge PASS REPRODUCIBLE from committed evidence (AC-8) — committed the per-arm cache-engagement `index_*.jsonl.gz` + per-needle table, made the analyzer `.gz`-aware, added `reproduce.sh`; a clean `git archive` checkout reproduces `gate_c_edge_verdict.json` (status=PASS) exactly. HEAD `0507cdaaa`.
+> Last regenerated: Round 29, 2026-06-16. R27: implemented owner DEC-12 (production-reuse edge contract) → radix-on RE-ENABLED + AUTHORIZED (boundary −0.38pp, partial@~2752 −0.01pp vs length-matched control, eviction 0.0pp; near-full +1.57pp out-of-contract; no-override boot ACCEPTED; AC-7 410560). R28: made the DEC-12 edge PASS REPRODUCIBLE from committed evidence (AC-8) — `index_*.jsonl.gz` + per-needle table tracked, analyzer `.gz`-aware, `reproduce.sh`; a clean `git archive` of the **R28 evidence commit `36e97f89d`** (an ancestor of HEAD) reproduces `gate_c_edge_verdict.json` (status=PASS) exactly. R29 (this round): AC-8 handoff cleanup — corrected the amend-drifted commit refs (`0507cdaaa`/`cab8c3f21`, abandoned) to the real evidence commit `36e97f89d`, and made `queue.md` status current. (Commit refs name `36e97f89d`, not the current-HEAD hash, to avoid self-reference drift.)
 
 ## 1. Current state summary
 
@@ -18,7 +18,7 @@
   (tracked files only, NO uncompressed `.jsonl`) → `reproduce.sh` regenerates `gate_c_edge_verdict.json`
   EXACTLY (status=PASS; boundary −0.38pp, partial −0.0118pp vs cold_partial, eviction 0.0pp, near-full
   +1.57pp out-of-contract). Proof tracked at `runs/20260616_r27/edge_dec12/reproduce_proof.txt`. task7
-  authorization is now independently auditable from the commit. `0507cdaaa`.
+  authorization is now independently auditable from the commit. Evidence commit `36e97f89d`.
 - **R27 — task7 COMPLETE: implemented owner DEC-12 (production-reuse edge contract) → radix-on AUTHORIZED + re-enabled.**
   Fixed the Codex-R26 shell fail-open: the gate runner's final exit now includes `AN_RC` (a FAIL
   analyzer forces a nonzero runner exit; proven via a SELFTEST FAIL fixture — R26 expr=0 vs R27 expr=1).
