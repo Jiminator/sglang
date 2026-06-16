@@ -26,7 +26,7 @@
 
 set -euo pipefail
 
-MODEL_PATH="${MODEL_PATH:-/cluster-storage/models/deepseek-ai/DeepSeek-V3.2}"
+MODEL_PATH="${MODEL_PATH:-/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db}"
 PORT="${PORT:-30000}"
 # Bind address. Default 127.0.0.1 (localhost-only, the sglang default). Set
 # HOST=0.0.0.0 to make this DS server reachable from another node (symmetry
@@ -37,7 +37,7 @@ HOST="${HOST:-127.0.0.1}"
 TP_SIZE="${TP_SIZE:-8}"
 KV_CACHE_DTYPE="${KV_CACHE_DTYPE:-fp8_e4m3}"
 PAGE_SIZE="${PAGE_SIZE:-64}"
-CHANNEL_MASK_PATH="${CHANNEL_MASK_PATH:-/models/dsv32-fp8-channel-mask.safetensors}"
+CHANNEL_MASK_PATH="${CHANNEL_MASK_PATH:-/cluster-storage/models/glm51-fp8-channel-mask-s256.safetensors}"
 TOP_K="${TOP_K:-2048}"
 DEVICE_BUFFER_SIZE="${DEVICE_BUFFER_SIZE:-4096}"
 # Double Sparsity selects table-free: absorbed-latent scoring reads the resident

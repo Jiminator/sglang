@@ -33,7 +33,7 @@
 
 set -euo pipefail
 
-MODEL_PATH="${MODEL_PATH:-/cluster-storage/models/deepseek-ai/DeepSeek-V3.2}"
+MODEL_PATH="${MODEL_PATH:-/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db}"
 PORT="${PORT:-30000}"
 # Bind address. Default 127.0.0.1 (localhost-only, the sglang default). Set
 # HOST=0.0.0.0 to make this baseline reachable from another node — needed when
