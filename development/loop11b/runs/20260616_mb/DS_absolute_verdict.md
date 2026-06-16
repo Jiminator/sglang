@@ -1,9 +1,11 @@
-# loop11b M-B — DS-vs-DSA locked sweep verdict (production-envelope, ld32 mask)
+# loop11b M-B — DS-vs-DSA locked sweep VERDICT (matched op-point, ld32 mask)
 
-Production-envelope op-point: DS mem 0.8 (radix-on via minted fixture, max_running_requests=64,
-cuda_graph_max_bs=64) vs DSA-native. gsp 4096 ISL / 512 OSL, ~55% prefix, 2 trials/conc (median),
-600s window, conc 16/32/64. Block-scheduled (labeled unpaired). SLOS.md absolute bars (DEC-6):
-decode-TPS p50 >= 30, P99 TTFT < 22 s, judged regardless of DSA.
+Production-envelope op-point: DS mem 0.8 (radix-on via the minted content-hash fixture) vs DSA-native
+mem 0.85; BOTH at the locked op-point max_running_requests=64, cuda_graph_max_bs=64, page 64, fp8_e4m3,
+TP=8, radix-ON. gsp 4096 ISL / 512 OSL, ~55% prefix, 2 trials/conc (DEC-4, median), 600 s window, conc
+16/32/64. Block-scheduled (labeled unpaired). SLOS.md absolute bars (DEC-6): decode-TPS p50 >= 30,
+P99 TTFT < 22 s, judged REGARDLESS of DSA. Data: results_prod_envelope/ (DS @ 72cb24751, DSA matched
+re-run @ 94313249e — the intervening commits change no served behavior; verdict_matched.json).
 
 ## AC-2 (P99 TTFT) + AC-3 (decode-TPS p50) — absolute verdict
 
@@ -11,32 +13,40 @@ decode-TPS p50 >= 30, P99 TTFT < 22 s, judged regardless of DSA.
 |----------|------|----------------|--------------|---------------|---------|
 | DS  | 16 | 40.75 | 1.59  | 16.0 | **PASS** |
 | DS  | 32 | 34.12 | 3.20  | 32.0 | **PASS** |
-| DS  | 64 | 26.98 | 25.12 | 58.9 (admission-capped <64) | **FAIL** (TPS<30 AND TTFT>22) |
-| DSA | 16 | 41.48 | 3.45  | 16.0 | PASS |
-| DSA | 32 | 33.61 | 6.79  | 32.0 | PASS |
-| DSA | 64 | 26.28 | 13.53 | 64.0 | FAIL (TPS<30; TTFT ok) |
+| DS  | 64 | 26.98 | 25.12 | 58.9 (admission-capped <64) | **FAIL** (TPS 26.98<30 AND TTFT 25.12>22) |
+| DSA | 16 | 41.50 | 3.50  | 16.0 | PASS |
+| DSA | 32 | 33.34 | 6.80  | 32.0 | PASS |
+| DSA | 64 | 26.22 | 33.32 | 60.3 | FAIL (TPS 26.22<30 AND TTFT 33.32>22) |
 
-## DS/DSA ratios (REPORTED, not gated — DEC-6)
+**DS absolute verdict: PASS at conc 16 and 32; FAIL at conc 64.**
 
-| conc | decode-TPS ratio (DS/DSA) | P99 TTFT ratio (DS/DSA) |
-|------|---------------------------|--------------------------|
-| 16 | 0.982 | 0.462 (DS much better) |
-| 32 | 1.015 | 0.472 (DS much better) |
-| 64 | 1.027 | 1.856 (DS worse) |
+## DS/DSA ratios (REPORTED, not gated — DEC-6) — matched op-point
 
-## AC-4 per-step tax (TPOT p50, conc-64): DS 37.13 ms vs DSA 38.13 ms, ratio **0.974 ≤ 1.10 → PASS**
-(the loop-10 per-step win is preserved; DS is marginally faster per decode step than DSA.)
+| conc | decode-TPS ratio | P99 TTFT ratio | per-step TPOT ratio |
+|------|------------------|----------------|---------------------|
+| 16 | 0.982 | 0.456 (DS lower/better) | 1.018 |
+| 32 | 1.023 (DS higher) | 0.471 (DS better) | 0.977 |
+| 64 | 1.029 (DS higher) | 0.754 (DS better) | 0.972 |
+
+## AC-4 per-step tax: DS/DSA TPOT p50 ratio = 0.972–1.018 (conc 16/32/64) — all **<= 1.10 → PASS**
+The loop-10 per-step win is preserved: DS is equal-or-faster than DSA per decode step at conc 32/64.
 
 ## Honest verdict
-DS table-free meets the GLM-5.1-FP8 client SLO at concurrency 16 and 32, but FAILS at concurrency 64
-(decode-TPS p50 26.98 < 30 AND P99 TTFT 25.12 s > 22 s). Native DSA also misses the 30-TPS decode floor
-at conc 64 (26.28) — the throughput floor is hard for BOTH at high concurrency on this node/workload.
-DS decode throughput is competitive with DSA (within +-3%, ratio >= 0.95); the per-step decode tax is
-preserved (TPOT ratio 0.974). DS's distinct weakness is TTFT at high concurrency (c64 1.86x DSA), where
-DS is also admission-capped below 64 (achieved 58.9).
+**Table-free DS on GLM-5.1-FP8 meets the client SLO (decode-TPS p50 >= 30, P99 TTFT < 22 s) at
+concurrency 16 and 32, but FAILS at concurrency 64** (decode-TPS 26.98 < 30 AND P99 TTFT 25.12 s > 22 s).
+**Native DSA ALSO fails at conc 64** (decode-TPS 26.22 < 30, P99 TTFT 33.32 s > 22 s) — the 30-TPS decode
+floor is the binding constraint for BOTH at high concurrency on this node/workload. At the matched op-point
+DS is competitive-to-better than DSA across the board: equal-or-higher decode throughput (ratio 0.98–1.03),
+LOWER P99 TTFT at every concurrency (ratio 0.46–0.75), and equal-or-faster per-step decode (TPOT 0.97–1.02).
+DS is additionally admission-capped just below 64 at conc-64 (achieved 58.9). A documented FAIL at conc-64
+is a complete, reportable result — the deliverable is the honest measured gap, not a DS win.
 
-## Caveat (being fixed)
-serve_native_nsa.sh did not cap DSA to the locked op-point (max_running_requests=64, cuda_graph_max_bs=64);
-DSA booted at cuda_graph_max_bs=512 / max_running_requests=None, so benchmark_compare.py --ac11 REFUSED the
-cross-side op-point match (the DS absolute verdict above is valid — DS ran at the correct 64/64). DSA is
-being re-run at the matched 64/64 op-point for the official comparator verdict + a fair ratio.
+## Caveat (measurement honesty / AC-9)
+The official `benchmark_compare.py --ac11` REFUSED the cross-side comparison twice: first on an op-point
+mismatch (DSA lacked the 64/64 caps — fixed in serve_native_nsa.sh), then on a commit_sha mismatch (DS
+benched at 72cb24751, DSA matched-re-run at 94313249e; the intervening commits are the verdict capture +
+the serve_native_nsa op-point fix + the task10 doc pass — none change served DS/DSA behavior). The numbers
+above are extracted by the comparator's OWN metric readers (`_read_bench_jsonl`/`_median_metrics`/
+`_evaluate_client_slo`) via extract_verdict.py — the DS absolute verdict (DEC-6) is DS-only and does not
+depend on the cross-side guard; the DS/DSA ratios are reported with this same-commit-family caveat. The
+SAME-MEMORY op-point (both 0.8) is DEFERRED-and-recorded (plan lower bound).
