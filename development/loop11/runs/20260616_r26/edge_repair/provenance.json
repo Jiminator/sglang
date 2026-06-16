@@ -1,0 +1,36 @@
+{
+  "run": "loop11_r26_edge_repair_robust_n_GATE_C",
+  "purpose": "Repair the R25 fail-open edge authorization: the R25 edge verdict was status=FAIL (boundary +0.641pp, partial -0.961pp) at single-prompt n=312 (thin sample = within-prompt noise over ONE needle's layer/step records), yet the OLD artifact writer authorized radix-on by reading only the eviction subcase. R26 reruns the edge probe at ROBUST n (statistical unit = needle, >=128 matched, paired off/fresh vs on/reuse) so the verdict honestly reflects the original +/-0.5pp-clean contract, then regenerates the v2 artifact with the ALREADY-FIXED fail-closed writer (write_v2_artifact.py, which reads the edge verdict's own status/problems).",
+  "runtime_base": "04717595b",
+  "runtime_base_full": "04717595b5467672d0a735697244894e822a65de",
+  "model": "GLM-5.1-FP8",
+  "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
+  "op_point": "TP=8 / fp8_e4m3 / page 64 / mem 0.8 / max-running 64 / cuda-graph-max-bs 64 / EAGER (--disable-cuda-graph) for edge probes; expandable_segments NEVER set (PYTORCH_CUDA_ALLOC_CONF unset)",
+  "ds_table_free_config": "top_k 2048, page_size 64, channel_mask /models/glm51-fp8-channel-mask-s256.safetensors (sha256 340b6c0bd40d6d7dcf4fef5ab2a9f096cf56d94bc844960500bcd72db65f08bd), device_buffer_size 4096, scorer_norm off, head_agg max, anchor off, recall_oracle true (edge probes)",
+  "no_new_production_code": true,
+  "harness_reused": {
+    "op_point_env": "development/loop11/runs/20260616_r25/radix_authorization/r25_env.sh (-> r24_env.sh COMMON_ARGS/ready_wait/smoke/teardown/gpu_idle_wait)",
+    "prompt_path": "test/manual/test_double_sparsity_v32.py helpers (_niah_needle / _make_niah_prompt) + DS recall oracle sink (oracle_artifact_sink set_active_trial/clear_active_trial)",
+    "proven_cache_engaging": "development/loop11/runs/20260616_r25/l4096_highn (L1024 same-seed warmup seeds the shared radix prefix -> cached_tokens 320-640) + radix_authorization/probes/p1_recall",
+    "fixed_writer": "development/loop11/runs/20260616_r26/edge_repair/write_v2_artifact.py (FAIL-CLOSED; reads each gate verdict's own status/problems; refuses unless all PASS)"
+  },
+  "reused_gate_verdicts": {
+    "gate_a_recall_multilen": "development/loop11/runs/20260616_r25/radix_authorization_v2/gate_a/gate_a_verdict.json (verdict=PASS, overall -0.0321pp, per-length within +/-0.5pp)",
+    "gate_b_cross_rank": "development/loop11/runs/20260616_r25/radix_authorization_v2/gate_bc/gate_b_cross_rank_verdict.json (status=PASS, 8 ranks byte-identical all steps)",
+    "gate_b_no_dense_fallback": "development/loop11/runs/20260616_r25/radix_authorization_v2/gate_bc/gate_b_no_dense_fallback_verdict.json (status=PASS, 0 violations)"
+  },
+  "new_harness_under_run_dir": [
+    "edge_highn_driver.py (per-arm robust-n edge sweep: cold OFF-control + boundary/partial/eviction ON; per-request cached_tokens captured)",
+    "analyze_edge.py (per-needle paired delta vs cold + bootstrap CI + per-arm cache-engagement proof; emits gate_c_edge_verdict.json with status/problems)",
+    "run_gate_c.sh (one-server-at-a-time driver: OFF boot for cold, ON boot for the three on-arms; reuses r25_env)"
+  ],
+  "gate_c_method": {
+    "statistical_unit": "needle (NIAH trial); per-needle recall@2048 = fraction of that needle's oracle records with recall_at_k[2048]; paired by needle idx to the cold/fresh control",
+    "robust_n": ">=128 matched needles per on-arm (run at num=144)",
+    "cold_control": "radix-OFF boot (--disable-radix-cache); cached_tokens MUST be 0 (clean control)",
+    "boundary": "radix-ON; L1024-iN same-seed warmup then measured L4096-iN reuses aligned prefix pages; cached>0 AND %64==0",
+    "partial": "radix-ON; warmup L4096-iN then re-request with a short appended tail so divergence falls mid-page; aligned pages reused + partial page recomputed; cached>0",
+    "eviction": "radix-ON; warm prefix, flush_cache, re-request P -> recompute; cached MUST fall to 0; recall == cold (deterministic recompute = no stale slot)",
+    "pass_rule": "status=PASS iff boundary & partial mean paired recall delta vs cold within +/-0.5pp AND eviction recompute == cold (mean delta within +/-0.5pp) with cached fallen to 0; engagement PROVEN per arm from raw cached_tokens"
+  }
+}

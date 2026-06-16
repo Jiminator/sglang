@@ -1,0 +1,118 @@
+{
+  "probe": "GATE_C_edge_robust_n_page64",
+  "length": 4096,
+  "page_size": 64,
+  "top_k": 2048,
+  "max_delta_pp": 0.5,
+  "min_needles": 128,
+  "rule": "PASS iff boundary & partial mean paired recall delta vs cold within \u00b10.5pp AND eviction recompute == cold (mean delta within \u00b10.5pp) with cached fallen to 0; cache engagement PROVEN per arm from raw cached_tokens. Statistical unit = needle; robust n >= 128 matched.",
+  "cache_engagement": {
+    "cold_control_cached_dist": {
+      "n": 144,
+      "min": 0,
+      "max": 0,
+      "mean": 0.0,
+      "median": 0,
+      "n_zero": 144,
+      "n_gt0": 0,
+      "n_page_multiple_gt0": 0
+    },
+    "boundary_cached_dist": {
+      "n": 144,
+      "min": 320,
+      "max": 640,
+      "mean": 491.11,
+      "median": 512,
+      "n_zero": 0,
+      "n_gt0": 144,
+      "n_page_multiple_gt0": 144
+    },
+    "partial_cached_dist": {
+      "n": 144,
+      "min": 4288,
+      "max": 4352,
+      "mean": 4292.89,
+      "median": 4288,
+      "n_zero": 0,
+      "n_gt0": 144,
+      "n_page_multiple_gt0": 144
+    },
+    "eviction_cached_dist": {
+      "n": 144,
+      "min": 0,
+      "max": 0,
+      "mean": 0.0,
+      "median": 0,
+      "n_zero": 144,
+      "n_gt0": 0,
+      "n_page_multiple_gt0": 0
+    },
+    "cold_is_clean_control": true,
+    "boundary_engaged_page_aligned": true,
+    "partial_engaged": true,
+    "eviction_fell_to_zero": true
+  },
+  "cases": {
+    "a_boundary_aligned_full_reuse": {
+      "n_needles_matched": 144,
+      "recall_cold_pct_mean": 60.1518,
+      "recall_case_pct_mean": 59.7712,
+      "paired_delta_case_minus_cold_pp": {
+        "mean": -0.3806,
+        "std": 1.9736,
+        "min": -6.7308,
+        "max": 4.1667,
+        "ci95_bootstrap": [
+          -0.7011,
+          -0.0623
+        ],
+        "ci_iters": 20000
+      },
+      "within_bound_on_mean": true
+    },
+    "b_partial_page_hit": {
+      "n_needles_matched": 144,
+      "recall_cold_pct_mean": 60.1518,
+      "recall_case_pct_mean": 61.721,
+      "paired_delta_case_minus_cold_pp": {
+        "mean": 1.5692,
+        "std": 1.8197,
+        "min": -1.6026,
+        "max": 8.3333,
+        "ci95_bootstrap": [
+          1.2754,
+          1.8697
+        ],
+        "ci_iters": 20000
+      },
+      "within_bound_on_mean": false
+    },
+    "c_eviction_recompute": {
+      "n_needles_matched": 144,
+      "recall_cold_pct_mean": 60.1518,
+      "recall_case_pct_mean": 60.1518,
+      "paired_delta_case_minus_cold_pp": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "ci95_bootstrap": [
+          0.0,
+          0.0
+        ],
+        "ci_iters": 20000
+      },
+      "within_bound_on_mean": true
+    }
+  },
+  "failures": {
+    "cold": {},
+    "boundary": {},
+    "partial": {},
+    "evict": {}
+  },
+  "status": "FAIL",
+  "problems": [
+    "partial: mean paired recall delta +1.5692pp from cold (>\u00b10.5pp) \u2014 possible stale-slot corruption"
+  ]
+}
