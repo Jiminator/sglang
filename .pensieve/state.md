@@ -1,8 +1,8 @@
 # Pensieve Project State
 
 ## Lifecycle State
-- Last Event: self-improve
-- Last Note: auto-improve: knowledge/ds-score-reduce-dispatch
+- Last Event: install/init
+- Last Note: seeded project data via init-project-data.sh
 
 ## Project Paths
 - Project Root: `/sgl-workspace/sglang`
