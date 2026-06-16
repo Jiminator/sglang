@@ -10,9 +10,8 @@
     "tp_size": 8,
     "page_size": 64,
     "kv_cache_dtype": "fp8_e4m3",
-    "channel_mask_path": "/models/glm51-fp8-channel-mask-s256.safetensors",
-    "channel_mask_sha256": "340b6c0bd40d6d7dcf4fef5ab2a9f096cf56d94bc844960500bcd72db65f08bd",
+    "channel_mask_content_sha256": "35155ac46ad79fa82e531138434ff35708e2d8c2932889323a21a455342a9b00",
     "selector_mode": "table_free"
   },
-  "recorded_at": "2026-06-16T07:51:38Z"
+  "recorded_at": "2026-06-16T15:09:40Z"
 }

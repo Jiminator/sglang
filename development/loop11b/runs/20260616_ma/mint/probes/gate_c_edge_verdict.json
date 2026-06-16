@@ -1,0 +1,174 @@
+{
+  "probe": "GATE_C_edge_DEC12_production_reuse_page64",
+  "contract": "DEC-12",
+  "length": 4096,
+  "page_size": 64,
+  "top_k": 2048,
+  "max_delta_pp": 0.5,
+  "min_needles": 128,
+  "production_cached_max": 2752,
+  "rule": "PASS iff (production-representative reuse, cached <= ~2752): boundary mean paired recall delta vs cold within +/-0.5pp (page-aligned engaged) AND partial @ production (cached ~2752) within +/-0.5pp (engaged) AND eviction recompute == cold (within +/-0.5pp, cached fell to 0). Near-full reuse (cached ~4288) is out-of-contract value-affecting, NOT a gate input. cold control clean. Cache engagement PROVEN per arm from raw cached_tokens. Statistical unit = needle; robust n >= 128 matched.",
+  "cache_engagement": {
+    "cold_control_cached_dist": {
+      "n": 144,
+      "min": 0,
+      "max": 0,
+      "mean": 0.0,
+      "median": 0,
+      "n_zero": 144,
+      "n_gt0": 0,
+      "n_page_multiple_gt0": 0
+    },
+    "cold_partial_control_cached_dist": {
+      "n": 136,
+      "min": 0,
+      "max": 0,
+      "mean": 0.0,
+      "median": 0,
+      "n_zero": 136,
+      "n_gt0": 0,
+      "n_page_multiple_gt0": 0
+    },
+    "boundary_cached_dist": {
+      "n": 144,
+      "min": 320,
+      "max": 640,
+      "mean": 491.11,
+      "median": 512,
+      "n_zero": 0,
+      "n_gt0": 144,
+      "n_page_multiple_gt0": 144
+    },
+    "partial_production_cached_dist": {
+      "n": 136,
+      "min": 2688,
+      "max": 2752,
+      "mean": 2747.76,
+      "median": 2752,
+      "n_zero": 0,
+      "n_gt0": 136,
+      "n_page_multiple_gt0": 136
+    },
+    "nearfull_cached_dist": {
+      "n": 144,
+      "min": 4288,
+      "max": 4352,
+      "mean": 4292.89,
+      "median": 4288,
+      "n_zero": 0,
+      "n_gt0": 144,
+      "n_page_multiple_gt0": 144
+    },
+    "eviction_cached_dist": {
+      "n": 144,
+      "min": 0,
+      "max": 0,
+      "mean": 0.0,
+      "median": 0,
+      "n_zero": 144,
+      "n_gt0": 0,
+      "n_page_multiple_gt0": 0
+    },
+    "cold_is_clean_control": true,
+    "cold_partial_is_clean_control": true,
+    "boundary_engaged_page_aligned": true,
+    "partial_production_engaged": true,
+    "partial_within_production_bound": true,
+    "eviction_fell_to_zero": true
+  },
+  "cases": {
+    "a_boundary_aligned_reuse": {
+      "n_needles_matched": 144,
+      "recall_cold_pct_mean": 60.1518,
+      "recall_case_pct_mean": 59.7712,
+      "paired_delta_case_minus_cold_pp": {
+        "mean": -0.3806,
+        "std": 1.9736,
+        "min": -6.7308,
+        "max": 4.1667,
+        "ci95_bootstrap": [
+          -0.7011,
+          -0.0623
+        ],
+        "ci_iters": 20000
+      },
+      "control_arm": "cold",
+      "within_bound_on_mean": true
+    },
+    "b_partial_page_hit_production": {
+      "n_needles_matched": 136,
+      "recall_cold_pct_mean": 75.9238,
+      "recall_case_pct_mean": 75.912,
+      "paired_delta_case_minus_cold_pp": {
+        "mean": -0.0118,
+        "std": 1.5949,
+        "min": -5.7692,
+        "max": 4.1667,
+        "ci95_bootstrap": [
+          -0.2852,
+          0.2569
+        ],
+        "ci_iters": 20000
+      },
+      "control_arm": "cold_partial",
+      "within_bound_on_mean": true
+    },
+    "c_eviction_recompute": {
+      "n_needles_matched": 144,
+      "recall_cold_pct_mean": 60.1518,
+      "recall_case_pct_mean": 60.1518,
+      "paired_delta_case_minus_cold_pp": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "ci95_bootstrap": [
+          0.0,
+          0.0
+        ],
+        "ci_iters": 20000
+      },
+      "control_arm": "cold",
+      "within_bound_on_mean": true
+    }
+  },
+  "out_of_contract_value_affecting": {
+    "case": "near_full_reuse_partial_page",
+    "cached_dist": {
+      "n": 144,
+      "min": 4288,
+      "max": 4352,
+      "mean": 4292.89,
+      "median": 4288,
+      "n_zero": 0,
+      "n_gt0": 144,
+      "n_page_multiple_gt0": 144
+    },
+    "n_needles_matched": 144,
+    "recall_cold_pct_mean": 60.1518,
+    "recall_case_pct_mean": 61.721,
+    "paired_delta_case_minus_cold_pp": {
+      "mean": 1.5692,
+      "std": 1.8197,
+      "min": -1.6026,
+      "max": 8.3333,
+      "ci95_bootstrap": [
+        1.2754,
+        1.8697
+      ],
+      "ci_iters": 20000
+    },
+    "note": "NEAR-FULL reuse (cached ~4288, >=~98%) is OUT OF the DEC-12 production-reuse contract; recorded as value-affecting characterization only (the R26 +1.57pp effect). NOT a PASS/FAIL gate input.",
+    "value_affecting": true
+  },
+  "failures": {
+    "cold": {},
+    "cold_partial": {},
+    "boundary": {},
+    "partial": {},
+    "nearfull": {},
+    "evict": {}
+  },
+  "status": "PASS",
+  "problems": []
+}

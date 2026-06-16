@@ -1,0 +1,18 @@
+probe=gate_c_edge_DEC12_production_reuse_page64 (length 4096, page 64, REGENERATED mask)
+arms: cold cold_partial boundary partial nearfull evict
+num=144 decode_steps=4 seed_base=1000 warmup_length=1024 partial_prefix_tokens=2752
+arm_rcs: cold=0 cprt=0 bnd=0 prt=0 nfl=0 evc=0 analyze_rc=0
+status=PASS
+--- analyze summary ---
+[analyze_edge DEC-12] -> /sgl-workspace/sglang/development/loop11b/runs/20260616_ma/mint/probes/gate_c_edge_verdict.json
+  cold   cached dist : {'n': 144, 'min': 0, 'max': 0, 'mean': 0.0, 'median': 0, 'n_zero': 144, 'n_gt0': 0, 'n_page_multiple_gt0': 0}
+  cprt   cached dist : {'n': 136, 'min': 0, 'max': 0, 'mean': 0.0, 'median': 0, 'n_zero': 136, 'n_gt0': 0, 'n_page_multiple_gt0': 0}  (matched control for partial)
+  bnd    cached dist : {'n': 144, 'min': 320, 'max': 640, 'mean': 491.11, 'median': 512, 'n_zero': 0, 'n_gt0': 144, 'n_page_multiple_gt0': 144}
+  prt@P  cached dist : {'n': 136, 'min': 2688, 'max': 2752, 'mean': 2747.76, 'median': 2752, 'n_zero': 0, 'n_gt0': 136, 'n_page_multiple_gt0': 136}
+  nfl    cached dist : {'n': 144, 'min': 4288, 'max': 4352, 'mean': 4292.89, 'median': 4288, 'n_zero': 0, 'n_gt0': 144, 'n_page_multiple_gt0': 144}  (out-of-contract)
+  evc    cached dist : {'n': 144, 'min': 0, 'max': 0, 'mean': 0.0, 'median': 0, 'n_zero': 144, 'n_gt0': 0, 'n_page_multiple_gt0': 0}
+  boundary (vs cold       ): n=144 ctrl=60.1518% case=59.7712% mean_delta=-0.3806pp CI95=[-0.7011, -0.0623] within=True
+  partial  (vs cold_partial): n=136 ctrl=75.9238% case=75.912% mean_delta=-0.0118pp CI95=[-0.2852, 0.2569] within=True
+  evict    (vs cold       ): n=144 ctrl=60.1518% case=60.1518% mean_delta=0.0pp CI95=[0.0, 0.0] within=True
+  nearfull (OUT-OF-CONTRACT): n=144 mean_delta=1.5692pp CI95=[1.2754, 1.8697] value_affecting=True
+  STATUS: PASS
