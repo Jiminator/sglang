@@ -1849,6 +1849,59 @@ class DeepseekSparseAttnBackend(
                 f"Unsupported {dsa_impl = } for forward_extend. Consider using an other attention backend."
             )
 
+    def maybe_publish_ds_request_summary(self, forward_batch: ForwardBatch) -> None:
+        """Publish per-request DS selected-vs-total token counts onto
+        ``forward_batch.ds_per_request_summary["double_sparsity"]`` so the
+        scheduler/tokenizer surface ``meta_info["double_sparsity"]`` (the AC-5
+        no-op evidence each published SLO trial must carry).
+
+        The DeepseekV2 model-side publisher only fires on its own attention; GLM
+        (``Glm4MoeAttention``) and any other model on this ``dsa`` backend never
+        reach it, so the per-request DS summary was absent for them. It cannot be
+        published from ``forward_decode`` either: decode runs under CUDA-graph
+        replay, where that Python never executes, and a per-step device→host read
+        of the selected page table would serialize the graph.
+
+        Instead derive it host-side, no GPU sync: the table-free selector's
+        contract is to keep ``min(top_k, valid_tokens)`` token positions, and for
+        decode ``valid_tokens`` is the sequence length, so
+        ``selected = min(ds_max_top_k, seq_len)`` exactly. ``total = seq_len``,
+        ``dense_fallback = 0`` (a sanitized row is aborted via the error-containment
+        seam, not surfaced as a completed-request stat). Called from the model
+        runner's post-forward transport, which runs every step for eager AND graph
+        decode. Decode-only; native-DSA / non-DS paths never reach this (DS gate),
+        and an existing model-side summary is not overwritten.
+        """
+        if not self.enable_double_sparsity:
+            return
+        if not forward_batch.forward_mode.is_decode_or_idle():
+            return
+        if getattr(forward_batch, "ds_per_request_summary", None) is not None:
+            return
+        seq_lens_cpu = getattr(forward_batch, "seq_lens_cpu", None)
+        if seq_lens_cpu is None:
+            return
+        from sglang.srt.layers.attention.double_sparsity.metrics import (
+            DoubleSparsityRequestStats,
+            meta_info_for_request,
+        )
+
+        top_k = int(self.ds_max_top_k)
+        records = []
+        for sl in seq_lens_cpu.tolist():
+            total = max(1, int(sl))
+            selected = min(top_k, total)
+            records.append(
+                meta_info_for_request(
+                    DoubleSparsityRequestStats(
+                        sparsity_rate=float(1.0 - selected / total),
+                        selected_tokens=selected,
+                        dense_fallback=0,
+                    )
+                )
+            )
+        forward_batch.ds_per_request_summary = {"double_sparsity": records}
+
     def forward_decode(
         self,
         q: torch.Tensor,

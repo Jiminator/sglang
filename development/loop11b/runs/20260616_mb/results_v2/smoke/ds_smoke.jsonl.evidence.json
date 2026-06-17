@@ -1,0 +1,18 @@
+{
+  "source": "/sgl-workspace/sglang/development/loop11b/runs/20260616_mb/results_v2/smoke/ds_smoke.jsonl",
+  "dense_fallback_total": 0,
+  "selected_tokens_mean": 2048.0,
+  "total_tokens_mean": 3850.539380684056,
+  "prefix_reuse_cached_fraction": {
+    "min": 0.5395784543325527,
+    "p25": 0.5413533834586466,
+    "p50": 0.5424367350033723,
+    "p75": 0.5433962264150943,
+    "p99": 0.7118927255590769,
+    "max": 0.9952874646559849,
+    "mean": 0.5494532520640534,
+    "n": 64
+  },
+  "verdict": "PASS",
+  "refusals": []
+}
