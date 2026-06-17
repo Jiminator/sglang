@@ -24,7 +24,7 @@ frozen HEAD (commit_sha 8df44a59c), with every DS trial's no-op evidence PASSING
 | **M-B M4 close** (AC-2/3/4/9) | ✅ COMPLETE — BOTH op-points comparator-ACCEPTED, conc-64 nominal (peak 63) |
 | **M-B AC-5 no-op** | ✅ RESOLVED (R3) — GLM/dsa-backend DS summary wired + `total_tokens` corrected (true seq-len, not the rate-inverse); all 6 DS trials `trial_evidence.py` PASS with a consistency gate |
 | **M-C productionize** (AC-UX) | ✅ COMPLETE |
-| close-out (AC-8) | 🔶 ACTIVE — ledgers regenerated + raw evidence committed losslessly (`.gz` + hashes + REPRODUCE, replay-validated rc=3); **NOT complete until push**: pending owner remote/waiver (see below) |
+| close-out (AC-8) | ✅ COMPLETE — ledgers regenerated + raw evidence committed losslessly (`.gz` + hashes + REPRODUCE, replay-validated rc=3); pushed to owner fork `Jiminator/sglang` (see below) |
 
 ## R1 correction (what Round 0 got wrong)
 
@@ -104,13 +104,13 @@ production_envelope rc=3 / FAIL@64 / DS 26.91 TPS exactly.
   ac5_no_op_evidence.md (superseded by the wired publisher); results_r2/SUPERSEDED.md.
 - Verdict commits: AC-5 publisher b0e448b1; total_tokens fix 8df44a59c; R3 evidence c805b4be5; crash-fix 99ac584ac.
 
-## Push status (AC-8) — THE ONE REMAINING ITEM (owner decision)
+## Push status (AC-8) — DONE
 
-Everything else in AC-8 is done: ledgers are one current state, raw evidence is committed losslessly and the
-verdict replays from committed artifacts (rc=3). **Close-out is NOT marked complete because the push is not
-done.** All commits are LOCAL on `dev/double-sparsity-standalone`; the ONLY configured remote is `origin =`
-PUBLIC `github.com/sgl-project/sglang`, and there is no fork/owner remote. Pushing experimental loop11b
-artifacts (incl. ~84 MB of compressed raw evidence) to the public upstream is an irreversible outward action
-that needs owner authorization, and a destination cannot be fabricated. **Resolve exactly one way:**
-(a) provide an owner-approved fork/remote+branch → `git push <remote> dev/double-sparsity-standalone`, or
-(b) record an explicit written owner waiver here. Surfaced, not silently skipped.
+Owner-authorized push completed: `dev/double-sparsity-standalone` is on the owner fork
+**`github.com/Jiminator/sglang`** (fast-forward `cd2d1e7c1..2ce2adf4e`). The public `sgl-project/sglang`
+upstream was NOT used. One history-cleanup rewrite was required: an accidental 252 MB tqdm-spam log
+(`results_v2/crash_evidence_r1/log_ds_c64.txt`, over GitHub's 100 MB limit; its key lines are quoted in
+`R1_DS_CRASH_FINDING.md`) was purged from history, so commits after `8e4407822` were re-SHA'd (content
+otherwise identical). The per-trial `*.meta.json` `commit_sha` values are run-time stamps from before that
+rewrite (e.g. `8df44a59c`); they remain internally consistent (DS == DSA cross-side, so the comparator gate
+holds) and the served code content is preserved on the branch.

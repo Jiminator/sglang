@@ -23,7 +23,7 @@ record is `development/loop11b/plan.md`; this queue is the live status ledger (c
 | M-A op-point re-establishment | task1–task6 | mask regen+provenance, DEC-1 validator change, radix-on minted+authorized, bs cap ≥64 @0.8, AC-7 clean | ✅ COMPLETE |
 | M-B M4 close | task7 (tax guard), task8 (locked sweep), task9 (headline) | **R1: BOTH op-points `--ac11` comparator-ACCEPTED** (production_envelope + same_memory, rc=3). **DS meets SLO @ conc16/32, FAILS @ conc64** (TPS 26.98<30, TTFT 25.08≥22); DSA also fails @64. AC-4 dedicated probe bs64 1.056/bs30 1.057 ≤1.10 PASS. conc-64 peak 63 (nominal). | ✅ COMPLETE |
 | M-C productionize | task10 | runbook + Cat-A/B UX fixes; loop8 warning reconciled; no ABI change | ✅ COMPLETE |
-| close-out | task11 | results.md/queue.md regenerated to R3 (`results_r3`, corrected total_tokens); evidence committed losslessly + replay-validated; preflight | 🔶 ACTIVE — push pending owner remote/waiver |
+| close-out | task11 | results.md/queue.md regenerated to R3 (`results_r3`, corrected total_tokens); evidence committed losslessly + replay-validated; preflight; pushed to `Jiminator/sglang` | ✅ COMPLETE |
 
 ## Task ledger
 
@@ -39,7 +39,7 @@ record is `development/loop11b/plan.md`; this queue is the live status ledger (c
 | task8 | locked DS-vs-DSA sweep (loop-11 task9) | conc 16/32/64 × 2 trials/seed; DS p50 decode-TPS, P99 TTFT; per-trial reuse + dense_fallback_total | the verdict numbers | dense_fallback_total==0 + sparse-selection proof per trial | both op-points (prod-envelope + same-memory); comparator floor→2 | **DONE (R1)** — clean DS sweep (0 selector errors, 0 crashes, peak 63, ~54% reuse/trial) + DSA both op-points from ONE frozen HEAD (99ac584ac). **Both comparators ACCEPTED**: production_envelope rc=3, same_memory rc=3 (honest absolute DS FAIL@64, directional PASS). The mb_v2 100%-identical tax-burst that tripped the DS selector crash → diagnosed/fixed (`R1_DS_CRASH_FINDING.md`); verdict re-run sweep-first. |
 | task9 | headline DS-vs-DSA report | one table on SLOS.md SLOs + honest verdict | the loop's reason to exist | n/a | retires/rewrites the loop8 throughput warning | **DONE (R1)** — `R1_HEADLINE_VERDICT.md` from the accepted comparators: DS PASS@16/32 FAIL@64; competitive-to-better than DSA both op-points; ≤6% per-step tax; neither clears 30-TPS floor @64. |
 | task10 | production UX pass (no ABI) | runbook + Cat-A/B fixes; loop8 warning reconciled | DS enablement is a short documented path | n/a | DEC-5: no flag rename / JSON-schema change | **DONE** (`be71d4fc3`) — de-DeepSeek serve/calibrate/config/CLI; loop8 warning reconciled to the measured verdict; CLIENT_SLOS→SLOS; trials wording; serve_native_nsa 64/64 caps; RUNBOOK.md. No ABI change. |
-| task11 | close-out + evidence preflight + push | all artifacts exist+tracked+claims match POST-commit | reviewer reproduces verdict from committed artifacts | n/a | rewrite-over-append results.md | **ACTIVE** — results.md/queue.md regenerated to R3; evidence committed losslessly (`results_r3` .gz + hashes + REPRODUCE) + comparator replay-VALIDATED rc=3; preflight clean. **PUSH NOT DONE**: origin=public sgl-project upstream, no fork remote → needs owner-approved remote/branch OR explicit owner waiver (asked). |
+| task11 | close-out + evidence preflight + push | all artifacts exist+tracked+claims match POST-commit | reviewer reproduces verdict from committed artifacts | n/a | rewrite-over-append results.md | **DONE** — results.md/queue.md regenerated to R3; evidence committed losslessly (`results_r3` .gz + hashes + REPRODUCE) + comparator replay-VALIDATED rc=3; preflight clean; **PUSHED** to owner fork `Jiminator/sglang` `dev/double-sparsity-standalone` (252 MB accidental log purged from history for GitHub's 100 MB limit). |
 
 ## Kickoff ideas / side issues (append-only; no silent deletions)
 
@@ -97,7 +97,7 @@ Full review preserved at `development/loop11b/runs/20260616_ma/task3_codex_metho
 - `development/loop9/runs/20260610_m0/recall_baseline.json` — recall@2048 gate reference (survives node move).
 - loop-11 frozen serving ladder — DIRECTIONAL reference only; the locked sweep re-measures DSA on this node.
 
-## Round history (post-Codex reviews) — verdict PUBLISHABLE; ONLY the owner push decision remains
+## Round history (post-Codex reviews) — verdict PUBLISHED + pushed to owner fork; all AC gaps closed
 
 **R1** (Codex R0 review: comparator REFUSED, same-memory deferred, conc-64 admission-capped, AC-4 not the
 spec'd guard, no reuse/no-op evidence, AC-8 gaps) — all fixed: bench_serving reuse+no-op counters
@@ -126,8 +126,9 @@ but bench_serving inverted as selected/sparsity_rate; queue stale; push unresolv
   FAIL@64). Raw committed losslessly + comparator replay VALIDATED rc=3 (`c805b4be5`).
 - Ledgers: this queue.md + results.md rewritten to ONE current state (op-point mask=regenerated, task2/task3
   DONE, task11 ACTIVE until push).
-- **PUSH: NOT DONE — the ONE remaining item, an owner decision.** origin=PUBLIC sgl-project upstream, no
-  fork/owner remote configured; the agent will not push experimental artifacts to public upstream or
-  fabricate a remote. Needs an owner-approved remote/branch OR an explicit owner waiver (asked).
+- **PUSH: DONE.** Owner-authorized to the fork `Jiminator/sglang` `dev/double-sparsity-standalone`
+  (fast-forward `cd2d1e7c1..2ce2adf4e`); public upstream NOT used. A 252 MB accidental tqdm-spam log was
+  purged from history to satisfy GitHub's 100 MB limit (commits after `8e4407822` re-SHA'd, content intact;
+  meta.json commit_sha run-time stamps stay internally consistent for the comparator gate).
 - Queued (not blocking): plan-workflow terminology still in some PRE-EXISTING implementation comments
   (batch_result_processor.py, benchmark_compare.py) — clean in a focused pass.
