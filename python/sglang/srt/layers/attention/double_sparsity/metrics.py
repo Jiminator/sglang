@@ -133,8 +133,9 @@ def record_selection(
 
 @dataclass
 class DoubleSparsityRequestStats:
-    sparsity_rate: float
+    sparsity_rate: float  # pruned fraction: 1 - selected_tokens / total_tokens
     selected_tokens: int
+    total_tokens: int
     dense_fallback: int = 0
 
 
@@ -142,12 +143,15 @@ def meta_info_for_request(stats: DoubleSparsityRequestStats) -> Dict[str, Any]:
     """Translate per-request DS stats into the dict surfaced via meta_info.
 
     Caller wires this into ``ScheduleBatch`` so the values appear in the
-    request's ``meta_info`` payload alongside existing fields.
+    request's ``meta_info`` payload alongside existing fields. ``total_tokens``
+    is published EXPLICITLY (the true sequence length) so consumers do not have
+    to invert ``sparsity_rate`` (which is the pruned fraction, not selected/total).
     """
 
     return {
         "sparsity_rate": float(stats.sparsity_rate),
         "selected_tokens": int(stats.selected_tokens),
+        "total_tokens": int(stats.total_tokens),
         "dense_fallback": int(stats.dense_fallback),
     }
 

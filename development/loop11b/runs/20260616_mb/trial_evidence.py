@@ -14,7 +14,10 @@ Refuse (exit 2) when ANY of:
     is absent (key missing or null) from the trial record, OR
   * ``dense_fallback_total != 0`` (any dense fallback = DS did not stay a NO-OP), OR
   * NOT (``selected_tokens_mean`` < ``total_tokens_mean``) (sparsity must select
-    strictly fewer tokens than the derived total; equality/inversion = no sparsity).
+    strictly fewer tokens than the total; equality/inversion = no sparsity), OR
+  * the reported aggregate disagrees with the per-request ``selected_tokens`` /
+    ``total_tokens`` arrays, or any per-request row violates the DS metric contract
+    ``sparsity_rate == 1 - selected/total`` (catches a mislabeled total aggregate).
 
 Prefix-reuse distribution is computed from the per-request ``cached_tokens`` and
 ``input_lens`` arrays (cached_fraction = cached_tokens / prompt_tokens, per
@@ -82,6 +85,43 @@ def _cached_fraction_distribution(record):
     return _percentiles(fracs)
 
 
+def _consistency_refusals(record, selected_mean, total_mean, rel_tol=0.01):
+    """Refuse when the reported aggregates disagree with the per-request arrays,
+    or the per-request DS contract ``sparsity_rate == 1 - selected/total`` is
+    violated (this catches a mislabeled aggregate, e.g. total derived by inverting
+    the wrong fraction). Requires the ``--output-details`` arrays
+    ``selected_tokens`` / ``total_tokens`` / ``sparsity_rate``.
+    """
+    out = []
+    sel = [x for x in (record.get("selected_tokens") or []) if x is not None]
+    tot = [x for x in (record.get("total_tokens") or []) if x is not None]
+    sr = record.get("sparsity_rate") or []
+    if not sel:
+        out.append("per-request selected_tokens array absent (cannot verify aggregate)")
+    elif abs(sum(sel) / len(sel) - selected_mean) > rel_tol * max(1.0, selected_mean):
+        out.append(
+            f"selected_tokens_mean {selected_mean} disagrees with per-request "
+            f"mean {sum(sel)/len(sel):.3f}"
+        )
+    if not tot:
+        out.append("per-request total_tokens array absent (cannot verify total)")
+    elif abs(sum(tot) / len(tot) - total_mean) > rel_tol * max(1.0, total_mean):
+        out.append(
+            f"total_tokens_mean {total_mean} disagrees with per-request "
+            f"mean {sum(tot)/len(tot):.3f}"
+        )
+    for i, (s, t, r) in enumerate(zip(sel, tot, sr)):
+        if s is None or t is None or r is None or t <= 0:
+            continue
+        if abs((1.0 - s / t) - r) > 1e-3:
+            out.append(
+                f"req{i}: sparsity_rate {r} != 1-selected/total "
+                f"{1.0 - s/t:.4f} (DS metric contract violated)"
+            )
+            break
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("jsonl", help="bench_serving result JSONL for one DS trial")
@@ -125,8 +165,13 @@ def main(argv=None):
             refusals.append(
                 f"NOT (selected_tokens_mean={selected_tokens_mean} < "
                 f"total_tokens_mean={total_tokens_mean}); sparsity selected "
-                "no fewer tokens than the derived total"
+                "no fewer tokens than the total"
             )
+        refusals.extend(
+            _consistency_refusals(
+                record, selected_tokens_mean, total_tokens_mean
+            )
+        )
 
     summary = {
         "source": args.jsonl,

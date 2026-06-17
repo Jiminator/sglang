@@ -2110,6 +2110,7 @@ class DeepseekV2AttentionMLA(
             stats = SimpleNamespace(
                 sparsity_rate=float(1.0 - selected_tokens / total_tokens),
                 selected_tokens=selected_tokens,
+                total_tokens=total_tokens,
                 dense_fallback=0,
             )
             records.append(meta_info_for_request(stats))

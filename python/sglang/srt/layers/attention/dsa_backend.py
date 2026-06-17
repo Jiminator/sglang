@@ -1896,6 +1896,7 @@ class DeepseekSparseAttnBackend(
                     DoubleSparsityRequestStats(
                         sparsity_rate=float(1.0 - selected / total),
                         selected_tokens=selected,
+                        total_tokens=total,
                         dense_fallback=0,
                     )
                 )

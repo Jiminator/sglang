@@ -3119,12 +3119,16 @@ class TestMetrics(unittest.TestCase):
     def test_meta_info_shape(self):
         from sglang.srt.layers.attention.double_sparsity import metrics as m
         stats = m.DoubleSparsityRequestStats(
-            sparsity_rate=0.0625, selected_tokens=128, dense_fallback=0
+            sparsity_rate=0.0625, selected_tokens=128, total_tokens=2048, dense_fallback=0
         )
         info = m.meta_info_for_request(stats)
-        self.assertEqual(set(info.keys()), {"sparsity_rate", "selected_tokens", "dense_fallback"})
+        self.assertEqual(
+            set(info.keys()),
+            {"sparsity_rate", "selected_tokens", "total_tokens", "dense_fallback"},
+        )
         self.assertAlmostEqual(info["sparsity_rate"], 0.0625)
         self.assertEqual(info["selected_tokens"], 128)
+        self.assertEqual(info["total_tokens"], 2048)
         self.assertEqual(info["dense_fallback"], 0)
 
     def test_record_selection_increments_counters(self):
@@ -3514,14 +3518,16 @@ class TestCustomizedInfoIntegration(unittest.TestCase):
         )
 
         stats = DoubleSparsityRequestStats(
-            sparsity_rate=0.05, selected_tokens=64, dense_fallback=0
+            sparsity_rate=0.05, selected_tokens=64, total_tokens=1280, dense_fallback=0
         )
         payload = customized_info_for_request(stats)
         self.assertEqual(
-            set(payload.keys()), {"sparsity_rate", "selected_tokens", "dense_fallback"}
+            set(payload.keys()),
+            {"sparsity_rate", "selected_tokens", "total_tokens", "dense_fallback"},
         )
         self.assertAlmostEqual(payload["sparsity_rate"], 0.05)
         self.assertEqual(payload["selected_tokens"], 64)
+        self.assertEqual(payload["total_tokens"], 1280)
         self.assertEqual(payload["dense_fallback"], 0)
 
 

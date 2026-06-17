@@ -721,6 +721,7 @@ async def async_request_sglang_generate(
                             ),
                             "sparsity_rate": ds.get("sparsity_rate"),
                             "selected_tokens": ds.get("selected_tokens"),
+                            "total_tokens": ds.get("total_tokens"),
                             "dense_fallback": ds.get("dense_fallback"),
                         }
                     # Fail closed on an HTTP 200 that produced no decoded token:
@@ -1863,9 +1864,16 @@ async def benchmark(
             st_ = m.get("selected_tokens")
             if st_ is not None:
                 selected_tokens_vals.append(st_)
+            # total_tokens is the true sequence length, published explicitly by the
+            # DS backends. Use it directly; fall back to selected/(1 - sparsity_rate)
+            # only for older artifacts that predate the explicit field (sparsity_rate
+            # is the PRUNED fraction = 1 - selected/total, so the inverse is 1 - sr).
+            tt = m.get("total_tokens")
             sr = m.get("sparsity_rate")
-            if st_ is not None and sr:
-                total_tokens_vals.append(st_ / sr)
+            if tt is not None:
+                total_tokens_vals.append(tt)
+            elif st_ is not None and sr is not None and 0 <= sr < 1:
+                total_tokens_vals.append(st_ / (1.0 - sr))
 
         def _mean_or_none(xs):
             return (sum(xs) / len(xs)) if xs else None
@@ -1982,6 +1990,10 @@ async def benchmark(
         ],
         "selected_tokens": [
             (getattr(o, "output_meta", None) or {}).get("selected_tokens")
+            for o in outputs
+        ],
+        "total_tokens": [
+            (getattr(o, "output_meta", None) or {}).get("total_tokens")
             for o in outputs
         ],
         "sparsity_rate": [
