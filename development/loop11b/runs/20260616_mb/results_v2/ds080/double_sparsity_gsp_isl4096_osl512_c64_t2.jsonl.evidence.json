@@ -1,0 +1,22 @@
+{
+  "source": "/sgl-workspace/sglang/development/loop11b/runs/20260616_mb/results_v2/ds080/double_sparsity_gsp_isl4096_osl512_c64_t2.jsonl",
+  "dense_fallback_total": null,
+  "selected_tokens_mean": null,
+  "total_tokens_mean": null,
+  "prefix_reuse_cached_fraction": {
+    "min": 0.5384435615798083,
+    "p25": 0.5407181412813894,
+    "p50": 0.5416078984485191,
+    "p75": 0.5423728813559322,
+    "p99": 0.5441662730278696,
+    "max": 0.5444234404536862,
+    "mean": 0.5415497362937367,
+    "n": 1600
+  },
+  "verdict": "REFUSE",
+  "refusals": [
+    "dense_fallback_total absent (key missing or null)",
+    "selected_tokens_mean absent (key missing or null)",
+    "total_tokens_mean absent (key missing or null)"
+  ]
+}

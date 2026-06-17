@@ -1,0 +1,9 @@
+# Raw bench payloads + serve logs are large; AC-8 commits the lossless .meta.json
+# summaries, the comparator outputs, and EVIDENCE_SHA256.txt (content hashes) instead.
+*.jsonl
+serve_*.log
+mb_v2.log
+ds_only.log
+runner.log
+ds_only_runner.log
+crash_evidence_r1/*.log

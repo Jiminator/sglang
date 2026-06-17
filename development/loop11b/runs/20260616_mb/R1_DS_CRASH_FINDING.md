@@ -22,9 +22,34 @@ a dead server. (DSA side was unaffected — native_nsa never runs the DS path.)
 2. **Selector reuse-edge (characterized, contained — not root-caused this round):** "36 vs 6790 at dim 0"
    is the absorbed-latent scoring on the **radix prefix-reuse + chunked-prefill** path: 36 = the extend
    (new query tokens), 6790 = the cached-context latent dim. This is DEC-12's authorized reuse scenario.
-   Round-0's steady-state sweep ran clean at conc-64 (one straggler at teardown); the edge fires en masse
-   only under the tax probe's cold concurrent shared-prefix burst. Root-causing the paged-scoring shape
-   mismatch is a separate kernel project; the containment design explicitly degrades these per-request.
+   Round-0's steady-state sweep ran CLEAN at conc-64 — **zero** selector_runtime_error lines in its serve
+   log; its end-of-run crash was teardown (`SIGTERM received. Draining requests...` -> scheduler exit code
+   -15), NOT the bug. The edge fires en masse only under the R1 tax probe's 100%-identical-prefix burst
+   (gsp-range-ratio 1.0, 1 group) at conc-64: 77500 errors in ~10s (28750 in one second). The bug scales
+   with FULL-prefix reuse; the production ~55% reuse barely touches it. Root-causing the paged-scoring
+   shape mismatch is a separate kernel project; the containment design explicitly degrades these per-request.
+
+## Why this escaped earlier detection (evidence-backed)
+1. **No representative workload triggered it.** Round-0's verdict sweep at production ~55% reuse logged
+   ZERO selector errors. The `36 vs 6790` mismatch needs a short extend over a long FULLY-shared cached
+   prefix at concurrency. R1's fixed-conc 100%-identical-prefix tax probe was the first run to create that
+   (Round-0's AC-4 fell back to sweep-derived TPOT — `bench_one_batch` was blocked — so no fixed-conc
+   serving probe had ever existed).
+2. **All three failure modes live on the error-abort path** (`_maybe_abort_on_ds_error` -> check_finished
+   -> KV release), which only executes WHEN a row is sanitized. Selector errors never fired under
+   representative load, so the path was never exercised: dead code on the happy path.
+3. **Semantic merge conflict.** The rename check_finished -> update_finish_state (#25725) landed in main
+   2026-05-19; the DS branch merged main 2026-05-25 (65618a8d3). The rename updated every caller that
+   existed in main, but the DS abort path is a NEW call site on the feature branch — textually clean merge,
+   semantically broken. Git cannot flag a renamed method called by unmerged code.
+4. **Containment swallows it by design + no aggregate trace pre-B1.** `try_run_ds_step` catches the selector
+   error, fails the one request, keeps serving. The verdict is computed over successful requests. Before
+   B1 (this round) bench_serving emitted no DS-error/dense-fallback aggregate, so a contained error left a
+   trace ONLY in the serve log. (This is exactly why mb_v2/ds_only now print `selector_runtime_errors=N`.)
+5. **Unit test stops one layer short.** `test_double_sparsity_unit.py` tests selector sanitization by
+   MagicMock-ing `retrieve_topk` and asserting the error is RECORDED; it never drives a real Req through
+   the scheduler's `_maybe_abort_on_ds_error` to the `req.check_finished()` call (the sibling code notes
+   "per-request abort plumbing through the scheduler boundary remains queued").
 
 ## In-scope deliverable (R1)
 - Crash-fix landed so the server survives → the verdict sweep can complete.
