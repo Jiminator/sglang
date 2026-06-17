@@ -1,0 +1,198 @@
+{
+  "ac11_gates": {
+    "tps_floor_ratio": 0.95,
+    "ttft_ceil_ratio": 1.1,
+    "min_trials": 2
+  },
+  "client_slo_bars": {
+    "decode_tps_p50_min": 30.0,
+    "ttft_p99_s_max_exclusive": 22.0
+  },
+  "per_concurrency": {
+    "16": {
+      "dsa_median": {
+        "concurrency": 16,
+        "num_prompts": 320,
+        "isl": 4096,
+        "osl": 512,
+        "output_tps_p50": 41.36020920992139,
+        "output_tps_p99": 43.527426939322524,
+        "ttft_p50_s": 3.402996956370771,
+        "ttft_p99_s": 3.440029173558578,
+        "tpot_p50_ms": 24.225946848413777,
+        "tpot_p99_ms": 30.20329322009812,
+        "goodput_under_slo": null,
+        "selected_tokens_mean": null,
+        "dense_fallback_total": null,
+        "total_tokens_mean": null,
+        "duration_s": 629.0019633285701,
+        "achieved_concurrency": 15.995872130667145
+      },
+      "ds_median": {
+        "concurrency": 16,
+        "num_prompts": 320,
+        "isl": 4096,
+        "osl": 512,
+        "output_tps_p50": 40.69635680049688,
+        "output_tps_p99": 40.91003758529485,
+        "ttft_p50_s": 1.5289535340853035,
+        "ttft_p99_s": 1.5808748271595685,
+        "tpot_p50_ms": 24.620329019834095,
+        "tpot_p99_ms": 27.177574583119664,
+        "goodput_under_slo": null,
+        "selected_tokens_mean": 2048.0,
+        "dense_fallback_total": 0,
+        "total_tokens_mean": 4770.35,
+        "duration_s": 846.8653294304386,
+        "achieved_concurrency": 15.995505898933505
+      },
+      "gate": {
+        "tps_ratio": 0.983949491017921,
+        "ttft_ratio": 0.45955273847989325,
+        "tps_pass": true,
+        "ttft_pass": true,
+        "reason": ""
+      },
+      "ds_client_slo": {
+        "decode_tps_p50": 40.69635680049688,
+        "ttft_p99_s": 1.5808748271595685,
+        "tps_pass": true,
+        "ttft_pass": true,
+        "pass": true,
+        "reason": ""
+      },
+      "dsa_client_slo": {
+        "decode_tps_p50": 41.36020920992139,
+        "ttft_p99_s": 3.440029173558578,
+        "tps_pass": true,
+        "ttft_pass": true,
+        "pass": true,
+        "reason": ""
+      }
+    },
+    "32": {
+      "dsa_median": {
+        "concurrency": 32,
+        "num_prompts": 320,
+        "isl": 4096,
+        "osl": 512,
+        "output_tps_p50": 33.298830111862,
+        "output_tps_p99": 34.67659167248819,
+        "ttft_p50_s": 6.741757040843368,
+        "ttft_p99_s": 6.7866202971432354,
+        "tpot_p50_ms": 30.0899844428929,
+        "tpot_p99_ms": 41.391735287044206,
+        "goodput_under_slo": null,
+        "selected_tokens_mean": null,
+        "dense_fallback_total": null,
+        "total_tokens_mean": null,
+        "duration_s": 660.2326923506334,
+        "achieved_concurrency": 31.98887749023274
+      },
+      "ds_median": {
+        "concurrency": 32,
+        "num_prompts": 320,
+        "isl": 4096,
+        "osl": 512,
+        "output_tps_p50": 34.049511719736984,
+        "output_tps_p99": 34.2223400001444,
+        "ttft_p50_s": 2.929327360354364,
+        "ttft_p99_s": 3.0028505942597983,
+        "tpot_p50_ms": 29.42647468736085,
+        "tpot_p99_ms": 34.204497239834936,
+        "goodput_under_slo": null,
+        "selected_tokens_mean": 2048.0,
+        "dense_fallback_total": 0,
+        "total_tokens_mean": 4778.30625,
+        "duration_s": 718.8321021404117,
+        "achieved_concurrency": 31.98660972858361
+      },
+      "gate": {
+        "tps_ratio": 1.0225437832306177,
+        "ttft_ratio": 0.44246627375393616,
+        "tps_pass": true,
+        "ttft_pass": true,
+        "reason": ""
+      },
+      "ds_client_slo": {
+        "decode_tps_p50": 34.049511719736984,
+        "ttft_p99_s": 3.0028505942597983,
+        "tps_pass": true,
+        "ttft_pass": true,
+        "pass": true,
+        "reason": ""
+      },
+      "dsa_client_slo": {
+        "decode_tps_p50": 33.298830111862,
+        "ttft_p99_s": 6.7866202971432354,
+        "tps_pass": true,
+        "ttft_pass": true,
+        "pass": true,
+        "reason": ""
+      }
+    },
+    "64": {
+      "dsa_median": {
+        "concurrency": 64,
+        "num_prompts": 320,
+        "isl": 4096,
+        "osl": 512,
+        "output_tps_p50": 26.18737087988694,
+        "output_tps_p99": 51.410177012286425,
+        "ttft_p50_s": 13.271992467809469,
+        "ttft_p99_s": 33.216044024052096,
+        "tpot_p50_ms": 38.26108087335373,
+        "tpot_p99_ms": 62.4363263596192,
+        "goodput_under_slo": null,
+        "selected_tokens_mean": null,
+        "dense_fallback_total": null,
+        "total_tokens_mean": null,
+        "duration_s": 699.6854145983234,
+        "achieved_concurrency": 60.263886892291794
+      },
+      "ds_median": {
+        "concurrency": 64,
+        "num_prompts": 320,
+        "isl": 4096,
+        "osl": 512,
+        "output_tps_p50": 26.911753838576853,
+        "output_tps_p99": 46.343811531526626,
+        "ttft_p50_s": 5.706640655174851,
+        "ttft_p99_s": 25.109682296346875,
+        "tpot_p50_ms": 37.2312038092566,
+        "tpot_p99_ms": 47.33373830887742,
+        "goodput_under_slo": null,
+        "selected_tokens_mean": 2048.0,
+        "dense_fallback_total": 0,
+        "total_tokens_mean": 4765.478125,
+        "duration_s": 676.8873432865366,
+        "achieved_concurrency": 58.91426392315183
+      },
+      "gate": {
+        "tps_ratio": 1.0276615381518222,
+        "ttft_ratio": 0.7559504159545515,
+        "tps_pass": true,
+        "ttft_pass": true,
+        "reason": ""
+      },
+      "ds_client_slo": {
+        "decode_tps_p50": 26.911753838576853,
+        "ttft_p99_s": 25.109682296346875,
+        "tps_pass": false,
+        "ttft_pass": false,
+        "pass": false,
+        "reason": "decode-TPS 26.91 < 30; P99 TTFT 25.110 s >= 22 s"
+      },
+      "dsa_client_slo": {
+        "decode_tps_p50": 26.18737087988694,
+        "ttft_p99_s": 33.216044024052096,
+        "tps_pass": false,
+        "ttft_pass": false,
+        "pass": false,
+        "reason": "decode-TPS 26.19 < 30; P99 TTFT 33.216 s >= 22 s"
+      }
+    }
+  },
+  "verdict": "PASS",
+  "client_slo_verdict": "FAIL"
+}

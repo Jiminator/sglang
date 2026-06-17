@@ -1,8 +1,0 @@
-# Raw bench JSONLs and serve logs are committed gzip-compressed (*.jsonl.gz / *.log.gz) with
-# raw+gz hashes in EVIDENCE_SHA256.txt and REPRODUCE.md. The decompressed copies are ignored.
-*.jsonl
-serve_ds080.log
-serve_dsa080.log
-serve_dsa085.log
-mb_r2.log
-runner.log

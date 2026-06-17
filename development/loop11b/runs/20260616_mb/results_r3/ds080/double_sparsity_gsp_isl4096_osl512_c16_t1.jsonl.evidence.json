@@ -1,0 +1,18 @@
+{
+  "source": "development/loop11b/runs/20260616_mb/results_r3/ds080/double_sparsity_gsp_isl4096_osl512_c16_t1.jsonl",
+  "dense_fallback_total": 0,
+  "selected_tokens_mean": 2048.0,
+  "total_tokens_mean": 4770.35,
+  "prefix_reuse_cached_fraction": {
+    "min": 0.5371881557472604,
+    "p25": 0.539957815795641,
+    "p50": 0.5408450704225352,
+    "p75": 0.541862652869238,
+    "p99": 0.5439093484419264,
+    "max": 0.5454545454545454,
+    "mean": 0.5409311040553344,
+    "n": 960
+  },
+  "verdict": "PASS",
+  "refusals": []
+}
