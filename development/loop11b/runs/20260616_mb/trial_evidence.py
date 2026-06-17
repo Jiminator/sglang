@@ -87,31 +87,56 @@ def _cached_fraction_distribution(record):
 
 def _consistency_refusals(record, selected_mean, total_mean, rel_tol=0.01):
     """Refuse when the reported aggregates disagree with the per-request arrays,
-    or the per-request DS contract ``sparsity_rate == 1 - selected/total`` is
-    violated (this catches a mislabeled aggregate, e.g. total derived by inverting
-    the wrong fraction). Requires the ``--output-details`` arrays
-    ``selected_tokens`` / ``total_tokens`` / ``sparsity_rate``.
+    the per-request DS contract ``sparsity_rate == 1 - selected/total`` is violated,
+    or DS instrumentation is PARTIAL. Fails CLOSED: the per-request arrays
+    ``selected_tokens`` / ``total_tokens`` / ``sparsity_rate`` must each be present,
+    equal-length (one entry per request), and have NO ``None`` rows — otherwise a
+    subset of instrumented requests could silently satisfy the aggregate means. The
+    contract check then runs over the row-aligned full arrays (no independent
+    filtering that would misalign rows after a missing entry).
     """
     out = []
-    sel = [x for x in (record.get("selected_tokens") or []) if x is not None]
-    tot = [x for x in (record.get("total_tokens") or []) if x is not None]
-    sr = record.get("sparsity_rate") or []
-    if not sel:
-        out.append("per-request selected_tokens array absent (cannot verify aggregate)")
-    elif abs(sum(sel) / len(sel) - selected_mean) > rel_tol * max(1.0, selected_mean):
+    sel = record.get("selected_tokens")
+    tot = record.get("total_tokens")
+    sr = record.get("sparsity_rate")
+    for name, arr in (
+        ("selected_tokens", sel),
+        ("total_tokens", tot),
+        ("sparsity_rate", sr),
+    ):
+        if not arr:
+            out.append(f"per-request {name} array absent (cannot verify aggregate)")
+    if out:
+        return out
+    n = len(sel)
+    if not (len(tot) == n and len(sr) == n):
+        out.append(
+            f"per-request DS arrays length mismatch "
+            f"(selected={len(sel)} total={len(tot)} sparsity={len(sr)})"
+        )
+        return out
+    n_missing = sum(
+        1 for i in range(n) if sel[i] is None or tot[i] is None or sr[i] is None
+    )
+    if n_missing:
+        out.append(
+            f"{n_missing} of {n} requests missing DS metadata "
+            "(partial instrumentation; fail closed)"
+        )
+        return out
+    if abs(sum(sel) / n - selected_mean) > rel_tol * max(1.0, selected_mean):
         out.append(
             f"selected_tokens_mean {selected_mean} disagrees with per-request "
-            f"mean {sum(sel)/len(sel):.3f}"
+            f"mean {sum(sel)/n:.3f}"
         )
-    if not tot:
-        out.append("per-request total_tokens array absent (cannot verify total)")
-    elif abs(sum(tot) / len(tot) - total_mean) > rel_tol * max(1.0, total_mean):
+    if abs(sum(tot) / n - total_mean) > rel_tol * max(1.0, total_mean):
         out.append(
             f"total_tokens_mean {total_mean} disagrees with per-request "
-            f"mean {sum(tot)/len(tot):.3f}"
+            f"mean {sum(tot)/n:.3f}"
         )
-    for i, (s, t, r) in enumerate(zip(sel, tot, sr)):
-        if s is None or t is None or r is None or t <= 0:
+    for i in range(n):
+        s, t, r = sel[i], tot[i], sr[i]
+        if t <= 0:
             continue
         if abs((1.0 - s / t) - r) > 1e-3:
             out.append(
