@@ -29,7 +29,7 @@ record is `development/loop11b/plan.md`; this queue is the live status ledger (c
 
 | id | description | targeted quantity | expected effect | lossiness posture | compat vs landed loop-11 | status |
 |----|-------------|-------------------|-----------------|-------------------|--------------------------|--------|
-| task1 | populate this queue.md kickoff ledger | — (AC-8 discipline) | single source of truth exists | none | additive | **in progress** (Round 0) |
+| task1 | populate this queue.md kickoff ledger | — (AC-8 discipline) | single source of truth exists | none | additive | **DONE** — kept current every round (this ledger) |
 | task2 | repoint serve-script MODEL_PATH/CHANNEL_MASK_PATH → GLM-5.1-FP8 | model_path matches fixture boot; mask path exists | correctness precondition + UX-A fix | none (default-only) | additive; no flag/ABI change | pending |
 | task3 | pre-sweep methodology review (codex, analyze) | comparator-gap list resolved into sweep design | sweep is fair + honest before it runs | none (planning) | informs task8 | pending |
 | task4 | regenerate GLM-5.1 channel mask + provenance.json | mask `content_sha256` + full-file `sha256`; recall-comparability vs frozen baseline | query-side mask restored; serves + clears AC-5 | recall-gated ±0.5pp | re-mint expected (full-file SHA non-reproducible: embedded created_at) | **DONE** — ld32 mask `35155ac4…` (loop8 DEC-3 recipe fp8_e4m3/label-dim 32); serves; recall MATCHES baseline (off L4096 58.045%=base, L16384 36.36% +0.32pp, overall 64.80%, all ≤±0.5pp); provenance committed. Superseded ld16 a4be98c4 (−5.2pp). |
@@ -97,15 +97,23 @@ Full review preserved at `development/loop11b/runs/20260616_ma/task3_codex_metho
 - `development/loop9/runs/20260610_m0/recall_baseline.json` — recall@2048 gate reference (survives node move).
 - loop-11 frozen serving ladder — DIRECTIONAL reference only; the locked sweep re-measures DSA on this node.
 
-## Round 1 (post-Codex review) — making the M-B verdict PUBLISHABLE
-Codex (R0 review) rejected the completion claim: comparator REFUSED, same-memory deferred, conc-64
-admission-capped, AC-4 not the spec'd guard, no reuse/no-op evidence, AC-8 ledger/push gaps. R1 fixes:
-- B1 DONE (`9af9d7835`): bench_serving emits per-request cached_tokens + DS no-op counters
-  (selected_tokens_mean/dense_fallback_total/total_tokens_mean) + fail-closed trial_evidence.py (AC-5/AC-9).
-- task10 cleanup DONE (`73338e539`): plan vocabulary stripped from serve-script operator output.
-- task8/7 RUNNING (`mb_v2.sh`, b51dxd116, ~3.5hr): clean re-run from ONE HEAD — 3 boots (DS@0.8, DSA@0.8,
-  DSA@0.85), a dedicated bs64/bs30 tax probe (AC-4), running-req PEAK capture (conc-64 ≥61?), BOTH op-points
-  (production_envelope + same_memory) with comparator ACCEPTANCE, per-DS-trial fail-closed evidence.
-- PENDING after mb_v2: task9 report from the accepted comparator output; task11 AC-8 (results.md/queue.md
-  rewrite, fix stale a4be98c4 capacity claim, evidence package, push — origin is the PUBLIC upstream so
-  push needs owner direction).
+## Round history (post-Codex reviews) — ALL gaps closed; verdict PUBLISHABLE
+
+**R1** (Codex R0 review: comparator REFUSED, same-memory deferred, conc-64 admission-capped, AC-4 not the
+spec'd guard, no reuse/no-op evidence, AC-8 gaps) — all fixed: bench_serving reuse+no-op counters
+(`9af9d7835`); a real DS server-crash bug found+fixed (check_finished→update_finish_state merge-drift,
+`99ac584ac`, see R1_DS_CRASH_FINDING.md); clean DS+DSA re-run from one HEAD → both comparators ACCEPTED
+(rc=3); dedicated AC-4 tax probe (≤1.10 PASS); conc-64 peak 63; ledgers + a4be98c4→35155ac4 fix.
+
+**R2** (Codex R1 review: AC-5 still REFUSED — per-request DS meta_info null for GLM; AC-8 raw evidence not
+committed + push unresolved) — all fixed:
+- AC-5: GLM/`dsa_backend` DS per-request summary WIRED (`maybe_publish_ds_request_summary`, host-side, zero
+  GPU sync, decode timing unchanged; `b0e448b1`). Full re-run `results_r2/` → all 6 DS trials
+  `trial_evidence.py` PASS (dense_fallback_total=0, selected 2048 < total ~3590); comparators rc=3 both.
+- AC-8: raw bench JSONLs + serve logs committed LOSSLESSLY (`.jsonl.gz`/`.log.gz` + raw+gz hashes in
+  EVIDENCE_SHA256.txt + REPRODUCE.md; comparator re-run from decompressed artifacts VALIDATED rc=3). Ledgers
+  regenerated to this state (`ba98ebdf2`). Verdict unchanged: DS PASS@16/32, FAIL@64.
+- PUSH: BLOCKED — origin is the PUBLIC sgl-project upstream, no fork/owner remote configured; needs an
+  owner-approved destination or written waiver (recorded in results.md, not silently skipped).
+- Queued (not blocking): plan-workflow terminology still in some implementation comments
+  (batch_result_processor.py, benchmark_compare.py) — clean in a focused pass.

@@ -1852,8 +1852,8 @@ class DeepseekSparseAttnBackend(
     def maybe_publish_ds_request_summary(self, forward_batch: ForwardBatch) -> None:
         """Publish per-request DS selected-vs-total token counts onto
         ``forward_batch.ds_per_request_summary["double_sparsity"]`` so the
-        scheduler/tokenizer surface ``meta_info["double_sparsity"]`` (the AC-5
-        no-op evidence each published SLO trial must carry).
+        scheduler/tokenizer surface ``meta_info["double_sparsity"]`` (the
+        per-request selected-vs-total token counts that prove sparse selection).
 
         The DeepseekV2 model-side publisher only fires on its own attention; GLM
         (``Glm4MoeAttention``) and any other model on this ``dsa`` backend never
