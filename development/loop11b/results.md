@@ -7,14 +7,14 @@ throughput SLO is a complete, reportable result.
 ## Bottom line
 
 **Table-free Double Sparsity on GLM-5.1-FP8 MEETS the client SLO (decode-TPS p50 ≥ 30, P99 TTFT < 22 s)
-at concurrency 16 and 32, and FAILS at concurrency 64** (DS decode-TPS 26.92 < 30 AND P99 TTFT 25.10 s
+at concurrency 16 and 32, and FAILS at concurrency 64** (DS decode-TPS 26.91 < 30 AND P99 TTFT 25.11 s
 ≥ 22 s). **Native DSA also fails at conc 64** (26.20 TPS, 33.2 s TTFT) — the 30-TPS decode floor is
 the binding constraint for BOTH at high concurrency on this node/workload. At BOTH op-points (production-
 envelope and same-memory) DS is competitive-to-better than DSA: equal-or-higher decode throughput
 (ratio 0.98–1.03), LOWER P99 TTFT at every concurrency (ratio 0.44–0.76), and ≤ 6 % per-step decode tax
 (dedicated probe). The op-point was re-established on the fresh node and radix-on re-authorized via the
 DEC-1 content-hash fixture. The published verdict is from `--ac11` comparator-ACCEPTED artifacts at one
-frozen HEAD (commit_sha b0e448b1), with every DS trial's no-op evidence PASSING (`results_r2/`).
+frozen HEAD (commit_sha 8df44a59c), with every DS trial's no-op evidence PASSING (`results_r3/`).
 
 ## Milestone status
 
@@ -22,9 +22,9 @@ frozen HEAD (commit_sha b0e448b1), with every DS trial's no-op evidence PASSING 
 |-----------|--------|
 | **M-A op-point re-establishment** (AC-0, AC-5, AC-6, AC-7) | ✅ COMPLETE |
 | **M-B M4 close** (AC-2/3/4/9) | ✅ COMPLETE — BOTH op-points comparator-ACCEPTED, conc-64 nominal (peak 63) |
-| **M-B AC-5 no-op** | ✅ RESOLVED (R2) — GLM/dsa-backend DS summary wired; all 6 DS trials `trial_evidence.py` PASS |
+| **M-B AC-5 no-op** | ✅ RESOLVED (R3) — GLM/dsa-backend DS summary wired + `total_tokens` corrected (true seq-len, not the rate-inverse); all 6 DS trials `trial_evidence.py` PASS with a consistency gate |
 | **M-C productionize** (AC-UX) | ✅ COMPLETE |
-| close-out (AC-8) | ✅ ledgers regenerated + raw evidence committed losslessly (`.gz` + hashes + REPRODUCE, validated); push BLOCKED pending owner remote/waiver (see below) |
+| close-out (AC-8) | 🔶 ACTIVE — ledgers regenerated + raw evidence committed losslessly (`.gz` + hashes + REPRODUCE, replay-validated rc=3); **NOT complete until push**: pending owner remote/waiver (see below) |
 
 ## R1 correction (what Round 0 got wrong)
 
@@ -56,28 +56,29 @@ Round 0 claimed M-B publishable; Codex rejected it. R1 fixes, all landed:
   ld32 no-override boot), CUDA-graph capture OK, no TokenLabelTable. DSA-native @ mem 0.8 **410560** (= ref)
   — DEC-1 shared-surface change did not regress the shipped DSA default.
 
-## M-B — M4 verdict (R2 re-run, both op-points, 2 trials/conc, 600 s, radix-ON, comparator-ACCEPTED)
+## M-B — M4 verdict (R3 re-run, both op-points, 2 trials/conc, 600 s, radix-ON, comparator-ACCEPTED)
 
 DS absolute client SLO (DEC-2/DEC-6: decode-TPS p50 ≥ 30 AND P99 TTFT < 22 s, judged regardless of DSA):
 
 | conc | DS decode-TPS p50 | DS P99 TTFT | DS SLO |
 |------|-------------------|-------------|--------|
-| 16 | 40.65 | 1.60 s | **PASS** |
-| 32 | 34.06 | 3.00 s | **PASS** |
-| 64 | 26.92 | 25.10 s | **FAIL** (TPS < 30 AND TTFT ≥ 22) |
+| 16 | 40.70 | 1.58 s | **PASS** |
+| 32 | 34.05 | 3.00 s | **PASS** |
+| 64 | 26.91 | 25.11 s | **FAIL** (TPS < 30 AND TTFT ≥ 22) |
 
-DS vs DSA directional (REPORTED, DEC-6) — both comparator-ACCEPTED (rc=3) at one frozen HEAD b0e448b1:
-- production_envelope (DS0.8/DSA0.85): TPS ratio 0.976 / 1.019 / 1.027; TTFT ratio 0.462 / 0.441 / 0.756.
+DS vs DSA directional (REPORTED, DEC-6) — both comparator-ACCEPTED (rc=3) at one frozen HEAD 8df44a59c:
+- production_envelope (DS0.8/DSA0.85): DS ≥ DSA throughput (ratio ~0.98–1.03), lower P99 TTFT every conc.
 - same_memory (DS0.8/DSA0.8): comparator-accepted rc=3; DS ≥ DSA throughput, lower TTFT every conc.
-- **AC-4 per-step tax (dedicated distinct-prefix probe, mem 0.8 both sides):** bs64 DS 39.90 / DSA 37.70 ms
-  = 1.058, bs30 DS 31.89 / DSA 30.14 ms = 1.058 — both ≤ 1.10 PASS; bs30 31 890 µs ≪ 380 000.
+- **AC-4 per-step tax (dedicated distinct-prefix probe, mem 0.8 both sides):** bs64/bs30 DS/DSA ITL ratio
+  ≈ 1.06 — both ≤ 1.10 PASS; bs30 ≪ 380 000 µs. Loop-10 per-step parity held.
 - **AC-2/3 admission:** peak running-req 63 (nominal reached); achieved 58.9 = real DS pool effect at mem 0.8.
-- **AC-5/AC-9 no-op + reuse (RESOLVED in R2):** every published DS trial carries the per-request DS summary —
-  `dense_fallback_total = 0`, `selected_tokens_mean 2048 < total_tokens_mean ~3590` — and `trial_evidence.py`
-  PASSES on all 6 (was REFUSE in R1). Reuse ~54 % measured per trial. The GLM/`dsa_backend` publisher gap is
-  FIXED (`maybe_publish_ds_request_summary`, host-side, zero GPU sync, decode timing unchanged).
+- **AC-5/AC-9 no-op + reuse (RESOLVED in R3):** every published DS trial carries the per-request DS summary —
+  `dense_fallback_total = 0`, `selected_tokens_mean 2048 < total_tokens_mean ~4765` (the TRUE sequence-length
+  total; R2 mislabeled it ~3590 by inverting the wrong fraction — fixed). `trial_evidence.py` PASSES on all 6
+  with a strengthened consistency gate (refuses if the aggregate disagrees with the per-request arrays or
+  `sparsity_rate != 1 - selected/total`). Reuse ~54 % measured per trial.
 
-Headline: `runs/20260616_mb/R1_HEADLINE_VERDICT.md` (numbers reproduce within noise; R2 = results_r2/).
+Headline: `runs/20260616_mb/R1_HEADLINE_VERDICT.md` (numbers reproduce within noise; R3 = results_r3/).
 
 ## M-C — productionize (AC-UX)
 
@@ -89,24 +90,27 @@ op-point (64/64).
 
 ## Evidence (AC-8) — the verdict reproduces from committed artifacts alone
 
-PUBLISHABLE evidence is `runs/20260616_mb/results_r2/` (R2, HEAD b0e448b1). `REPRODUCE.md` gives the exact
-decompress + comparator + trial_evidence commands; re-running the comparator from the decompressed `.gz` +
-`.meta.json` was VALIDATED to reproduce production_envelope rc=3 / FAIL@64 / DS 26.92 TPS exactly.
-- `results_r2/{ds080,dsa080,dsa085}/`: per-trial **`*.jsonl.gz`** (raw bench inputs, committed losslessly) +
+PUBLISHABLE evidence is `runs/20260616_mb/results_r3/` (R3, HEAD 8df44a59c; supersedes results_r2, which
+mislabeled total_tokens). `REPRODUCE.md` gives the exact decompress + comparator + trial_evidence commands;
+re-running the comparator from the decompressed `.gz` + `.meta.json` was VALIDATED to reproduce
+production_envelope rc=3 / FAIL@64 / DS 26.91 TPS exactly.
+- `results_r3/{ds080,dsa080,dsa085}/`: per-trial **`*.jsonl.gz`** (raw bench inputs, committed losslessly) +
   `*.meta.json` (commit_sha/op-point/aggregate sidecars) + `ds080/*.evidence.json` (per-trial no-op PASS).
-- `results_r2/tax/` `*.jsonl.gz` + `log_*.txt`; `ac11_{production_envelope,same_memory}.{md,json}` (rc=3);
-  `serve_*.log.gz` (per-boot logs); `server_info_*.json`; `mb_r2.log.gz` (run order); `EVIDENCE_SHA256.txt`
-  (raw + .gz hashes); `../mb_r2.sh` (command ledger).
+- `results_r3/tax/` `*.jsonl.gz` + `log_*.txt`; `ac11_{production_envelope,same_memory}.{md,json}` (rc=3);
+  `serve_*.log.gz` (per-boot logs); `server_info_*.json`; `mb_r3.log.gz` (run order); `EVIDENCE_SHA256.txt`
+  (raw + .gz hashes); `../mb_r3.sh` (command ledger).
 - `runs/20260616_ma/` — provenance.json, capacity_ds_evidence.md (ld32 504640 reconfirm), mint/ probes.
 - Prior-round narrative: R1_HEADLINE_VERDICT.md, R1_DS_CRASH_FINDING.md (the check_finished crash-fix),
-  ac5_no_op_evidence.md (superseded by the R2 wired publisher).
-- Verdict commits: AC-5 publisher b0e448b1; R2 sweep+comparators+evidence ba98ebdf2; crash-fix 99ac584ac.
+  ac5_no_op_evidence.md (superseded by the wired publisher); results_r2/SUPERSEDED.md.
+- Verdict commits: AC-5 publisher b0e448b1; total_tokens fix 8df44a59c; R3 evidence c805b4be5; crash-fix 99ac584ac.
 
-## Push status (AC-8)
+## Push status (AC-8) — THE ONE REMAINING ITEM (owner decision)
 
-All commits are LOCAL on `dev/double-sparsity-standalone`. The ONLY configured remote is `origin =`
-PUBLIC `github.com/sgl-project/sglang`; there is no fork/owner remote. Pushing experimental loop11b
-artifacts (incl. ~84 MB of compressed raw evidence) to the public upstream is unsafe without owner
-authorization, and a destination cannot be fabricated. **Push is BLOCKED pending explicit owner direction:**
-provide an owner-approved fork/remote+branch (then `git push <remote> dev/double-sparsity-standalone`), or
-record a written waiver. Recorded here, not silently skipped (AC-8 push obligation surfaced, not met).
+Everything else in AC-8 is done: ledgers are one current state, raw evidence is committed losslessly and the
+verdict replays from committed artifacts (rc=3). **Close-out is NOT marked complete because the push is not
+done.** All commits are LOCAL on `dev/double-sparsity-standalone`; the ONLY configured remote is `origin =`
+PUBLIC `github.com/sgl-project/sglang`, and there is no fork/owner remote. Pushing experimental loop11b
+artifacts (incl. ~84 MB of compressed raw evidence) to the public upstream is an irreversible outward action
+that needs owner authorization, and a destination cannot be fabricated. **Resolve exactly one way:**
+(a) provide an owner-approved fork/remote+branch → `git push <remote> dev/double-sparsity-standalone`, or
+(b) record an explicit written owner waiver here. Surfaced, not silently skipped.

@@ -11,7 +11,7 @@ record is `development/loop11b/plan.md`; this queue is the live status ledger (c
 | hardware | 8× NVIDIA H200, 143771 MiB/GPU, all idle at kickoff (fresh node, different physical box than loop 11) |
 | model | GLM-5.1-FP8 snapshot `…/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db` (present ✓) |
 | serving | TP=8, page 64, kv fp8_e4m3, custom-all-reduce ON, flashmla_kv both phases, CUDA graph ON, mem 0.8 (DS) / 0.85 (DSA), max_running_requests=64, cuda_graph_max_bs=64 |
-| mask | `/models/glm51-fp8-channel-mask-s256.safetensors` is GONE (/models does not exist) → REGEN MANDATORY (task4) |
+| mask | REGENERATED (task4 DONE) → `/cluster-storage/models/glm51-fp8-channel-mask-s256.safetensors` (ld32, content_sha256 `35155ac4…`); serves + clears AC-5 recall; DEC-1 content-hash makes the path non-authorizing |
 | mask out-path (decision) | regen target: `/cluster-storage/models/glm51-fp8-channel-mask-s256.safetensors` (durable shared storage; survives node release). DEC-1 content-hash makes path non-authorizing. Commit a copy under `development/loop11b/artifacts/` if small enough (AC-8 reproducibility). |
 | workload | gsp 4096/512, ~55% prefix, seeds {16:213, 32:431, 64:31234}, server seed 20260607 |
 | hard rule | NEVER set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments` for serving (breaks custom-all-reduce IPC at GLM TP=8). One TP=8 server at a time. |
@@ -23,15 +23,15 @@ record is `development/loop11b/plan.md`; this queue is the live status ledger (c
 | M-A op-point re-establishment | task1–task6 | mask regen+provenance, DEC-1 validator change, radix-on minted+authorized, bs cap ≥64 @0.8, AC-7 clean | ✅ COMPLETE |
 | M-B M4 close | task7 (tax guard), task8 (locked sweep), task9 (headline) | **R1: BOTH op-points `--ac11` comparator-ACCEPTED** (production_envelope + same_memory, rc=3). **DS meets SLO @ conc16/32, FAILS @ conc64** (TPS 26.98<30, TTFT 25.08≥22); DSA also fails @64. AC-4 dedicated probe bs64 1.056/bs30 1.057 ≤1.10 PASS. conc-64 peak 63 (nominal). | ✅ COMPLETE |
 | M-C productionize | task10 | runbook + Cat-A/B UX fixes; loop8 warning reconciled; no ABI change | ✅ COMPLETE |
-| close-out | task11 | results.md regenerated to R1, evidence hashes committed, push pending owner direction | ✅ COMPLETE (push: owner-direction-needed) |
+| close-out | task11 | results.md/queue.md regenerated to R3 (`results_r3`, corrected total_tokens); evidence committed losslessly + replay-validated; preflight | 🔶 ACTIVE — push pending owner remote/waiver |
 
 ## Task ledger
 
 | id | description | targeted quantity | expected effect | lossiness posture | compat vs landed loop-11 | status |
 |----|-------------|-------------------|-----------------|-------------------|--------------------------|--------|
 | task1 | populate this queue.md kickoff ledger | — (AC-8 discipline) | single source of truth exists | none | additive | **DONE** — kept current every round (this ledger) |
-| task2 | repoint serve-script MODEL_PATH/CHANNEL_MASK_PATH → GLM-5.1-FP8 | model_path matches fixture boot; mask path exists | correctness precondition + UX-A fix | none (default-only) | additive; no flag/ABI change | pending |
-| task3 | pre-sweep methodology review (codex, analyze) | comparator-gap list resolved into sweep design | sweep is fair + honest before it runs | none (planning) | informs task8 | pending |
+| task2 | repoint serve-script MODEL_PATH/CHANNEL_MASK_PATH → GLM-5.1-FP8 | model_path matches fixture boot; mask path exists | correctness precondition + UX-A fix | none (default-only) | additive; no flag/ABI change | **DONE** — serve_double_sparsity.sh→GLM snapshot f396cf8 + ld32 mask; serve_native_nsa.sh→GLM (AC-UX.2) |
+| task3 | pre-sweep methodology review (codex, analyze) | comparator-gap list resolved into sweep design | sweep is fair + honest before it runs | none (planning) | informs task8 | **DONE** — `runs/20260616_ma/task3_codex_methodology_review.md`; findings (no-op/reuse evidence, mem-asymmetry, trial-floor→2) implemented across R1–R3 |
 | task4 | regenerate GLM-5.1 channel mask + provenance.json | mask `content_sha256` + full-file `sha256`; recall-comparability vs frozen baseline | query-side mask restored; serves + clears AC-5 | recall-gated ±0.5pp | re-mint expected (full-file SHA non-reproducible: embedded created_at) | **DONE** — ld32 mask `35155ac4…` (loop8 DEC-3 recipe fp8_e4m3/label-dim 32); serves; recall MATCHES baseline (off L4096 58.045%=base, L16384 36.36% +0.32pp, overall 64.80%, all ≤±0.5pp); provenance committed. Superseded ld16 a4be98c4 (−5.2pp). |
 | task5 | DEC-1 validator content-hash change + mint radix-on | content-hash fixture authorizes no-override boot; /server_info locked keys | radix-on earned for this boot; mask portable across path/timestamp | value-equiv re-verified on mint (DEC-12) | shared surface → AC-7 regression same round; legacy/label schemas stay rejected | DEC-1 code+tests DONE (`5ac86f5cf`); **GATE A/B/C ALL PASS** (recall on-vs-off equiv ≤±0.5pp; cross-rank identity + no-dense-fallback; edge boundary −0.38/partial@2752 −0.01/evict 0.0pp, nearfull +1.57pp out-of-contract). **DONE** — Fixture MINTED `35155ac4`; no-override boot AUTHORIZED live + DEC-1 altpath portable; GATE A/B/C all PASS; AC-0.2/AC-5/AC-7 all met. |
 | task6 | capacity + AC-7 reconfirm | derived decode-bs cap ≥64 @0.8; conc-64 peak ≥61; DSA token_capacity un-regressed | M4 unblocked; AC-7 clean | none | refs 504640 (DS) / 410560 (DSA) are references, not hard gates | **DONE** — DS token_capacity **504640** @0.8 (=loop11 ref, ld32 production config, capture OK, no table); DSA-native **410560** @0.8 (=loop11 ref, AC-7 un-regressed). M-A COMPLETE. |
@@ -39,7 +39,7 @@ record is `development/loop11b/plan.md`; this queue is the live status ledger (c
 | task8 | locked DS-vs-DSA sweep (loop-11 task9) | conc 16/32/64 × 2 trials/seed; DS p50 decode-TPS, P99 TTFT; per-trial reuse + dense_fallback_total | the verdict numbers | dense_fallback_total==0 + sparse-selection proof per trial | both op-points (prod-envelope + same-memory); comparator floor→2 | **DONE (R1)** — clean DS sweep (0 selector errors, 0 crashes, peak 63, ~54% reuse/trial) + DSA both op-points from ONE frozen HEAD (99ac584ac). **Both comparators ACCEPTED**: production_envelope rc=3, same_memory rc=3 (honest absolute DS FAIL@64, directional PASS). The mb_v2 100%-identical tax-burst that tripped the DS selector crash → diagnosed/fixed (`R1_DS_CRASH_FINDING.md`); verdict re-run sweep-first. |
 | task9 | headline DS-vs-DSA report | one table on SLOS.md SLOs + honest verdict | the loop's reason to exist | n/a | retires/rewrites the loop8 throughput warning | **DONE (R1)** — `R1_HEADLINE_VERDICT.md` from the accepted comparators: DS PASS@16/32 FAIL@64; competitive-to-better than DSA both op-points; ≤6% per-step tax; neither clears 30-TPS floor @64. |
 | task10 | production UX pass (no ABI) | runbook + Cat-A/B fixes; loop8 warning reconciled | DS enablement is a short documented path | n/a | DEC-5: no flag rename / JSON-schema change | **DONE** (`be71d4fc3`) — de-DeepSeek serve/calibrate/config/CLI; loop8 warning reconciled to the measured verdict; CLIENT_SLOS→SLOS; trials wording; serve_native_nsa 64/64 caps; RUNBOOK.md. No ABI change. |
-| task11 | close-out + evidence preflight + push | all artifacts exist+tracked+claims match POST-commit | reviewer reproduces verdict from committed artifacts | n/a | rewrite-over-append results.md | **DONE** — results.md regenerated; preflight PASS (all verdict artifacts tracked, fixture hash=served mask 35155ac4); commits LOCAL (origin=public sgl-project upstream → push needs owner authorization, RLCR keeps local). |
+| task11 | close-out + evidence preflight + push | all artifacts exist+tracked+claims match POST-commit | reviewer reproduces verdict from committed artifacts | n/a | rewrite-over-append results.md | **ACTIVE** — results.md/queue.md regenerated to R3; evidence committed losslessly (`results_r3` .gz + hashes + REPRODUCE) + comparator replay-VALIDATED rc=3; preflight clean. **PUSH NOT DONE**: origin=public sgl-project upstream, no fork remote → needs owner-approved remote/branch OR explicit owner waiver (asked). |
 
 ## Kickoff ideas / side issues (append-only; no silent deletions)
 
@@ -97,7 +97,7 @@ Full review preserved at `development/loop11b/runs/20260616_ma/task3_codex_metho
 - `development/loop9/runs/20260610_m0/recall_baseline.json` — recall@2048 gate reference (survives node move).
 - loop-11 frozen serving ladder — DIRECTIONAL reference only; the locked sweep re-measures DSA on this node.
 
-## Round history (post-Codex reviews) — ALL gaps closed; verdict PUBLISHABLE
+## Round history (post-Codex reviews) — verdict PUBLISHABLE; ONLY the owner push decision remains
 
 **R1** (Codex R0 review: comparator REFUSED, same-memory deferred, conc-64 admission-capped, AC-4 not the
 spec'd guard, no reuse/no-op evidence, AC-8 gaps) — all fixed: bench_serving reuse+no-op counters
@@ -113,7 +113,21 @@ committed + push unresolved) — all fixed:
 - AC-8: raw bench JSONLs + serve logs committed LOSSLESSLY (`.jsonl.gz`/`.log.gz` + raw+gz hashes in
   EVIDENCE_SHA256.txt + REPRODUCE.md; comparator re-run from decompressed artifacts VALIDATED rc=3). Ledgers
   regenerated to this state (`ba98ebdf2`). Verdict unchanged: DS PASS@16/32, FAIL@64.
-- PUSH: BLOCKED — origin is the PUBLIC sgl-project upstream, no fork/owner remote configured; needs an
-  owner-approved destination or written waiver (recorded in results.md, not silently skipped).
-- Queued (not blocking): plan-workflow terminology still in some implementation comments
+  (R2 note: that re-run's total_tokens_mean was mislabeled — see R3.)
+
+**R3** (Codex R2 review: total_tokens_mean numerically wrong — publishers emit sparsity_rate=1-selected/total
+but bench_serving inverted as selected/sparsity_rate; queue stale; push unresolved) — fixed:
+- AC-5 metric: explicit `total_tokens` on DoubleSparsityRequestStats/meta_info_for_request; both publishers
+  (GLM dsa_backend helper + DeepseekV2) emit it from the host seq_len; bench_serving aggregates it directly
+  (+ corrected `selected/(1-sparsity_rate)` fallback); trial_evidence.py REFUSES on aggregate-vs-per-request
+  disagreement / `sparsity_rate != 1-selected/total` (`8df44a59c`). 2 unit tests updated + green.
+- Full re-run `results_r3/` (supersedes results_r2): total_tokens_mean ~4765 (true seq-len), all 6 DS trials
+  trial_evidence PASS with the consistency gate, both comparators rc=3, verdict reproduces (DS PASS@16/32,
+  FAIL@64). Raw committed losslessly + comparator replay VALIDATED rc=3 (`c805b4be5`).
+- Ledgers: this queue.md + results.md rewritten to ONE current state (op-point mask=regenerated, task2/task3
+  DONE, task11 ACTIVE until push).
+- **PUSH: NOT DONE — the ONE remaining item, an owner decision.** origin=PUBLIC sgl-project upstream, no
+  fork/owner remote configured; the agent will not push experimental artifacts to public upstream or
+  fabricate a remote. Needs an owner-approved remote/branch OR an explicit owner waiver (asked).
+- Queued (not blocking): plan-workflow terminology still in some PRE-EXISTING implementation comments
   (batch_result_processor.py, benchmark_compare.py) — clean in a focused pass.
