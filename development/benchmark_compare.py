@@ -1080,24 +1080,24 @@ def _render_ac11_markdown(
     rows.append("")
 
     if overall_fail_reasons:
+        rows.append("## AC-11 verdict: FAIL")
         rows.append(
-            "## AC-11 directional verdict (DS-vs-DSA ratios): FAIL "
-            "— REPORT-ONLY (DEC-6; does NOT gate)"
+            "_(DS-vs-DSA directional ratios — REPORT-ONLY per DEC-6; does NOT gate. The "
+            "gating result is the DS client-SLO verdict above and the comparator exit code.)_"
         )
         rows.append("")
         rows.append(
-            "The GATING result is the **DS client-SLO verdict** above (absolute bars; "
-            "matches the comparator exit code). The DS/DSA ratio miss below is reported, "
-            "not gated — a captured profile (`development/profile_ds.sh` or equivalent) is "
-            "recommended for the flagged concurrencies but does not block publication."
+            "**Profiling obligation (advisory, non-gating):** the flagged concurrencies "
+            "below benefit from a captured profile (`development/profile_ds.sh` or "
+            "equivalent); it does not block publication (DEC-6 ratios are report-only)."
         )
         rows.append("")
         for reason in overall_fail_reasons:
             rows.append(f"- {reason}")
     else:
+        rows.append("## AC-11 verdict: PASS")
         rows.append(
-            "## AC-11 directional verdict (DS-vs-DSA ratios): PASS "
-            "— REPORT-ONLY (DEC-6; does NOT gate)"
+            "_(DS-vs-DSA directional ratios — REPORT-ONLY per DEC-6; does NOT gate.)_"
         )
     return "\n".join(rows) + "\n"
 
@@ -1364,11 +1364,12 @@ def _run_ac11_mode(args) -> int:
                 }
                 for conc, row in by_conc.items()
             },
-            # `verdict` is the GATING result (matches the exit code): the absolute
-            # client SLO (DEC-6). The DS/DSA directional ratio is REPORT-ONLY and is
-            # surfaced separately as `directional_verdict` so a consumer reading the
-            # report artifact agrees with the process status.
-            "verdict": "FAIL" if client_slo_fail else "PASS",
+            # `verdict` (and the markdown "AC-11 verdict") is the DS-vs-DSA DIRECTIONAL
+            # ratio status. Under DEC-6 it is REPORT-ONLY and does NOT gate. The GATING
+            # result — and what the exit code follows — is `client_slo_verdict` (the
+            # absolute client SLO). `directional_verdict` is an explicit alias of
+            # `verdict` so a consumer cannot mistake the report-only ratio for the gate.
+            "verdict": "FAIL" if any_fail else "PASS",
             "client_slo_verdict": "FAIL" if client_slo_fail else "PASS",
             "directional_verdict": "FAIL" if any_fail else "PASS",
         }

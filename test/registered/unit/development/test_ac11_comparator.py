@@ -51,6 +51,7 @@ def _option_b_sa(
         "disable_piecewise_cuda_graph": True,
         "disable_radix_cache": disable_radix_cache,
         "disable_cuda_graph": disable_cuda_graph,
+        "disable_custom_all_reduce": False,
         "chunked_prefill_size": 8192,
         "attention_backend": "flashmla",
         "dtype": "bfloat16",
@@ -158,6 +159,7 @@ def _write_bench_jsonl(
             "disable_piecewise_cuda_graph": True,
             "disable_radix_cache": disable_radix_cache,
             "disable_cuda_graph": False,
+            "disable_custom_all_reduce": False,
             # Other launch fields the comparator widening protects:
             "chunked_prefill_size": 8192,
             "attention_backend": "flashmla",
@@ -438,7 +440,10 @@ class TestAC11EndToEnd(unittest.TestCase):
                 "--ac11-ds-results", *ds,
                 "--output", out,
             ])
-            self.assertEqual(code, 3)
+            # DEC-6: the DS/DSA directional TPS ratio is REPORT-ONLY and does NOT gate
+            # the exit. DS decode-TPS (50) still clears the absolute floor (>=30), so the
+            # comparator exits 0 while the directional TPS gate is reported as failed.
+            self.assertEqual(code, 0)
             md = open(out).read()
             self.assertIn("AC-11 verdict: FAIL", md)
             self.assertIn("AC-11 TPS gate failed", md)
@@ -456,13 +461,16 @@ class TestAC11EndToEnd(unittest.TestCase):
                 "--ac11-ds-results", *ds,
                 "--output", out,
             ])
-            self.assertEqual(code, 3)
+            # DEC-6: the directional TTFT ratio is REPORT-ONLY; DS P99 TTFT (15s) clears
+            # the absolute ceiling (<22s), so exit 0 while the directional TTFT gate is reported.
+            self.assertEqual(code, 0)
             md = open(out).read()
             self.assertIn("AC-11 TTFT gate failed", md)
 
     def test_too_few_trials_exit_2(self):
         with tempfile.TemporaryDirectory() as tmp:
-            dsa = self._make_trials(tmp, "dsa", 64, [100, 100], [10.0, 10.0])  # 2 trials
+            # AC11_MIN_TRIALS was lowered to 2 (R1/DEC-4); 1 trial is below the floor.
+            dsa = self._make_trials(tmp, "dsa", 64, [100], [10.0])  # 1 trial < floor
             ds = self._make_trials(tmp, "ds", 64, [100, 100, 100], [10.0, 10.0, 10.0])
             code, _ = self._capture_stdout([
                 "--ac11",

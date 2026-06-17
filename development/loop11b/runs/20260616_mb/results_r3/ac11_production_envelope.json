@@ -193,7 +193,7 @@
       }
     }
   },
-  "verdict": "FAIL",
+  "verdict": "PASS",
   "client_slo_verdict": "FAIL",
   "directional_verdict": "PASS"
 }

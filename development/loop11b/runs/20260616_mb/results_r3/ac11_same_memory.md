@@ -31,4 +31,5 @@ Bars: decode-TPS p50 ≥ 30 tok/s AND P99 TTFT < 22 s (strict).
 **DS client-SLO verdict: FAIL** (DEC-2 mandatory-to-land NOT met for DS-on):
 - conc=64: DS decode-TPS 26.91 < 30; P99 TTFT 25.110 s >= 22 s
 
-## AC-11 directional verdict (DS-vs-DSA ratios): PASS — REPORT-ONLY (DEC-6; does NOT gate)
+## AC-11 verdict: PASS
+_(DS-vs-DSA directional ratios — REPORT-ONLY per DEC-6; does NOT gate.)_

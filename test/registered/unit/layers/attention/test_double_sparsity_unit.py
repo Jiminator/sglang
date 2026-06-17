@@ -4883,15 +4883,15 @@ class TestR6Coverage(unittest.TestCase):
 class TestR7Coverage(unittest.TestCase):
     """R7 verifies AC-8 capture/replay buffer + AC-9 early-abort + non-row containment."""
 
-    def test_maybe_abort_on_ds_error_fires_check_finished(self):
+    def test_maybe_abort_on_ds_error_fires_update_finish_state(self):
         """AC-9 early-abort: the helper marks the request as finished
-        on the current step (check_finished materialises finished_reason).
+        on the current step (update_finish_state materialises finished_reason).
         """
         from sglang.srt.managers.scheduler_components.batch_result_processor import (
             SchedulerBatchResultProcessor,
         )
 
-        check_finished_calls = []
+        update_finish_state_calls = []
 
         req = SimpleNamespace(
             customized_info={"double_sparsity": [{"x": 1}]},
@@ -4903,12 +4903,12 @@ class TestR7Coverage(unittest.TestCase):
         def _set_finish_with_abort(error_msg):
             req.to_finish = SimpleNamespace(error_msg=error_msg)
 
-        def _check_finished():
-            check_finished_calls.append(True)
+        def _update_finish_state():
+            update_finish_state_calls.append(True)
             req.finished_reason = SimpleNamespace(reason="abort")
 
         req.set_finish_with_abort = _set_finish_with_abort
-        req.check_finished = _check_finished
+        req.update_finish_state = _update_finish_state
 
         logits_output = SimpleNamespace(
             per_request_summary={
@@ -4928,7 +4928,7 @@ class TestR7Coverage(unittest.TestCase):
             None, 0, req, logits_output
         )
         self.assertTrue(aborted)
-        self.assertEqual(len(check_finished_calls), 1)
+        self.assertEqual(len(update_finish_state_calls), 1)
         self.assertIsNotNone(req.to_finish)
         self.assertNotIn("double_sparsity", req.customized_info)
 
@@ -4944,7 +4944,7 @@ class TestR7Coverage(unittest.TestCase):
             rid="rid-ok",
             to_finish=None,
             set_finish_with_abort=lambda msg: None,
-            check_finished=lambda: None,
+            update_finish_state=lambda: None,
         )
         logits_output = SimpleNamespace(
             per_request_summary={
