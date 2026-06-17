@@ -15,6 +15,7 @@ reproducer + the recorded sha256 in the calibration provenance.
 Requires: pip install datasets zstandard
 Usage:    python development/loop11b/build_corpus.py [OUT_PATH]
 """
+import os
 import sys
 
 from datasets import load_dataset
@@ -37,6 +38,9 @@ for ex in ds:
     if scanned > SCAN_CAP:
         break
 
+# The default OUT lives under the gitignored artifacts/ dir, absent on a clean
+# checkout — create the parent dir so the documented default command works.
+os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
 with open(OUT, "w") as fh:
     for doc in docs:
         fh.write(doc + "\n")
