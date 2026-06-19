@@ -1,14 +1,19 @@
 {
-  "p50_decode_tps": 29.338,
-  "p99_ttft_s": 23.292,
+  "p50_decode_tps": 35.053,
+  "p99_ttft_s": 22.901,
   "decode_tps_floor": 24.21,
   "p99_ttft_ceil_s": 30.12,
   "reference_decode_tps": 26.9,
   "reference_p99_ttft_s": 25.1,
   "tps_within_band": true,
   "ttft_within_band": true,
+  "gsp_num_groups": 1,
+  "gsp_prompts_per_group": 256,
+  "expected_prompts": 256,
+  "actual_completed": 256,
+  "request_shape_ok": true,
   "parity": true,
   "num_prompts": 256,
   "seed": 42,
-  "bench_json": "/tmp/ds_bench_0ijbxpjp.jsonl"
+  "bench_json": "/tmp/ds_bench_s1cf5d6q.jsonl"
 }
