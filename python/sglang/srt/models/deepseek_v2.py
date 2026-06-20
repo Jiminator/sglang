@@ -2145,6 +2145,7 @@ class DeepseekV2AttentionMLA(
         capture.
         """
         from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
+            reference_cosine_select,
             reference_rawdot_select,
         )
         from sglang.srt.layers.attention.tbo_backend import (
@@ -2189,14 +2190,32 @@ class DeepseekV2AttentionMLA(
                 int(selector.max_top_k),
             )
             self._ds_reference_logged = True
-        if selector_impl == "reference_cosine":
-            raise NotImplementedError(
-                "reference_cosine selector is not yet wired; use reference_rawdot."
-            )
+        # Leak-free fp32 (AC-3.4): disable TF32 so the "fp32" reference scoring is
+        # not silently computed in tf32 on the tensor cores. Process-global and
+        # idempotent — set once. The reference arm is an eager accuracy-ceiling
+        # run where precision matters and perf does not.
+        if not getattr(self, "_ds_reference_tf32_disabled", False):
+            torch.backends.cuda.matmul.allow_tf32 = False
+            torch.backends.cudnn.allow_tf32 = False
+            self._ds_reference_tf32_disabled = True
+
+        # When reference_include_current is set, the current decode slot is
+        # force-included in the selected set (faithful, H3-clean ceiling): its KV
+        # is valid at attention time, so the production _slot_written current-slot
+        # exclusion is undone. Without it, the run is a scorer-isolation control
+        # under the same production slot-validity condition.
+        include_current = bool(
+            getattr(selector.config, "reference_include_current", False)
+        )
         # channel_selection / channel_weights are the global per-DS-layer mask
         # [num_ds_layers, H, label_dim]; index this layer (production indexes the
         # same way). absorbed_w_sel is already this layer's [H, label_dim, lora].
-        return reference_rawdot_select(
+        _select_fn = (
+            reference_cosine_select
+            if selector_impl == "reference_cosine"
+            else reference_rawdot_select
+        )
+        return _select_fn(
             queries=queries,
             latent_fp8=latent_fp8,
             latent_scales=latent_scales,
@@ -2210,6 +2229,7 @@ class DeepseekV2AttentionMLA(
             max_top_k=selector.max_top_k,
             written=slot_written[layer_id],
             head_agg=getattr(selector.config, "head_agg", "max"),
+            include_current=include_current,
         )
 
     def _select_topk_indices(

@@ -315,6 +315,106 @@ def absorbed_latent_score_logical_fp8(
     return scores.masked_fill(~seq_len_mask, float("-inf"))
 
 
+def absorbed_latent_cosine_logical_fp8(
+    queries: torch.Tensor,
+    latent_fp8: torch.Tensor,
+    latent_scales: torch.Tensor,
+    w_sel: torch.Tensor,
+    channel_selection: torch.Tensor,
+    channel_weights: torch.Tensor,
+    req_pool_indices: torch.Tensor,
+    req_to_token: torch.Tensor,
+    seq_lens: torch.Tensor,
+    max_seq_len: int,
+    written: torch.Tensor = None,
+    head_agg: str = "max",
+    eps: float = 1e-6,
+    normalize: bool = True,
+) -> torch.Tensor:
+    """Direction-normalized (cosine) absorbed score — the Loop-7 lever, served on
+    a materialized per-head signature.
+
+    With ``normalize=False`` this returns the per-head-aggregated RAW dot computed
+    through the SAME materialized-signature path (the cosine numerator), which is
+    the "materialized-raw" single-variable control: it must equal the absorbed
+    raw-dot score, proving the materialized path does not change selection so that
+    normalization is the ONLY variable between the raw-dot and cosine arms.
+
+    ``score[b,t] = agg_h cos(Q_label_h, K_label_h[t])`` where, after the mask-channel
+    gather, ``Q_label_h = w_c ⊙ q_{S_h}`` and ``K_label_h[t] = w_sel[h] @ c_kv[t]``
+    (``w_sel[h]`` IS the per-head K-noPE up-projection rows at the mask channels, so
+    the per-head signature is materialized without any extra model weight). The raw
+    dot ``Q_label_h·K_label_h`` equals the raw-dot absorbed score; cosine divides by
+    ``|Q_label_h|·|K_label_h[t]|`` (normalize AFTER the mask-channel gather). fp32
+    throughout. Returns ``[bs, max_seq_len]`` fp32.
+    """
+    bs = queries.shape[0]
+    device = queries.device
+    if max_seq_len <= 0:
+        return torch.full((bs, 1), float("-inf"), dtype=torch.float32, device=device)
+    cs = channel_selection.long()
+    cw = channel_weights.to(torch.float32)
+    # Q_label_h = w_c ⊙ q_{S_h}  -> [bs, H, label_dim]
+    q_sel = torch.gather(
+        queries.to(torch.float32), 2, cs.unsqueeze(0).expand(bs, -1, -1)
+    ) * cw.unsqueeze(0)
+    q_norm = q_sel.norm(dim=-1)  # [bs, H]
+    safe_pool = req_pool_indices.clamp(0, max(req_to_token.shape[0] - 1, 0)).long()
+    logical_positions = (
+        torch.arange(max_seq_len, device=device).unsqueeze(0).expand(bs, -1)
+    )
+    safe_positions = logical_positions.clamp(0, max(req_to_token.shape[1] - 1, 0))
+    pool_expanded = safe_pool.unsqueeze(1).expand(-1, max_seq_len)
+    physical_slots = req_to_token[pool_expanded, safe_positions.long()]  # [bs, S]
+    T, lora = latent_fp8.shape
+    nblk = latent_scales.shape[-1]
+    block = lora // nblk
+    safe_phys = physical_slots.long().clamp(0, max(T - 1, 0))
+    g_fp8 = latent_fp8[safe_phys].to(torch.float32)  # [bs, S, lora]
+    g_scl = latent_scales[safe_phys].to(torch.float32)  # [bs, S, nblk]
+    gathered = (
+        g_fp8.view(bs, max_seq_len, nblk, block) * g_scl.view(bs, max_seq_len, nblk, 1)
+    ).view(bs, max_seq_len, lora)  # [bs, S, lora] fp32
+    w_sel_f = w_sel.to(torch.float32)  # [H, label_dim, lora]
+    # K_label[b,s,h,d] = w_sel[h,d,:]·gathered[b,s,:] -> [bs, S, H, label_dim]
+    k_label = torch.einsum("hdl,bsl->bshd", w_sel_f, gathered)
+    k_norm = k_label.norm(dim=-1)  # [bs, S, H]
+    dots = torch.einsum("bhd,bshd->bsh", q_sel, k_label)  # [bs, S, H]
+    if normalize:
+        per_head = dots / (q_norm.unsqueeze(1) * k_norm + eps)  # [bs, S, H] cosine
+    else:
+        per_head = dots  # materialized-raw control (cosine numerator, no division)
+    scores = per_head.mean(dim=-1) if head_agg == "mean" else per_head.amax(dim=-1)
+    if written is not None:
+        scores = scores.masked_fill(~written[safe_phys], float("-inf"))
+    seq_len_mask = logical_positions < seq_lens.unsqueeze(1).to(device)
+    return scores.masked_fill(~seq_len_mask, float("-inf"))
+
+
+def _select_topk_with_optional_current(
+    scores: torch.Tensor,
+    max_top_k: int,
+    seq_lens: torch.Tensor,
+    include_current: bool,
+):
+    """``select_topk_sequence_order`` on ``scores``, optionally force-including the
+    current decode slot (logical position ``seq_len-1``) by setting its score to
+    ``+inf`` before the top-k. This produces the FAITHFUL (H3-clean) ceiling: the
+    current token's own slot is always selected (its KV is valid at attention time),
+    undoing the production ``_slot_written`` current-slot exclusion."""
+    from .selection_kernel import select_topk_sequence_order
+
+    if include_current and scores.shape[1] > 0:
+        bs = scores.shape[0]
+        rows = torch.arange(bs, device=scores.device)
+        cur = (seq_lens.to(scores.device).long() - 1).clamp(
+            min=0, max=scores.shape[1] - 1
+        )
+        scores = scores.clone()
+        scores[rows, cur] = float("inf")
+    return select_topk_sequence_order(scores, max_top_k)
+
+
 def reference_rawdot_select(
     queries: torch.Tensor,
     latent_fp8: torch.Tensor,
@@ -329,6 +429,7 @@ def reference_rawdot_select(
     max_top_k: int,
     written: torch.Tensor = None,
     head_agg: str = "max",
+    include_current: bool = False,
 ):
     """Performance-naive fp32 raw-dot reference selection.
 
@@ -336,12 +437,10 @@ def reference_rawdot_select(
     slots via :func:`absorbed_latent_score_logical_fp8`) and takes an exact
     full-width ``torch.topk`` (``select_topk_sequence_order``) — no fp8-in-register
     dequant, no bf16 reduce, no radix approximation, no selector-width bucketing.
-    Returns ``(selected_indices int32 [bs, max_top_k] ascending, -1 padded;
-    valid_lengths int32 [bs])`` — byte-identical in shape/semantics to the
-    production graph-safe selector output.
+    With ``include_current`` the current decode slot is force-included (faithful,
+    H3-clean ceiling). Returns ``(selected_indices int32 [bs, max_top_k] ascending,
+    -1 padded; valid_lengths int32 [bs])``.
     """
-    from .selection_kernel import select_topk_sequence_order
-
     scores = absorbed_latent_score_logical_fp8(
         queries=queries,
         latent_fp8=latent_fp8,
@@ -356,7 +455,47 @@ def reference_rawdot_select(
         written=written,
         head_agg=head_agg,
     )
-    return select_topk_sequence_order(scores, max_top_k)
+    return _select_topk_with_optional_current(
+        scores, max_top_k, seq_lens, include_current
+    )
+
+
+def reference_cosine_select(
+    queries: torch.Tensor,
+    latent_fp8: torch.Tensor,
+    latent_scales: torch.Tensor,
+    w_sel: torch.Tensor,
+    channel_selection: torch.Tensor,
+    channel_weights: torch.Tensor,
+    req_pool_indices: torch.Tensor,
+    req_to_token: torch.Tensor,
+    seq_lens: torch.Tensor,
+    max_seq_len: int,
+    max_top_k: int,
+    written: torch.Tensor = None,
+    head_agg: str = "max",
+    include_current: bool = False,
+):
+    """Performance-naive fp32 COSINE reference selection (Loop-7 lever). Same shape/
+    semantics as :func:`reference_rawdot_select` but scores direction-normalized
+    cosine on the materialized per-head signature."""
+    scores = absorbed_latent_cosine_logical_fp8(
+        queries=queries,
+        latent_fp8=latent_fp8,
+        latent_scales=latent_scales,
+        w_sel=w_sel,
+        channel_selection=channel_selection,
+        channel_weights=channel_weights,
+        req_pool_indices=req_pool_indices,
+        req_to_token=req_to_token,
+        seq_lens=seq_lens,
+        max_seq_len=max_seq_len,
+        written=written,
+        head_agg=head_agg,
+    )
+    return _select_topk_with_optional_current(
+        scores, max_top_k, seq_lens, include_current
+    )
 
 
 def apply_forced_all_dense(

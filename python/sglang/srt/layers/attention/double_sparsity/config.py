@@ -38,6 +38,7 @@ _ALLOWED_FIELDS = {
     "lifted_budget_top_k",
     "selector_impl",
     "forced_all_dense_control",
+    "reference_include_current",
     "extra",
 }
 
@@ -162,6 +163,7 @@ class DoubleSparsityConfig:
     lifted_budget_top_k: int = _DEFAULT_LIFTED_BUDGET_TOP_K
     selector_impl: str = _DEFAULT_SELECTOR_IMPL
     forced_all_dense_control: bool = False
+    reference_include_current: bool = False
     extra: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -215,6 +217,11 @@ class DoubleSparsityConfig:
             raise ValueError(
                 f"Double Sparsity 'forced_all_dense_control' must be a boolean, "
                 f"got {self.forced_all_dense_control!r}."
+            )
+        if not isinstance(self.reference_include_current, bool):
+            raise ValueError(
+                f"Double Sparsity 'reference_include_current' must be a boolean, "
+                f"got {self.reference_include_current!r}."
             )
         if not isinstance(self.selector_width_buckets, list) or any(
             not isinstance(w, int) or isinstance(w, bool) or w <= 0
@@ -413,6 +420,9 @@ def parse_double_sparsity_config(payload: str) -> DoubleSparsityConfig:
         selector_impl=str(data.get("selector_impl", _DEFAULT_SELECTOR_IMPL)),
         forced_all_dense_control=_coerce_bool(
             data.get("forced_all_dense_control", False), "forced_all_dense_control"
+        ),
+        reference_include_current=_coerce_bool(
+            data.get("reference_include_current", False), "reference_include_current"
         ),
         extra=data.get("extra", {}),
     )
