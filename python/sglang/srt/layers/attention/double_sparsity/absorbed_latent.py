@@ -263,6 +263,58 @@ def dequantize_resident_latent(
     return deq.view(t, lora)
 
 
+def absorbed_latent_score_logical_fp8(
+    queries: torch.Tensor,
+    latent_fp8: torch.Tensor,
+    latent_scales: torch.Tensor,
+    w_sel: torch.Tensor,
+    channel_selection: torch.Tensor,
+    channel_weights: torch.Tensor,
+    req_pool_indices: torch.Tensor,
+    req_to_token: torch.Tensor,
+    seq_lens: torch.Tensor,
+    max_seq_len: int,
+    written: torch.Tensor = None,
+    head_agg: str = "max",
+) -> torch.Tensor:
+    """Same fp32 absorbed score as :func:`absorbed_latent_score_logical`, but
+    reads the fp8 latent directly and gathers + dequantizes ONLY the per-request
+    live slots (``[bs, max_seq_len]``) rather than the whole KV pool. Dequant is
+    per-element and commutes with the gather, so the fp32 values are identical —
+    this is purely the cheap form (the full-pool dequant is O(pool_capacity) per
+    layer per step, which is intractable at serving scale). Returns
+    ``[bs, max_seq_len]`` fp32 (feed to ``select_topk_sequence_order``).
+    """
+    bs = queries.shape[0]
+    device = queries.device
+    if max_seq_len <= 0:
+        return torch.full((bs, 1), float("-inf"), dtype=torch.float32, device=device)
+    v = absorbed_latent_v(queries, w_sel, channel_selection, channel_weights)  # [bs, H, lora]
+    safe_pool = req_pool_indices.clamp(0, max(req_to_token.shape[0] - 1, 0)).long()
+    logical_positions = (
+        torch.arange(max_seq_len, device=device).unsqueeze(0).expand(bs, -1)
+    )
+    safe_positions = logical_positions.clamp(0, max(req_to_token.shape[1] - 1, 0))
+    pool_expanded = safe_pool.unsqueeze(1).expand(-1, max_seq_len)
+    physical_slots = req_to_token[pool_expanded, safe_positions.long()]  # [bs, S]
+    T, lora = latent_fp8.shape
+    nblk = latent_scales.shape[-1]
+    block = lora // nblk
+    safe_phys = physical_slots.long().clamp(0, max(T - 1, 0))  # [bs, S]
+    # gather then dequant only the live slots
+    g_fp8 = latent_fp8[safe_phys].to(torch.float32)  # [bs, S, lora]
+    g_scl = latent_scales[safe_phys].to(torch.float32)  # [bs, S, nblk]
+    gathered = (
+        g_fp8.view(bs, max_seq_len, nblk, block) * g_scl.view(bs, max_seq_len, nblk, 1)
+    ).view(bs, max_seq_len, lora)  # [bs, S, lora] fp32
+    dots = torch.einsum("bhl,bsl->bsh", v, gathered)  # [bs, S, H]
+    scores = dots.mean(dim=-1) if head_agg == "mean" else dots.amax(dim=-1)
+    if written is not None:
+        scores = scores.masked_fill(~written[safe_phys], float("-inf"))
+    seq_len_mask = logical_positions < seq_lens.unsqueeze(1).to(device)
+    return scores.masked_fill(~seq_len_mask, float("-inf"))
+
+
 def reference_rawdot_select(
     queries: torch.Tensor,
     latent_fp8: torch.Tensor,
@@ -280,8 +332,8 @@ def reference_rawdot_select(
 ):
     """Performance-naive fp32 raw-dot reference selection.
 
-    Dequantizes the resident latent to fp32, scores the exact absorbed
-    channel-dot (``absorbed_latent_score_logical``), and takes an exact
+    Scores the exact absorbed channel-dot in fp32 (gather + dequant only the live
+    slots via :func:`absorbed_latent_score_logical_fp8`) and takes an exact
     full-width ``torch.topk`` (``select_topk_sequence_order``) — no fp8-in-register
     dequant, no bf16 reduce, no radix approximation, no selector-width bucketing.
     Returns ``(selected_indices int32 [bs, max_top_k] ascending, -1 padded;
@@ -290,10 +342,10 @@ def reference_rawdot_select(
     """
     from .selection_kernel import select_topk_sequence_order
 
-    c_kv = dequantize_resident_latent(latent_fp8, latent_scales)
-    scores = absorbed_latent_score_logical(
+    scores = absorbed_latent_score_logical_fp8(
         queries=queries,
-        c_kv=c_kv,
+        latent_fp8=latent_fp8,
+        latent_scales=latent_scales,
         w_sel=w_sel,
         channel_selection=channel_selection,
         channel_weights=channel_weights,
