@@ -2124,6 +2124,94 @@ class DeepseekV2AttentionMLA(
             setattr(forward_batch, "ds_per_request_summary", summary)
         summary["double_sparsity"] = records
 
+    def _reference_selector_topk(
+        self,
+        queries: torch.Tensor,
+        forward_batch: ForwardBatch,
+        layer_id: int,
+        req_to_token: torch.Tensor,
+        seq_lens: torch.Tensor,
+        selector,
+        selector_impl: str,
+    ):
+        """Performance-naive fp32 reference selection (diagnostic, eager only).
+
+        Reads the same resident fp8 latent and slot-validity bitmap as the
+        production selector, but dequantizes to fp32 and runs the exact absorbed
+        channel-dot + full-width torch top-k — no fp8-in-register dequant, bf16
+        reduce, radix kernel, or selector-width bucketing. Returns the production
+        ``(selected_indices, valid_lengths)`` format. Requires eager
+        (``--disable-cuda-graph``); the host-side dequant is illegal under graph
+        capture.
+        """
+        from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
+            reference_rawdot_select,
+        )
+        from sglang.srt.layers.attention.tbo_backend import (
+            TboAttnBackend as _TboAttnBackend,
+        )
+        from sglang.srt.model_executor.forward_context import (
+            get_attn_backend as _get_attn_backend,
+            get_token_to_kv_pool as _get_token_to_kv_pool,
+            has_forward_context as _has_forward_context,
+        )
+
+        if selector.absorbed_w_sel is None or not _has_forward_context():
+            raise RuntimeError(
+                "reference selector requires the bound absorbed projection and an "
+                "active forward context."
+            )
+        kv_pool = _get_token_to_kv_pool()
+        nope_u8 = kv_pool.kv_buffer[layer_id - kv_pool.start_layer]
+        lora = int(selector.absorbed_w_sel.shape[-1])
+        nblk = lora // 128
+        latent_fp8 = nope_u8[:, 0, :lora].view(torch.float8_e4m3fn)
+        latent_scales = nope_u8[:, 0, lora : lora + nblk * 4].view(torch.float32)
+
+        sw_backend = _get_attn_backend()
+        if isinstance(sw_backend, _TboAttnBackend):
+            sw_backend = sw_backend.primary
+        slot_written = getattr(sw_backend, "_ds_slot_written", None)
+        if slot_written is None:
+            raise RuntimeError(
+                "reference selector requires the slot_written validity bitmap."
+            )
+
+        max_seq_len = min(int(seq_lens.max().item()), int(req_to_token.shape[1]))
+        if not getattr(self, "_ds_reference_logged", False):
+            logger.info(
+                "DS reference selector ACTIVE: impl=%s queries=%s seq_lens.max=%d "
+                "max_seq_len=%d max_top_k=%d",
+                selector_impl,
+                tuple(queries.shape),
+                int(seq_lens.max().item()),
+                max_seq_len,
+                int(selector.max_top_k),
+            )
+            self._ds_reference_logged = True
+        if selector_impl == "reference_cosine":
+            raise NotImplementedError(
+                "reference_cosine selector is not yet wired; use reference_rawdot."
+            )
+        # channel_selection / channel_weights are the global per-DS-layer mask
+        # [num_ds_layers, H, label_dim]; index this layer (production indexes the
+        # same way). absorbed_w_sel is already this layer's [H, label_dim, lora].
+        return reference_rawdot_select(
+            queries=queries,
+            latent_fp8=latent_fp8,
+            latent_scales=latent_scales,
+            w_sel=selector.absorbed_w_sel,
+            channel_selection=selector.channel_mask.channel_selection[layer_id],
+            channel_weights=selector.channel_mask.channel_weights[layer_id],
+            req_pool_indices=forward_batch.req_pool_indices,
+            req_to_token=req_to_token,
+            seq_lens=seq_lens,
+            max_seq_len=max_seq_len,
+            max_top_k=selector.max_top_k,
+            written=slot_written[layer_id],
+            head_agg=getattr(selector.config, "head_agg", "max"),
+        )
+
     def _select_topk_indices(
         self,
         x: torch.Tensor,
@@ -2311,7 +2399,37 @@ class DeepseekV2AttentionMLA(
                     and _seq_lens is not None
                     and req_to_token is not None
                 )
-                if _use_graph_safe:
+                _selector_impl = getattr(
+                    getattr(_selector, "config", None), "selector_impl", "production"
+                )
+                # The diagnostic reference selector runs only on the same
+                # decode-with-state forwards where the production graph-safe path
+                # prunes: a 3-D [bs, H, head_dim] cuda query with a resolved
+                # page table and seq lens. Prefill / extend / warmup forwards
+                # (non-3-D queries or missing state) fall through to the same
+                # graph-safe-or-raise handling as production, so the reference
+                # arm matches production's gating exactly.
+                _ref_can_run = (
+                    _selector_impl in ("reference_rawdot", "reference_cosine")
+                    and queries_for_ds.dim() == 3
+                    and queries_for_ds.device.type == "cuda"
+                    and req_to_token is not None
+                    and _seq_lens is not None
+                )
+                if _ref_can_run:
+                    # Perf-naive fp32 reference selection (eager only): dequantize
+                    # the resident latent and score exactly, bypassing the
+                    # graph-safe scratch pipeline entirely.
+                    selected_indices, valid_lengths = self._reference_selector_topk(
+                        queries=queries_for_ds,
+                        forward_batch=forward_batch,
+                        layer_id=layer_id,
+                        req_to_token=req_to_token,
+                        seq_lens=_seq_lens,
+                        selector=_selector,
+                        selector_impl=_selector_impl,
+                    )
+                elif _use_graph_safe:
                     from sglang.srt.layers.attention.double_sparsity.cuda_graph import (
                         radix_topk_scratch as _radix_topk_scratch,
                     )
@@ -2489,6 +2607,21 @@ class DeepseekV2AttentionMLA(
                         "(preallocated ds_graph_state + the resident fp8 latent); "
                         "the eager retrieve_topk fallback is not wired for "
                         "production selection."
+                    )
+                # Downstream-isolation control: force the dense logical sweep
+                # [0..seq_len-1] for rows that fit, so any residual degradation is
+                # provably downstream of selection rather than a scorer mis-pick.
+                if getattr(
+                    getattr(_selector, "config", None),
+                    "forced_all_dense_control",
+                    False,
+                ):
+                    from sglang.srt.layers.attention.double_sparsity.absorbed_latent import (
+                        apply_forced_all_dense,
+                    )
+
+                    selected_indices, valid_lengths = apply_forced_all_dense(
+                        selected_indices, valid_lengths, _seq_lens, _selector.max_top_k
                     )
                 # Selection-capture mirrors (config-borne diagnostic): copy this
                 # layer's selection into the per-layer capture buffers. A device

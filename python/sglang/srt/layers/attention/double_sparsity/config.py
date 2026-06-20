@@ -36,6 +36,8 @@ _ALLOWED_FIELDS = {
     "score_reduce_dtype",
     "enable_lifted_budget_decode",
     "lifted_budget_top_k",
+    "selector_impl",
+    "forced_all_dense_control",
     "extra",
 }
 
@@ -125,6 +127,17 @@ _DEFAULT_OVERFLOW_POLICY = "full_fallback"
 _DEFAULT_PAGE_SIZE = 64         # FlashMLA KV layout requirement
 _DEFAULT_DEVICE_BUFFER_SIZE = 4096  # score-scratch buffer cap in tokens
 
+# Diagnostic selector implementations (eager / perf-naive, for accuracy-ceiling
+# study only — NOT a serving path). "production" is the resident-fp8 absorbed
+# graph-safe selector. The "reference_*" variants dequantize the resident latent
+# to fp32 and score exactly (no fp8-in-register, no bf16 reduce, no radix
+# approximation, no selector-width bucketing): "reference_rawdot" scores the raw
+# channel-dot via the fp32 absorbed identity; "reference_cosine" materializes a
+# per-head signature and direction-normalizes before scoring. Require eager
+# (--disable-cuda-graph). Default keeps the production path byte-identical.
+_ALLOWED_SELECTOR_IMPL = ("production", "reference_rawdot", "reference_cosine")
+_DEFAULT_SELECTOR_IMPL = "production"
+
 
 @dataclass
 class DoubleSparsityConfig:
@@ -147,6 +160,8 @@ class DoubleSparsityConfig:
     score_reduce_dtype: str = "bf16"
     enable_lifted_budget_decode: bool = False
     lifted_budget_top_k: int = _DEFAULT_LIFTED_BUDGET_TOP_K
+    selector_impl: str = _DEFAULT_SELECTOR_IMPL
+    forced_all_dense_control: bool = False
     extra: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -190,6 +205,16 @@ class DoubleSparsityConfig:
             raise ValueError(
                 f"Double Sparsity 'score_capture' must be a boolean, "
                 f"got {self.score_capture!r}."
+            )
+        if self.selector_impl not in _ALLOWED_SELECTOR_IMPL:
+            raise ValueError(
+                f"Double Sparsity 'selector_impl' must be one of "
+                f"{list(_ALLOWED_SELECTOR_IMPL)}, got {self.selector_impl!r}."
+            )
+        if not isinstance(self.forced_all_dense_control, bool):
+            raise ValueError(
+                f"Double Sparsity 'forced_all_dense_control' must be a boolean, "
+                f"got {self.forced_all_dense_control!r}."
             )
         if not isinstance(self.selector_width_buckets, list) or any(
             not isinstance(w, int) or isinstance(w, bool) or w <= 0
@@ -384,6 +409,10 @@ def parse_double_sparsity_config(payload: str) -> DoubleSparsityConfig:
         ),
         lifted_budget_top_k=int(
             data.get("lifted_budget_top_k", _DEFAULT_LIFTED_BUDGET_TOP_K)
+        ),
+        selector_impl=str(data.get("selector_impl", _DEFAULT_SELECTOR_IMPL)),
+        forced_all_dense_control=_coerce_bool(
+            data.get("forced_all_dense_control", False), "forced_all_dense_control"
         ),
         extra=data.get("extra", {}),
     )

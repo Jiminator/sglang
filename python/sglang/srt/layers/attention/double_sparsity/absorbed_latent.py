@@ -242,3 +242,95 @@ def absorbed_latent_score_logical(
         scores = scores.masked_fill(~written[safe_phys], float("-inf"))
     seq_len_mask = logical_positions < seq_lens.unsqueeze(1).to(device)
     return scores.masked_fill(~seq_len_mask, float("-inf"))
+
+
+def dequantize_resident_latent(
+    latent_fp8: torch.Tensor, latent_scales: torch.Tensor
+) -> torch.Tensor:
+    """fp8-e4m3 resident latent + per-block fp32 scales -> fp32 ``c_kv`` ``[T, lora]``.
+
+    The KV pool stores the MLA noPE latent as fp8 with one fp32 scale per
+    128-channel block. This reverses that exactly in fp32 — the
+    performance-naive dequant the reference selector scores against (no
+    in-register fp8 dequant, no tf32). ``latent_fp8`` is ``[T, lora]`` viewed as
+    ``float8_e4m3fn``; ``latent_scales`` is ``[T, nblk]`` fp32.
+    """
+    t, lora = latent_fp8.shape
+    nblk = latent_scales.shape[-1]
+    block = lora // nblk
+    deq = latent_fp8.to(torch.float32).view(t, nblk, block)
+    deq = deq * latent_scales.to(torch.float32).view(t, nblk, 1)
+    return deq.view(t, lora)
+
+
+def reference_rawdot_select(
+    queries: torch.Tensor,
+    latent_fp8: torch.Tensor,
+    latent_scales: torch.Tensor,
+    w_sel: torch.Tensor,
+    channel_selection: torch.Tensor,
+    channel_weights: torch.Tensor,
+    req_pool_indices: torch.Tensor,
+    req_to_token: torch.Tensor,
+    seq_lens: torch.Tensor,
+    max_seq_len: int,
+    max_top_k: int,
+    written: torch.Tensor = None,
+    head_agg: str = "max",
+):
+    """Performance-naive fp32 raw-dot reference selection.
+
+    Dequantizes the resident latent to fp32, scores the exact absorbed
+    channel-dot (``absorbed_latent_score_logical``), and takes an exact
+    full-width ``torch.topk`` (``select_topk_sequence_order``) — no fp8-in-register
+    dequant, no bf16 reduce, no radix approximation, no selector-width bucketing.
+    Returns ``(selected_indices int32 [bs, max_top_k] ascending, -1 padded;
+    valid_lengths int32 [bs])`` — byte-identical in shape/semantics to the
+    production graph-safe selector output.
+    """
+    from .selection_kernel import select_topk_sequence_order
+
+    c_kv = dequantize_resident_latent(latent_fp8, latent_scales)
+    scores = absorbed_latent_score_logical(
+        queries=queries,
+        c_kv=c_kv,
+        w_sel=w_sel,
+        channel_selection=channel_selection,
+        channel_weights=channel_weights,
+        req_pool_indices=req_pool_indices,
+        req_to_token=req_to_token,
+        seq_lens=seq_lens,
+        max_seq_len=max_seq_len,
+        written=written,
+        head_agg=head_agg,
+    )
+    return select_topk_sequence_order(scores, max_top_k)
+
+
+def apply_forced_all_dense(
+    selected_indices: torch.Tensor,
+    valid_lengths: torch.Tensor,
+    seq_lens: torch.Tensor,
+    max_top_k: int,
+):
+    """Downstream-isolation control: for rows where ``seq_len <= max_top_k``,
+    replace the scored selection with the logical sweep ``[0 .. seq_len-1]``
+    (ascending, ``-1`` padded) so selection is provably a no-op and any residual
+    degradation is downstream of selection (the adapter / slot-validity / kernel
+    feed). Rows with ``seq_len > max_top_k`` are left unchanged (keeping all
+    tokens is undefined when they do not fit). Returns new
+    ``(selected_indices, valid_lengths)`` in the production format.
+    """
+    bs, width = selected_indices.shape
+    device = selected_indices.device
+    out_idx = selected_indices.clone()
+    out_len = valid_lengths.clone()
+    positions = torch.arange(width, device=device, dtype=out_idx.dtype)
+    for b in range(bs):
+        s = int(seq_lens[b])
+        if s <= max_top_k:
+            n = min(s, width)
+            out_idx[b].fill_(-1)
+            out_idx[b, :n] = positions[:n]
+            out_len[b] = n
+    return out_idx, out_len.to(valid_lengths.dtype)
