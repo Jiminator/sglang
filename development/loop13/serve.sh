@@ -61,7 +61,17 @@ case "$MODE" in
     DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "forced_all_dense_control": true}' "$MASK")
     EXTRA=( --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
     ;;
-  *) echo "FATAL: mode must be 'dsa', 'dsa_noradix', 'ds', 'ds_capture', 'ref', or 'ds_forced_all'"; exit 2 ;;
+  ds_anchor)
+    # Sparse-regime H3 confirmation: production top-2048 selection PLUS a recency
+    # anchor that force-includes the most-recent ANCHOR_BUDGET slots (incl. the
+    # current decode slot) on top of top-k. If sparse recovers, the current/recent
+    # slot exclusion is the sparse bug too. ANCHOR_BUDGET env (default 64).
+    [ -s "$MASK" ] || { echo "FATAL: mask $MASK missing"; exit 2; }
+    AB="${ANCHOR_BUDGET:-64}"
+    DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "recency", "anchor_budget": %s, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0}' "$MASK" "$AB")
+    EXTRA=( --disable-radix-cache --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
+    ;;
+  *) echo "FATAL: mode must be 'dsa', 'dsa_noradix', 'ds', 'ds_capture', 'ref', 'ds_forced_all', or 'ds_anchor'"; exit 2 ;;
 esac
 
 # *** NO PYTHONPATH *** — default editable install = dev clone (the guard enforced this).

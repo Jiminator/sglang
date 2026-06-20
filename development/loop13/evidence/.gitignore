@@ -1,7 +1,7 @@
 # Large/regenerable server logs and runtime capture dumps — keep the eval
 # .out files, the evidence table, and meta/ (the durable evidence).
 serve_*.log
-serve_*.log.fail*
+serve_*.log.*
 .sglang_ds_scorecap/
 .sglang_ds_selcap/
 .sglang_ds_latentcap/
