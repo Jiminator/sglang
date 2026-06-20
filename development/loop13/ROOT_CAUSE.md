@@ -6,6 +6,23 @@ GLM-5.1-FP8, 8×H200 TP=8, page 64, fp8_e4m3 KV, seed 42, temp 0, completion API
 Dev clone `/sgl-workspace/sglang` @ git `180f6dd6d`, mask sha256 `5c89c516…`.
 Dense = GSM8K 5-shot/200 (~716 tok < top_k 2048). Sparse = 24-shot/150 (~4.2–5.6k tok > 2048).
 
+## Headline (Round 1)
+**The accuracy ceiling is GOOD: with the cosine scorer and the current decode slot included,
+naive-DS reaches ≈ DSA in both regimes (dense 0.950, sparse 0.940 vs DSA 0.975/0.953).** The
+channel-importance algorithm DOES transfer to GLM-5.1 MLA. The production DS collapse is **two
+regressions** layered in during the table-free optimization history — NOT the algorithm failing
+to transfer (not H0) and NOT a bad mask (not H2: the same mask reaches ≈DSA under cosine):
+
+1. **Dense 0.620 → H3: the current decode slot is excluded from its own attention** (the
+   `_slot_written` invalidation in `_select_topk_indices` is not restored before the selected set
+   is consumed). Including the current slot recovers dense **0.620 → 0.950/0.970**.
+2. **Sparse 0.000 → the raw-dot `scorer_norm="off"` lock.** The table-free rewrite (Loop 11,
+   `01e3ff238` deletes `TokenLabelTable`) hard-locked `scorer_norm="off"` (raw channel-dot) because
+   the absorbed-latent identity only holds for the raw dot — i.e. it **dropped the Loop-7 cosine
+   scorer** (Loop 7 measured cosine lifting 16K NIAH recall 5%→40%). The raw-dot scorer collapses
+   long-context selection (faithful raw-dot sparse **0.013**); the **cosine** scorer, re-materialized
+   here on a per-head signature, recovers sparse to **0.940 ≈ DSA**.
+
 ## Per-arm GSM8K evidence
 
 | Arm | Dense | Sparse | Note |
@@ -13,70 +30,62 @@ Dense = GSM8K 5-shot/200 (~716 tok < top_k 2048). Sparse = 24-shot/150 (~4.2–5
 | DSA (native indexer) | 0.975 | 0.953 | accuracy target |
 | DSA, `--disable-radix-cache` | 0.960 | 0.940 | radix-cache disable is output-neutral |
 | production DS (table-free) | **0.620** | **0.000** | the regression |
-| naive-DS raw-dot, **fp32-exact reference** | **0.620** | **0.000** | exact scorer == production |
-| DS forced-all dense (incl current slot) | **0.950** | n/a | dense recovers |
-| DS anchor-recency b=64 (incl current+recent) | **0.960** | **0.007** | dense recovers, sparse does NOT |
-| DS anchor-recency b=1 (current-token ONLY) | **0.970** | 0.000 | airtight: ONE token (current slot) recovers dense to ≈DSA; sparse unaffected |
+| reference raw-dot, H3-CONTAMINATED (drops current slot) | 0.620 | 0.000 | scorer-isolation control: exact fp32 scorer == production under the same slot-validity bug → exonerates fp8/bf16/radix/width opts |
+| forced-all dense (incl current) | 0.950 | n/a | H3 dense fix |
+| anchor-recency b=1 (current slot ONLY) | 0.970 | 0.000 | airtight H3: ONE token recovers dense |
+| **FAITHFUL raw-dot** (current incl, TF32 off) | **0.950** | **0.013** | H3-clean ceiling; raw-dot collapses sparse |
+| **FAITHFUL cosine** (current incl, TF32 off) | **0.940** | **0.940** | **cosine recovers sparse 0.013→0.940 ≈ DSA**; DS active (2048<5610, no fallback) |
 
-Reference selector = performance-naive and algorithmically exact: dequantize the resident
-latent to fp32, exact absorbed channel-dot, exact full-width `torch.topk` — no fp8-in-register
-dequant, no bf16 cross-TP reduce, no approximate radix top-k, no selector-width bucketing.
-Served `selector_impl="reference_rawdot"`. DS genuinely active on sparse (selected 2048 < total,
-dense_fallback 0). The fp32 absorbed score equals a materialized fp32 K_label score by the
-absorbed identity (exact algebra; CPU unit test confirms reference top-k == `torch.topk`).
+The reference selectors are performance-naive and exact (fp32 dequant of the resident latent,
+exact absorbed channel-dot / cosine, exact full-width `torch.topk`; no fp8-in-register dequant,
+bf16 reduce, radix approximation, or selector-width bucketing). "Faithful" = current decode slot
+force-included (H3-clean: dense reports `selected == seq_len`) + TF32 disabled (leak-free fp32).
+The cosine arm materializes the per-head signature: `|K_label_h[t]| = ||absorbed_w_sel[h] @ c_kv[t]||`
+(`absorbed_w_sel[h]` are the mask-channel rows of the per-head K-noPE up-projection), `|Q_label_h| =
+||w_c ⊙ q_{S_h}||`, normalize AFTER the mask-channel gather (the Loop-7 lever).
 
-## Verdict
+## AC-5 decision gate (recomputed — see `evidence/gate_ac5.md`)
+naive-DS = best(faithful raw-dot, cosine): dense best(0.950, 0.940)=0.950 vs DSA 0.975 → 2.5 pp
+(within 3 pp); sparse best(0.013, **0.940**)=0.940 vs DSA 0.953 → 1.3 pp (within 5 pp, > 0).
+**GATE = GOOD** → AC-6 (single-variable bisection).
 
-### Primary cause — DENSE 0.620: H3 (downstream-of-selection slot-validity bug)
-In the dense regime seq ≈ 716 < top_k 2048, so selection is essentially a no-op: DS keeps
-**715 of 716** tokens (sparsity_rate ≈ 0.0014). The single dropped token is the **current
-decode slot**: `_select_topk_indices` invalidates it in the `_slot_written` bitmap
-(`_slot_written[layer_id, out_cache_loc] = False`) *before* scoring — so a reused physical KV
-slot's stale latent can't be selected — and the companion restore only happens after the KV
-write. Within the same decode step the current token's own slot therefore scores −∞ and is
-excluded from its selected attention set, so **each decode token cannot attend to itself.**
+## AC-6 bisection — the two culprits, single-variable
+1. **Sparse: the raw-dot `scorer_norm="off"` lock.** Single-variable control: faithful raw-dot
+   sparse 0.013 vs faithful **cosine** sparse 0.940 (identical setup; ONLY the scorer normalization
+   differs). Cost ≈ **92.7 pp** sparse. Responsible change: Loop 11 table-free rewrite
+   (`01e3ff238`, deletes `TokenLabelTable`; `config.py` hard-locks `scorer_norm="off"`).
+2. **Dense: the current decode slot exclusion (H3).** Single-variable: production DS dense 0.620 vs
+   current-slot-included 0.950 (forced-all) / 0.970 (anchor b=1). Cost ≈ **33 pp** dense.
+   Mechanism: `_slot_written[layer_id, out_cache_loc] = False` before scoring, not restored before
+   the selected set is consumed.
 
-Evidence it is THIS and not the scorer / a perf optimization / the algorithm:
-- The fp32-**exact** reference scorer scores the **same** 0.620 dense — so fp8-in-register
-  scoring, bf16 reduce, approximate radix top-k, and selector-width bucketing are all
-  **exonerated** (rules out H1 for dense).
-- Forcing the current slot back in recovers dense to **≈ DSA 0.975** — and the recovery is
-  airtight to a SINGLE token: anchor-recency **b=1 (the current slot ONLY) → 0.970**, b=64 →
-  0.960, forced-all → 0.950. One token (the current decode slot) is the entire dense gap, so
-  the channel-importance selection itself transfers fine in dense (rules out H0/H2 for dense).
+Both deltas are far above the GSM8K single-run significance bar (n=150 binomial stderr ≈ 4 pp), so
+they are unambiguous on a single run (per the significance convention).
 
-This is a **downstream-of-selection / slot-validity** bug (H3), localized to the current-slot
-invalidation in `_select_topk_indices`.
+## Why NOT H0 / H2 (and why the no-mask ablation is moot)
+- NOT H0 (algorithm doesn't transfer): cosine reaches ≈DSA in both regimes, so the
+  channel-importance algorithm transfers — the raw-dot scorer, not the algorithm, was the failure.
+- NOT H2 (bad mask): the SAME offline channel mask reaches ≈DSA under cosine, so the mask is
+  adequate. The BAD-branch no-mask ablation (AC-7.1) is the response to a BAD gate; the gate is
+  GOOD, so AC-7 is not on the taken branch.
 
-### Secondary — SPARSE 0.000: an additional selection-quality failure (H0/H2), confounded by H3
-At long context with **real** pruning (selected 2048 of ~5600), the collapse persists even
-when the current slot is included (anchor-recency b=64 sparse 0.007) and even with the
-**fp32-exact** scorer (reference sparse 0.000). So beyond the current-slot bug, the
-channel-importance top-2048 does not capture the tokens GSM8K needs for long-context reasoning
-that DSA's learned indexer captures (0.953). This is the H0/H2 family — but it is **confounded
-by the H3 current-slot bug on every decode step** and cannot be cleanly characterized until H3
-is fixed.
+## Adversarial review
+Round-0 Codex review (`evidence/codex_review_h3.md`) confirmed the dense H3 diagnosis and demanded
+the cosine arm + a faithful, leak-free ceiling — exactly what overturned the Round-0 "sparse =
+confounded H0/H2" wording. Round-1 Codex review of the GOOD gate: `evidence/codex_review_gate.md`.
 
-## Adversarial review (Codex, gpt-5.5 xhigh — `evidence/codex_review_h3.md`)
-Codex rated the verdict "partly" sound: the dense diagnosis is "very strong" and ruled H1/H0/H2
-out for dense, but asked for (a) a current-**only** rescue to make the current-slot claim
-airtight, and (b) a sparse recency sweep to separate H3 from a coexisting H0 in sparse. Both
-were run: anchor-recency b=64 (dense recovers, sparse does not) and b=1 (current-only) — see
-the table. The two-part verdict above reflects Codex's refinement.
-
-## Recommendation (follow-up loop — NOT this loop)
+## Recommendation (follow-up FIX loops — NOT this diagnosis loop)
 1. **Fix H3 (small, localized):** force-include the current decode slot in its own selection/
-   attention set, or restore `_slot_written` for the current slot before the selected set is
-   consumed. Expected to recover dense to ≈ DSA.
-2. **Re-measure the sparse selection ceiling AFTER the H3 fix** to cleanly decide whether the
-   channel-importance algorithm transfers to long context (H0) or the mask needs recalibration
-   (H2). The reference selector built here is the reusable instrument for that.
-3. No selection/adapter fix is landed in this diagnosis loop.
+   attention set, or restore `_slot_written` for the current slot before the selected set is used.
+2. **Restore the cosine scorer for the table-free path:** re-materialize the per-head signature (or
+   compute the cosine norms from the absorbed projection as done here, `|K_label_h|=||w_sel[h]@c_kv||`)
+   so `scorer_norm="cosine"` is available again — this recovers the sparse regime.
+No selection/adapter fix is landed in this diagnosis loop.
 
 ## Reusable artifacts built this loop
-- `selector_impl="reference_rawdot"` — the fp32-exact reference selector (the accuracy-ceiling
-  instrument).
+- `selector_impl ∈ {reference_rawdot, reference_cosine}` + `reference_include_current` + TF32-off —
+  the faithful, leak-free reference selectors (the accuracy-ceiling instruments).
 - `forced_all_dense_control` — the dense downstream-isolation control.
-- `serve.sh` modes: `dsa_noradix`, `ds_capture`, `ref`, `ds_forced_all`, `ds_anchor`.
-- `run_gsm8k.sh` `THREADS`/`REGIME` knobs; `analyze_captures.py` (TP head-agg + selected-index
-  equivalence over capture dumps).
+- `serve.sh` modes: `dsa_noradix`, `ds_capture`, `ref`, `ref_faithful`, `ref_cosine`,
+  `ds_forced_all`, `ds_anchor`. `run_gsm8k.sh` `THREADS`/`REGIME` knobs; `analyze_captures.py`.
+- Per-arm metadata JSON under `evidence/meta/arms/`.

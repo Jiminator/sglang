@@ -1,0 +1,12 @@
+{
+  "arm": "ref_faithful",
+  "selector_impl": "reference_rawdot",
+  "reference_include_current": true,
+  "tf32_disabled": true,
+  "eager": true,
+  "config": {"top_k":2048,"scorer_norm":"off","head_agg":"max","anchor_mode":"off"},
+  "ds_active_by_regime": {"dense": {"selected": 714, "total": 714, "dense_fallback": 0, "invariant": "selected==seq_len"},
+                          "sparse": {"selected": 2048, "total": 5610, "dense_fallback": 0, "invariant": "selected<total"}},
+  "gsm8k": {"dense_5shot_200": 0.950, "sparse_24shot_150": 0.013, "temperature": 0, "max_tokens": 512, "api": "completion", "threads_batched": 64},
+  "dsa_reference": {"dense": 0.975, "sparse": 0.953}
+}

@@ -118,3 +118,23 @@ Including ONLY the single current decode slot recovers dense to 0.970 (~DSA) —
 is exactly one token. Neither b=1 nor b=64 recovers sparse -> the sparse collapse is a distinct
 secondary failure (long-context selection quality), not the current-slot bug. Airtight per
 Codex's requested current-only isolation + sparse sweep.
+
+## ROUND 1 — verdict FLIPPED: ceiling is GOOD; sparse = the raw-dot scorer_norm=off lock
+Built faithful (current-slot-included, H3-clean) + leak-free (TF32-off) reference selectors,
+and implemented the served COSINE reference (materialized per-head signature, normalize after
+mask-channel gather). Codex Round-0 demanded these and they overturn the Round-0 sparse wording.
+
+| arm (faithful, TF32 off) | dense | sparse |
+|---|---|---|
+| raw-dot (current incl) | 0.950 | 0.013 |
+| **cosine (current incl)** | 0.940 | **0.940** |
+| DSA | 0.975 | 0.953 |
+
+- **cosine RECOVERS sparse 0.013 → 0.940 ≈ DSA** (DS active: selected 2048<5610, no fallback).
+- AC-5 gate recomputed best(raw,cosine): dense 0.950 (2.5pp), sparse 0.940 (1.3pp) → **GOOD**.
+- → GOOD branch (AC-6 bisection). Two culprits, single-variable:
+  1. sparse = raw-dot scorer_norm="off" lock (Loop-11 table-free dropped the Loop-7 cosine scorer);
+     raw-dot 0.013 vs cosine 0.940, only normalization differs. Cost ~92.7pp.
+  2. dense = H3 current-slot exclusion. Cost ~33pp.
+- NOT H0 (cosine transfers) and NOT H2 (same mask works under cosine) → the no-mask ablation (AC-7,
+  a BAD-branch action) is moot on the GOOD branch.

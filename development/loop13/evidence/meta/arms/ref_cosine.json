@@ -1,0 +1,12 @@
+{
+  "arm": "ref_cosine",
+  "selector_impl": "reference_cosine",
+  "reference_include_current": true,
+  "tf32_disabled": true,
+  "eager": true,
+  "scorer": "cosine (direction-normalized after mask-channel gather; materialized per-head signature |K_label_h[t]|=||absorbed_w_sel[h]@c_kv[t]||)",
+  "ds_active_by_regime": {"dense": {"selected": 714, "total": 714, "dense_fallback": 0},
+                          "sparse": {"selected": 2048, "total": 5610, "dense_fallback": 0}},
+  "gsm8k": {"dense_5shot_200": 0.940, "sparse_24shot_150": 0.940, "sparse_score_std": 0.237, "temperature": 0, "max_tokens": 512, "api": "completion", "threads_dense": 64, "threads_sparse": 24},
+  "dsa_reference": {"dense": 0.975, "sparse": 0.953}
+}

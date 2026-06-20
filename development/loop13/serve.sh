@@ -5,7 +5,9 @@
 #   - dsa_noradix   : DSA + --disable-radix-cache          — radix-cache-neutral control
 #   - ds            : current table-free Double Sparsity   — radix disabled (dev-clone gate)
 #   - ds_capture    : production DS, EAGER + score/selection capture — cheap-control data
-#   - ref           : perf-naive fp32 raw-dot reference selector (EAGER) — accuracy ceiling
+#   - ref           : fp32 raw-dot reference (EAGER) — scorer-isolation (H3-contaminated)
+#   - ref_faithful  : fp32 raw-dot reference, TF32 off + current slot included (EAGER) — faithful ceiling
+#   - ref_cosine    : fp32 COSINE reference, TF32 off + current slot included (EAGER) — faithful cosine ceiling
 #   - ds_forced_all : dense forced-all [0..seq-1] control (EAGER) — H3 downstream-isolation
 # Run this BACKGROUNDED (it polls readiness with sleep). Writes PID to $PIDFILE.
 set -uo pipefail
@@ -45,12 +47,30 @@ case "$MODE" in
     EXTRA=( --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
     ;;
   ref)
-    # Performance-naive fp32 raw-dot REFERENCE selector (the accuracy ceiling):
-    # dequantize the resident latent to fp32, exact absorbed channel-dot, exact
-    # full-width torch top-k. EAGER (--disable-cuda-graph; host dequant illegal
-    # under graph). selector_impl="reference_rawdot".
+    # Raw-dot REFERENCE scorer-ISOLATION control: exact fp32 absorbed channel-dot
+    # but UNDER the production slot-validity condition (current decode slot still
+    # excluded via _slot_written). Useful to exonerate the scorer/perf-opts, NOT a
+    # faithful ceiling. EAGER. selector_impl="reference_rawdot".
     [ -s "$MASK" ] || { echo "FATAL: mask $MASK missing"; exit 2; }
     DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "selector_impl": "reference_rawdot"}' "$MASK")
+    EXTRA=( --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
+    ;;
+  ref_faithful)
+    # FAITHFUL, leak-free raw-dot accuracy ceiling: exact fp32 absorbed channel-dot,
+    # TF32 disabled, AND the current decode slot force-included (reference_include_current),
+    # so the run is H3-CLEAN (dense reports selected==seq_len). This is the AC-5 gate
+    # input for raw-dot. EAGER.
+    [ -s "$MASK" ] || { echo "FATAL: mask $MASK missing"; exit 2; }
+    DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "selector_impl": "reference_rawdot", "reference_include_current": true}' "$MASK")
+    EXTRA=( --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
+    ;;
+  ref_cosine)
+    # FAITHFUL, leak-free COSINE accuracy ceiling (Loop-7 lever): direction-normalized
+    # absorbed score on a materialized per-head signature (normalize after mask-channel
+    # gather), TF32 disabled, current decode slot force-included. The AC-5 gate input
+    # for cosine. EAGER. selector_impl="reference_cosine".
+    [ -s "$MASK" ] || { echo "FATAL: mask $MASK missing"; exit 2; }
+    DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "selector_impl": "reference_cosine", "reference_include_current": true}' "$MASK")
     EXTRA=( --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
     ;;
   ds_forced_all)
@@ -71,7 +91,7 @@ case "$MODE" in
     DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "recency", "anchor_budget": %s, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0}' "$MASK" "$AB")
     EXTRA=( --disable-radix-cache --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
     ;;
-  *) echo "FATAL: mode must be 'dsa', 'dsa_noradix', 'ds', 'ds_capture', 'ref', 'ds_forced_all', or 'ds_anchor'"; exit 2 ;;
+  *) echo "FATAL: mode must be 'dsa', 'dsa_noradix', 'ds', 'ds_capture', 'ref', 'ref_faithful', 'ref_cosine', 'ds_forced_all', or 'ds_anchor'"; exit 2 ;;
 esac
 
 # *** NO PYTHONPATH *** — default editable install = dev clone (the guard enforced this).
