@@ -1,19 +1,20 @@
-# Loop 13 — Per-arm GSM8K evidence table (AC-1 / AC-4)
+# Loop 13 — Per-arm GSM8K evidence ledger (AC-1 / AC-4), generated from evidence/meta/arms/*.json
 
-Run metadata: see `meta/run_meta.json` (git_sha 180f6dd6d, mask sha256 5c89c516…).
-Config fixed: GLM-5.1-FP8, TP=8, page 64, fp8_e4m3 KV, seed 42, mem-frac 0.8, cuda-graph ON (piecewise off), temp 0, max_tokens 512, completion API.
-Dense = 5-shot/200 (~763 tok, seq<top_k 2048). Sparse = 24-shot/150 (~4.2k tok, seq>2048). Batched = 64 threads; Serial = 1 thread.
+git_sha 62ad64346 · model GLM-5.1-FP8 · mask sha256 5c89c516… · TP=8 page64 fp8_e4m3 KV seed42 · temp0 max_tokens512 completion API
+Dense = 5-shot/200 (~716 tok < top_k 2048). Sparse = 24-shot/150 (~5.6k tok > 2048). batched=64 threads.
+selected/total: DS selected vs total tokens by regime (— = native DSA / no DS meta).
 
-| Arm | Mode | Radix cache | Dense | Sparse | head_agg | reduce dtype | sel-width | Notes |
-|---|---|---|---|---|---|---|---|---|
-| DSA (native) | batched | on | 0.975 | 0.973 | — | — | — | accuracy target; reproduces ≈0.970/0.953 |
-| DSA (native) | serial | on | 0.965 | 0.947 | — | — | — | serial≈batched (no batching gap) |
-| DSA-radix-off | batched | off | 0.960 | 0.940 | — | — | — | control: ≈DSA → --disable-radix-cache is output-neutral |
-| production DS | batched | off | 0.620 | 0.000 | max | bf16 | 5120 | **regression reproduced** (DSA 0.975/0.973); sparse collapses to garbage @ length cap |
-| production DS | serial(dense) | off | 0.655 | (collapse) | max | bf16 | 5120 | serial≈batched in dense (gap ~3.5pt); sparse collapse is mode-independent (batched 0.000) |
-| naive-DS raw-dot (fp32 reference) | batched | off | 0.620 | 0.000 | max | fp32 | full(exact) | **== production DS (0.620/0.000)**; exact scorer recovers NEITHER regime → scorer/perf-opts exonerated → H3 (downstream) |
-| DS forced-all dense control | batched | off | **0.950** | n/a (dense-only) | max | bf16 | 5120 | force-include ALL tokens incl current slot -> recovers 0.620->0.950 (~DSA): **the dropped current decode slot is the H3 bug** |
-| DS anchor recency b=64 | batched | off | 0.960 | 0.007 | max | bf16 | 5120 | recency-include recent-64 incl current: **dense recovers 0.620->0.960; sparse STILL collapses (0.007)** -> sparse has an additional failure beyond current-slot |
-| DS anchor recency b=1 (current-token ONLY) | batched | off | **0.970** | 0.000 | max | bf16 | 5120 | **dense 0.620->0.970 (~DSA) from ONE token (current slot); sparse still 0.000 -> dense=H3, sparse=additional failure** |
-| naive-DS raw-dot FAITHFUL (TF32 off, current incl) | batched | off | 0.950 | 0.013 | max | fp32 | full(exact) | **H3-CLEAN ceiling**: dense selected==seq_len, current slot included; sparse STILL collapses (0.013) -> raw-dot algo fails at long context, not the H3 bug |
-| naive-DS COSINE FAITHFUL (Loop-7, TF32 off, current incl) | batched | off | 0.940 | **0.940** | max | fp32 | full(exact) | **cosine RECOVERS sparse 0.013->0.940 (~DSA 0.953)**; DS active (selected 2048<5610, no fallback). The raw-dot scorer_norm=off lock is the sparse culprit |
+| Arm | dense (b) | sparse (b) | dense (serial) | sparse (serial) | DS selected/total (dense; sparse) | note |
+|---|---|---|---|---|---|---|
+| dsa | 0.975 | 0.973 | 0.965 | 0.947 | — | native DSA indexer (DS off) — accuracy target |
+| dsa_noradix | 0.960 | 0.940 | — | — | — | DSA + radix-cache disabled — output-neutral control |
+| production_ds | 0.620 | 0.000 | 0.655 | — | dense 715/716; sparse 2048/5620 | table-free DS (scorer_norm=off,head_agg=max,bf16 reduce,radix,W=5120) — the regression |
+| ref_faithful | 0.950 | 0.013 | — | — | dense 714/714; sparse 2048/5610 | faithful raw-dot ceiling: exact fp32, TF32 off, current slot incl (dense selected==seq_len) |
+| ref_cosine | 0.940 | 0.940 | — | — | dense 714/714; sparse 2048/5610 | faithful COSINE ceiling: materialized per-head signature, normalize after gather |
+| ds_forced_all | 0.950 | — | — | — | dense 716/716 | dense forced-all [0..seq-1] control (incl current); dense-only |
+| ds_anchor_b1 | 0.970 | 0.000 | — | — | — | recency anchor budget=1 (current slot only) on production top-k |
+| ds_anchor_b64 | 0.960 | 0.007 | — | — | — | recency anchor budget=64 on production top-k |
+
+Fields not instrumented this loop (listed in each arm JSON, not faked): per-example sample IDs/order; per-step length-cap garbage counters (invalid/unwritten/duplicate/out-of-range physical slots). Gate uses the measured batched DSA comparator (0.975/0.973).
+
+Gate (AC-5, evidence/gate_ac5.md): naive-DS=best(faithful raw-dot, cosine): dense 0.950 (2.5pp), sparse 0.940 (3.3pp) -> GOOD. Verdict: dense=H3 current-slot; sparse=raw-dot scorer_norm=off lock (reference-ceiling; production-path bisection pending).

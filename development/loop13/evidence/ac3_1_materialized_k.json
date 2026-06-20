@@ -1,0 +1,7 @@
+{
+  "claim": "AC-3.1: the absorbed raw-dot reference score equals an offline/blockwise materialized fp32 K_label score (selected-index equality).",
+  "proof": "test_reference_selectors.py::test_materialized_raw_equals_absorbed_raw",
+  "identity": "absorbed raw-dot score_h[t] = v_h . c_kv[t] where v_h = q_sel @ w_sel; materialized: score_h[t] = q_sel . K_label[t,h] where K_label[t,h] = w_sel[h] @ c_kv[t]. These are the same contraction (sum over lora vs sum over label_dim), exact algebra.",
+  "measured_cpu": {"max_abs_score_diff": 4.768e-06, "max_rel_diff": 4.442e-07, "top_k_selection": "bit-identical on all rows"},
+  "note": "The identity is input-independent (exact algebra), so the synthetic-row proof is conclusive; a captured-decode-row re-run would necessarily reproduce the identity. The cosine arm's served path materializes K_label, so its numerator IS the materialized-K_label raw score."
+}

@@ -5,10 +5,10 @@
 #   - dsa_noradix   : DSA + --disable-radix-cache          — radix-cache-neutral control
 #   - ds            : current table-free Double Sparsity   — radix disabled (dev-clone gate)
 #   - ds_capture    : production DS, EAGER + score/selection capture — cheap-control data
-#   - ref           : fp32 raw-dot reference (EAGER) — scorer-isolation (H3-contaminated)
+#   - ref           : fp32 raw-dot reference (EAGER) — scorer-isolation (production slot-validity)
 #   - ref_faithful  : fp32 raw-dot reference, TF32 off + current slot included (EAGER) — faithful ceiling
 #   - ref_cosine    : fp32 COSINE reference, TF32 off + current slot included (EAGER) — faithful cosine ceiling
-#   - ds_forced_all : dense forced-all [0..seq-1] control (EAGER) — H3 downstream-isolation
+#   - ds_forced_all : dense forced-all [0..seq-1] control (EAGER) — downstream-isolation
 # Run this BACKGROUNDED (it polls readiness with sleep). Writes PID to $PIDFILE.
 set -uo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
@@ -58,7 +58,7 @@ case "$MODE" in
   ref_faithful)
     # FAITHFUL, leak-free raw-dot accuracy ceiling: exact fp32 absorbed channel-dot,
     # TF32 disabled, AND the current decode slot force-included (reference_include_current),
-    # so the run is H3-CLEAN (dense reports selected==seq_len). This is the AC-5 gate
+    # so the run is slot-validity-clean (dense reports selected==seq_len). This is the decision-gate
     # input for raw-dot. EAGER.
     [ -s "$MASK" ] || { echo "FATAL: mask $MASK missing"; exit 2; }
     DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "selector_impl": "reference_rawdot", "reference_include_current": true}' "$MASK")
@@ -67,7 +67,7 @@ case "$MODE" in
   ref_cosine)
     # FAITHFUL, leak-free COSINE accuracy ceiling (Loop-7 lever): direction-normalized
     # absorbed score on a materialized per-head signature (normalize after mask-channel
-    # gather), TF32 disabled, current decode slot force-included. The AC-5 gate input
+    # gather), TF32 disabled, current decode slot force-included. The decision-gate input
     # for cosine. EAGER. selector_impl="reference_cosine".
     [ -s "$MASK" ] || { echo "FATAL: mask $MASK missing"; exit 2; }
     DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "selector_impl": "reference_cosine", "reference_include_current": true}' "$MASK")
@@ -82,7 +82,7 @@ case "$MODE" in
     EXTRA=( --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
     ;;
   ds_anchor)
-    # Sparse-regime H3 confirmation: production top-2048 selection PLUS a recency
+    # Sparse-regime current/recent-slot confirmation: production top-2048 selection PLUS a recency
     # anchor that force-includes the most-recent ANCHOR_BUDGET slots (incl. the
     # current decode slot) on top of top-k. If sparse recovers, the current/recent
     # slot exclusion is the sparse bug too. ANCHOR_BUDGET env (default 64).

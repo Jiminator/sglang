@@ -1,12 +1,16 @@
 # AC-5 decision gate (Round 1 — recomputed from a valid best-of raw/cosine FAITHFUL ceiling)
 
+
+> Baseline: DSA batched = 0.975/0.973 (measured, AC-1 reproduction). The plan's original-session
+> sparse number was 0.953; reproduced here as 0.973. The gate uses the measured batched comparator.
+
 naive-DS ceiling = best(faithful-raw-dot, cosine), both FAITHFUL (current decode slot
 force-included → H3-clean) and leak-free (TF32 disabled), exact fp32.
 
 | regime | faithful raw-dot | cosine | best (naive-DS) | DSA | gap | threshold | result |
 |---|---|---|---|---|---|---|---|
 | dense (5sh/200) | 0.950 | 0.940 | **0.950** | 0.975 | 2.5 pp | within 3 pp | PASS |
-| sparse (24sh/150) | 0.013 | **0.940** | **0.940** | 0.953 | 1.3 pp | within 5 pp + >0 | PASS |
+| sparse (24sh/150) | 0.013 | **0.940** | **0.940** | 0.973 | 3.3 pp | within 5 pp + >0 | PASS |
 
 ## GATE = GOOD
 The accuracy ceiling is GOOD: with the cosine scorer + the current decode slot included,
@@ -34,7 +38,7 @@ between sparse 0.013 (raw-dot) and 0.940 (cosine) is the cosine normalization �
 `scorer_norm="off"` lock is definitively the sparse culprit.
 
 ## Exact counts (Codex MUST_DO #3)
-sparse (n=150): cosine 141/150 (0.940), DSA ~143/150 (0.953), faithful raw-dot 2/150 (0.013).
+sparse (n=150): cosine 141/150 (0.940), DSA 146/150 (0.973 measured batched), faithful raw-dot 2/150 (0.013).
 dense (n=200): faithful raw-dot 190/200 (0.950), cosine 188/200 (0.940), DSA 195/200 (0.975).
 The cosine-vs-rawdot sparse delta (141 vs 2 of 150) is unambiguous on a single run. The dense pass
 margin is thin (~5–7 examples vs the 3pp threshold) — recorded, not oversold.

@@ -399,7 +399,7 @@ def _select_topk_with_optional_current(
 ):
     """``select_topk_sequence_order`` on ``scores``, optionally force-including the
     current decode slot (logical position ``seq_len-1``) by setting its score to
-    ``+inf`` before the top-k. This produces the FAITHFUL (H3-clean) ceiling: the
+    ``+inf`` before the top-k. This produces the FAITHFUL (slot-validity-clean) ceiling: the
     current token's own slot is always selected (its KV is valid at attention time),
     undoing the production ``_slot_written`` current-slot exclusion."""
     from .selection_kernel import select_topk_sequence_order
@@ -438,7 +438,7 @@ def reference_rawdot_select(
     full-width ``torch.topk`` (``select_topk_sequence_order``) — no fp8-in-register
     dequant, no bf16 reduce, no radix approximation, no selector-width bucketing.
     With ``include_current`` the current decode slot is force-included (faithful,
-    H3-clean ceiling). Returns ``(selected_indices int32 [bs, max_top_k] ascending,
+    slot-validity-clean ceiling). Returns ``(selected_indices int32 [bs, max_top_k] ascending,
     -1 padded; valid_lengths int32 [bs])``.
     """
     scores = absorbed_latent_score_logical_fp8(

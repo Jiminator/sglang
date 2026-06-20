@@ -8,10 +8,18 @@ Dense = GSM8K 5-shot/200 (~716 tok < top_k 2048). Sparse = 24-shot/150 (~4.2–5
 
 ## Headline (Round 1)
 **The accuracy ceiling is GOOD: with the cosine scorer and the current decode slot included,
-naive-DS reaches ≈ DSA in both regimes (dense 0.950, sparse 0.940 vs DSA 0.975/0.953).** The
-channel-importance algorithm DOES transfer to GLM-5.1 MLA. The production DS collapse is **two
+naive-DS reaches ≈ DSA in both regimes (dense 0.950, sparse 0.940 vs measured DSA 0.975/0.973).**
+The channel-importance algorithm DOES transfer to GLM-5.1 MLA. The production DS collapse is **two
 regressions** layered in during the table-free optimization history — NOT the algorithm failing
 to transfer (not H0) and NOT a bad mask (not H2: the same mask reaches ≈DSA under cosine):
+
+> Baseline note: DSA batched here measures 0.975/0.973 (the plan's original-session sparse number
+> was 0.953; reproduced as 0.973). The gate uses the consistent **measured batched** comparator.
+> Scope note: the sparse attribution below is established at the **reference-ceiling** level
+> (cosine vs raw-dot, with the materialized-raw selection-equality proof). The full
+> **production-path** one-variable bisection (head_agg / fp8-absorbed / bf16-reduce / radix-topk /
+> selector-width arms; production-style cosine) is **pending** (next round) — the remaining
+> production opts are shown second-order (production raw-dot 0.000 ≈ exact raw-dot 0.013).
 
 1. **Dense 0.620 → H3: the current decode slot is excluded from its own attention** (the
    `_slot_written` invalidation in `_select_topk_indices` is not restored before the selected set
@@ -27,7 +35,7 @@ to transfer (not H0) and NOT a bad mask (not H2: the same mask reaches ≈DSA un
 
 | Arm | Dense | Sparse | Note |
 |---|---|---|---|
-| DSA (native indexer) | 0.975 | 0.953 | accuracy target |
+| DSA (native indexer) | 0.975 | 0.973 | accuracy target (measured batched) |
 | DSA, `--disable-radix-cache` | 0.960 | 0.940 | radix-cache disable is output-neutral |
 | production DS (table-free) | **0.620** | **0.000** | the regression |
 | reference raw-dot, H3-CONTAMINATED (drops current slot) | 0.620 | 0.000 | scorer-isolation control: exact fp32 scorer == production under the same slot-validity bug → exonerates fp8/bf16/radix/width opts |
@@ -46,10 +54,14 @@ The cosine arm materializes the per-head signature: `|K_label_h[t]| = ||absorbed
 
 ## AC-5 decision gate (recomputed — see `evidence/gate_ac5.md`)
 naive-DS = best(faithful raw-dot, cosine): dense best(0.950, 0.940)=0.950 vs DSA 0.975 → 2.5 pp
-(within 3 pp); sparse best(0.013, **0.940**)=0.940 vs DSA 0.953 → 1.3 pp (within 5 pp, > 0).
+(within 3 pp); sparse best(0.013, **0.940**)=0.940 vs DSA 0.973 → 3.3 pp (within 5 pp, > 0).
 **GATE = GOOD** → AC-6 (single-variable bisection).
 
-## AC-6 bisection — the two culprits, single-variable
+## AC-6 bisection — reference-ceiling result (production-path arms pending, next round)
+The two culprits are named from the reference-ceiling single-variable controls below; the full
+production-path one-variable bisection (production-style cosine; head_agg / fp8-absorbed / bf16-reduce
+/ radix-topk / selector-width arms, each corroborated) is **pending**. Until then the sparse culprit
+is the strong, single-variable-supported **candidate**, not a closed production-path attribution.
 1. **Sparse: the raw-dot `scorer_norm="off"` lock.** Single-variable control: faithful raw-dot
    sparse 0.013 vs faithful **cosine** sparse 0.940 (identical setup; ONLY the scorer normalization
    differs). Cost ≈ **92.7 pp** sparse. Responsible change: Loop 11 table-free rewrite

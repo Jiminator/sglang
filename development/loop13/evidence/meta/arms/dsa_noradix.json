@@ -1,11 +1,11 @@
 {
-  "arm": "ref_faithful",
+  "arm": "dsa_noradix",
   "git_sha": "62ad643465e0bc99730a3063681f243e538e69c3",
   "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
   "mask_content_sha256": "5c89c516428f379c983461ceb58fb366c0d6cb12733b3f957d98edb5406f7b21",
-  "serve_mode": "ref_faithful",
-  "server_args": "--tp-size 8 --kv-cache-dtype fp8_e4m3 --mem-fraction-static 0.8 --max-running-requests 64 --cuda-graph-max-bs 64 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --random-seed 42 --trust-remote-code --disable-radix-cache --disable-cuda-graph --enable-double-sparsity",
-  "cuda_graph": "off",
+  "serve_mode": "dsa_noradix",
+  "server_args": "--tp-size 8 --kv-cache-dtype fp8_e4m3 --mem-fraction-static 0.8 --max-running-requests 64 --cuda-graph-max-bs 64 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --random-seed 42 --trust-remote-code --disable-radix-cache",
+  "cuda_graph": "on (piecewise off)",
   "gsm8k": {
     "temperature": 0,
     "max_tokens": 512,
@@ -14,24 +14,15 @@
     "sparse_config": "24-shot/150"
   },
   "scores": {
-    "dense_batched": 0.95,
-    "sparse_batched": 0.013,
+    "dense_batched": 0.96,
+    "sparse_batched": 0.94,
     "dense_serial": null,
     "sparse_serial": null
   },
-  "ds_selected_vs_total_by_regime": {
-    "dense": [
-      714,
-      714
-    ],
-    "sparse": [
-      2048,
-      5610
-    ]
-  },
+  "ds_selected_vs_total_by_regime": null,
   "fields_not_instrumented": [
     "per_example_sample_ids_order (run_eval uses a fixed seed-42 gsm8k slice; the per-example id list is not emitted by the stock harness)",
     "per_step_length_cap_garbage_counts (invalid/unwritten/duplicate/out-of-range physical slots \u2014 requires logical_to_physical adapter instrumentation not built this loop)"
   ],
-  "note": "faithful raw-dot ceiling: exact fp32, TF32 off, current slot incl (dense selected==seq_len)"
+  "note": "DSA + radix-cache disabled \u2014 output-neutral control"
 }

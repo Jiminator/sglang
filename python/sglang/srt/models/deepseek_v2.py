@@ -2190,7 +2190,7 @@ class DeepseekV2AttentionMLA(
                 int(selector.max_top_k),
             )
             self._ds_reference_logged = True
-        # Leak-free fp32 (AC-3.4): disable TF32 so the "fp32" reference scoring is
+        # Leak-free fp32: disable TF32 so the "fp32" reference scoring is
         # not silently computed in tf32 on the tensor cores. Process-global and
         # idempotent — set once. The reference arm is an eager accuracy-ceiling
         # run where precision matters and perf does not.
@@ -2200,7 +2200,7 @@ class DeepseekV2AttentionMLA(
             self._ds_reference_tf32_disabled = True
 
         # When reference_include_current is set, the current decode slot is
-        # force-included in the selected set (faithful, H3-clean ceiling): its KV
+        # force-included in the selected set (faithful, slot-validity-clean ceiling): its KV
         # is valid at attention time, so the production _slot_written current-slot
         # exclusion is undone. Without it, the run is a scorer-isolation control
         # under the same production slot-validity condition.
