@@ -1,0 +1,16 @@
+{
+  "captured_utc": "2026-06-20T10:04:27Z",
+  "git_sha": "180f6dd6decb1577da8e40bf002f79805ece693d",
+  "branch": "dev/double-sparsity-standalone",
+  "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
+  "mask_path": "/cluster-storage/models/glm51-fp8-channel-mask-loop12.safetensors",
+  "mask_content_sha256": "5c89c516428f379c983461ceb58fb366c0d6cb12733b3f957d98edb5406f7b21",
+  "host": "127.0.0.1", "port": 30000,
+  "tp_size": 8, "kv_cache_dtype": "fp8_e4m3", "page_size": 64,
+  "mem_fraction_static": 0.8, "max_running_requests": 64, "cuda_graph_max_bs": 64,
+  "cuda_graph": "on (piecewise disabled)", "random_seed": 42,
+  "dsa_prefill_backend": "flashmla_kv", "dsa_decode_backend": "flashmla_kv",
+  "gsm8k": {"dense": "5-shot/200", "sparse": "24-shot/150", "temperature": 0, "max_tokens": 512, "api": "completion"},
+  "concurrency_batched_threads": 64, "concurrency_serial_threads": 1,
+  "ds_config": {"top_k": 2048, "scorer_norm": "off", "head_agg": "max", "enable_lifted_budget_decode": false, "anchor_mode": "off"}
+}
