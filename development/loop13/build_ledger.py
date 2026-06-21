@@ -118,10 +118,43 @@ def ds_config_for(arm):
 
 def effective_ds_config_for(arm):
     """The EFFECTIVE runtime DS config = all DoubleSparsityConfig fields resolved (defaults +
-    channel_mask_path + the arm's launch overrides). None for non-DS arms."""
+    channel_mask_path + the arm's launch overrides). None for non-DS arms. NOTE: a knob being set in
+    this config object does NOT mean the selector path uses it — see ds_selector_behavior_for()."""
     if arm not in DS_OVERRIDES:
         return None
     return {**DS_DEFAULTS, "channel_mask_path": MASK_PATH, **DS_OVERRIDES[arm]}
+
+
+def ds_selector_behavior_for(arm):
+    """What the selector ACTUALLY does (AC-4 behavior surface), keyed on selector_impl. The reference_*
+    paths (deepseek_v2.py:_reference_selector_topk) dequantize to fp32 and run the EXACT absorbed
+    channel-dot + full-width torch.topk — no fp8-in-register, no bf16 reduce, no radix kernel, no
+    selector-width bucketing — so the production width/reduce/radix/fp8 knobs in effective_ds_config are
+    DORMANT on those arms. None for non-DS arms."""
+    eff = effective_ds_config_for(arm)
+    if eff is None:
+        return None
+    impl = eff["selector_impl"]
+    if impl.startswith("reference_"):
+        return {
+            "path": "reference (eager fp32, perf-naive diagnostic)",
+            "selector_width": "full (no bucketing)",
+            "score_reduce": "none (per-rank-local fp32; no cross-TP reduce)",
+            "topk": "exact torch.topk",
+            "scoring": "exact fp32 dequant",
+            "scorer": "cosine" if impl == "reference_cosine" else "raw-dot",
+            "head_agg": eff["head_agg"],
+            "note": "production width/reduce/radix/fp8 knobs are bypassed on the reference path",
+        }
+    return {  # selector_impl == "production": the graph-safe fp8 selector — configured knobs ARE used
+        "path": "production (graph-safe, fp8 absorbed)",
+        "selector_width": str(eff["selector_width_buckets"]),
+        "score_reduce": eff["score_reduce_dtype"],
+        "topk": "blocked/radix",
+        "scoring": "fp8 absorbed in-register",
+        "scorer": "raw-dot (scorer_norm=off)",
+        "head_agg": eff["head_agg"],
+    }
 
 
 def _server_args(arm, extra):
@@ -227,7 +260,8 @@ for arm, a in ARMS.items():
     _cfg = ds_config_for(arm)
     if _cfg is not None:
         rec["ds_config"] = _cfg                              # literal launch JSON (serve.sh)
-        rec["effective_ds_config"] = effective_ds_config_for(arm)  # full resolved runtime config
+        rec["effective_ds_config"] = effective_ds_config_for(arm)  # full resolved config OBJECT
+        rec["ds_selector_behavior"] = ds_selector_behavior_for(arm)  # what the selector ACTUALLY does (AC-4)
     if a.get("ac6_leg"):
         rec["ac6_leg"] = a["ac6_leg"]
         rec["corroboration_artifact"] = a.get("corroboration")
@@ -265,6 +299,15 @@ for r in ledger:
         eff = r.get("effective_ds_config") or {}
         eff_missing = [k for k in DS_EFFECTIVE_REQUIRED if k not in eff]
         assert not eff_missing, f"DS arm {r['arm']} effective_ds_config missing AC-4 keys: {eff_missing}"
+        # AC-4 behavior surface: a reference_* arm must NOT render the production width/reduce as USED
+        # (the reference path bypasses width bucketing + bf16/fp32 cross-TP reduce). Codex R10.
+        beh = r.get("ds_selector_behavior") or {}
+        if eff.get("selector_impl", "").startswith("reference_"):
+            used = f"{beh.get('selector_width','')} {beh.get('score_reduce','')}"
+            for bad in ("5120", "bf16"):
+                assert bad not in used, (
+                    f"reference arm {r['arm']} ds_selector_behavior shows production '{bad}' as used "
+                    f"(width/reduce are bypassed on the reference path): {used!r}")
 
 # regenerate evidence_table.md from the ledger
 lines = ["# Loop 13 — Per-arm GSM8K evidence ledger (AC-1 / AC-4), generated from evidence/meta/arms/*.json",
@@ -275,9 +318,10 @@ lines = ["# Loop 13 — Per-arm GSM8K evidence ledger (AC-1 / AC-4), generated f
          f"temp0 max_tokens512 completion API",
          "Dense = 5-shot/200 (~716 tok < top_k 2048). Sparse = 24-shot/150 (~5.6k tok > 2048). batched=64 threads.",
          "selected/total: DS selected vs total tokens by regime (— = native DSA / no DS meta).",
-         "DS effective: impl/width/reduce/scorer/head-agg from effective_ds_config (defaults expanded; full config in each arm JSON).",
+         "DS selector behavior: what the selector ACTUALLY uses (ds_selector_behavior; reference_* arms bypass "
+         "the production width/reduce/radix/fp8 knobs — full config object in each arm JSON's effective_ds_config).",
          "",
-         "| Arm | dense (b) | sparse (b) | dense (serial) | sparse (serial) | DS selected/total (dense; sparse) | DS effective (impl·width·reduce·scorer·head-agg) | note |",
+         "| Arm | dense (b) | sparse (b) | dense (serial) | sparse (serial) | DS selected/total (dense; sparse) | DS selector behavior (path·width·reduce·topk·scorer·head-agg) | note |",
          "|---|---|---|---|---|---|---|---|"]
 def cell(x): return "—" if x is None else f"{x:.3f}"
 def ds_cell(ds):
@@ -286,16 +330,17 @@ def ds_cell(ds):
     for k in ("dense", "sparse"):
         if k in ds: parts.append(f"{k} {ds[k][0]}/{ds[k][1]}")
     return "; ".join(parts) if parts else "—"
-def eff_cell(r):
-    e = r.get("effective_ds_config")
-    if not e: return "—"
-    return (f"{e['selector_impl']} · W{e['selector_width_buckets']} · {e['score_reduce_dtype']} · "
-            f"{e['scorer_norm']} · {e['head_agg']}")
+def beh_cell(r):
+    b = r.get("ds_selector_behavior")
+    if not b: return "—"
+    path = "prod" if b["path"].startswith("production") else "ref"
+    return (f"{path} · {b['selector_width']} · {b['score_reduce']} · {b['topk']} · "
+            f"{b['scorer']} · {b['head_agg']}")
 for r in ledger:
     s = r["scores"]
     lines.append(f"| {r['arm']} | {cell(s['dense_batched'])} | {cell(s['sparse_batched'])} | "
                  f"{cell(s['dense_serial'])} | {cell(s['sparse_serial'])} | {ds_cell(r['ds_selected_vs_total_by_regime'])} | "
-                 f"{eff_cell(r)} | {r['note']} |")
+                 f"{beh_cell(r)} | {r['note']} |")
 lines += ["",
           "Per-example sample IDs/order: evidence/gsm8k_sample_ids.json (deterministic stock loader; all "
           "arms share the identical ordered slice — dense lines [5:205], sparse [24:174]). Still not "

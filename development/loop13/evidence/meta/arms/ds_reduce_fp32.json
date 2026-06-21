@@ -2,8 +2,8 @@
   "arm": "ds_reduce_fp32",
   "measured_git_sha": "8b55dfba3",
   "ledger_generated_from": {
-    "head_sha_at_generation": "5d48cbd0d6775dbbe2b06c566a476172e4258f03",
-    "generator_blob_sha": "d8d93f638b6b0c95a5b62b4b78963e370a26af13",
+    "head_sha_at_generation": "75158e50523d0b206b8c3388c451b6894081a316",
+    "generator_blob_sha": "4f83d15605ca030f8fe2a29c0106447344c639ac",
     "worktree": "dirty (+uncommitted evidence/generator)",
     "note": "generated BEFORE its own commit exists, so head_sha_at_generation is one commit behind the commit that contains this file; generator_blob_sha pins the source exactly"
   },
@@ -68,6 +68,15 @@
     "forced_all_dense_control": false,
     "reference_include_current": false,
     "channel_mask_path": "/cluster-storage/models/glm51-fp8-channel-mask-loop12.safetensors"
+  },
+  "ds_selector_behavior": {
+    "path": "production (graph-safe, fp8 absorbed)",
+    "selector_width": "[5120]",
+    "score_reduce": "fp32",
+    "topk": "blocked/radix",
+    "scoring": "fp8 absorbed in-register",
+    "scorer": "raw-dot (scorer_norm=off)",
+    "head_agg": "max"
   },
   "ac6_leg": "score_reduce_dtype (bf16->fp32 cross-TP reduce)",
   "corroboration_artifact": "evidence/ac6_score_reduce_fp32_corrob.json"
