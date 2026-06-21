@@ -1,6 +1,6 @@
 # Loop 13 — Per-arm GSM8K evidence ledger (AC-1 / AC-4), generated from evidence/meta/arms/*.json
 
-ledger generator blob 888d0ed952b7 (head@gen 3238c78dc, worktree dirty (+uncommitted evidence/generator)) · per-arm measured_git_sha in each evidence/meta/arms/*.json (baselines @180f6dd6d, R1 ref arms @fea920c06) · model GLM-5.1-FP8 · mask sha256 5c89c516… · TP=8 page64 fp8_e4m3 KV seed42 · temp0 max_tokens512 completion API
+ledger generator blob 3129be087f7f (head@gen 082510939, worktree dirty (+uncommitted evidence/generator)) · per-arm measured_git_sha in each evidence/meta/arms/*.json (baselines @180f6dd6d, R1 ref arms @fea920c06) · model GLM-5.1-FP8 · mask sha256 5c89c516… · TP=8 page64 fp8_e4m3 KV seed42 · temp0 max_tokens512 completion API
 Dense = 5-shot/200 (~716 tok < top_k 2048). Sparse = 24-shot/150 (~5.6k tok > 2048). batched=64 threads.
 selected/total: DS selected vs total tokens by regime (— = native DSA / no DS meta).
 DS selector behavior: what the selector ACTUALLY uses (ds_selector_behavior; reference_* arms bypass the production width/reduce/radix/fp8 knobs — full config object in each arm JSON's effective_ds_config).

@@ -310,6 +310,7 @@ runs/20260528_dsv32_mvp/p_over_topk.txt
 .sglang_ds_garbage/
 .sglang_ds_ref_faithful_garbage/
 .sglang_ds_ref_cosine_garbage/
+.sglang_ds_oracle/
 .sglang_ds_scorecap_work/
 .sglang_ds_selcap_work/
 # Loop-9 raw run artifacts: per-step selection dumps (.pt, ~hundreds of MB) and

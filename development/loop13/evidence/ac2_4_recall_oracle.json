@@ -1,0 +1,52 @@
+{
+  "ac": "AC-2.4 NIAH recall-oracle@2048 \u2014 production DS scorer (scorer_norm=off raw-dot)",
+  "arm": "production_ds",
+  "corroboration_only": true,
+  "note": "recall@2048 is a NIAH score-ranking property, NOT a generic selected-index equivalence proof and NOT scorer exoneration (plan AC-2.4/DEC). Dense (prompt<top_k) selects all tokens so recall is trivially 1.0; sparse (prompt>top_k) measures whether the production raw-dot scorer ranks the needle inside the 2048 budget.",
+  "index_topk": 2048,
+  "decode_steps_per_trial": 4,
+  "server_vs_offline_token_delta": 0,
+  "failure_markers": {
+    "span_out_of_range": 0,
+    "exception": 0
+  },
+  "regimes": {
+    "dense": {
+      "trials_issued": 8,
+      "trials_with_records": 8,
+      "oracle_records": 2496,
+      "recall_at_2048": 1.0,
+      "recall_at_2048_records": 2496,
+      "selected_contains_needle_rate": 1.0,
+      "needle_worst_rank": {
+        "min": 54,
+        "median": 777,
+        "max": 1139
+      },
+      "server_prompt_tokens_sample": {
+        "dense-i0": 1136,
+        "dense-i1": 1137,
+        "dense-i2": 1136
+      }
+    },
+    "sparse": {
+      "trials_issued": 8,
+      "trials_with_records": 8,
+      "oracle_records": 2496,
+      "recall_at_2048": 0.4103,
+      "recall_at_2048_records": 2496,
+      "selected_contains_needle_rate": 0.4103,
+      "needle_worst_rank": {
+        "min": 72,
+        "median": 2524,
+        "max": 4313
+      },
+      "server_prompt_tokens_sample": {
+        "sparse-i0": 4310,
+        "sparse-i1": 4311,
+        "sparse-i2": 4310
+      }
+    }
+  },
+  "source_oracle_dir_basename": ".sglang_ds_oracle"
+}

@@ -135,6 +135,26 @@ production (`current_slot_unwritten = 0`, current slot EXCLUDED). So across ALL 
 adapter + selected-index path is provably clean; the only moving part is whether the current slot is in the
 selection — production excludes it (the H3 dense regression), the faithful references include it (recovery).
 
+### AC-2.4 NIAH recall-oracle@2048 — production DS scorer (Round 18, CORROBORATION ONLY)
+`evidence/ac2_4_recall_oracle.json` (`niah_recall_oracle.py`), from a guarded `ds_recall_oracle` eager run
+(production DS + `recall_oracle:true`). A self-contained GLM NIAH driver registers each needle's logical
+token span via the cross-process oracle sink and the server records the needle's score rank among the live
+all-reduced DS selection scores. **This is corroboration, not exoneration** (plan AC-2.4/DEC): recall@2048
+is a NIAH score-ranking property, not a generic selected-index equivalence proof. Fail-closed: 8/8 trials
+produced records in BOTH regimes, 0 `span_out_of_range`/`exception` markers, server-vs-offline token delta
+0 (offline span matches the server KV domain exactly).
+- **Dense** (prompt ~1136 tok < top_k): recall@2048 = **1.0**, `selected_contains_needle` = 1.0 (the
+  selector keeps every token, so the needle is always selected; `needle_worst_rank` max 1139 < 2048). This
+  confirms the dense regime selects all — the dense regression is NOT a scorer-ranking failure (it is the
+  H3 current-slot exclusion, per AC-2.1/AC-4).
+- **Sparse** (prompt ~4310 tok > top_k): recall@2048 = **0.4103**, `needle_worst_rank` median **2524**
+  (> 2048), max 4313. The production raw-dot scorer (`scorer_norm=off`) ranks the needle INSIDE the 2048
+  budget only ~41% of the time, so the needle is pruned out >half the time. This corroborates that the
+  sparse collapse is **scorer-driven** (the raw-dot lock), consistent with the sparse 0.000 GSM8K and the
+  cosine recovery — recall is a property of the ranking, and the raw-dot ranking does not reliably surface
+  the needle in the long-context regime. (`selected_contains_needle_rate == recall@2048` in both regimes —
+  the AC-1 oracle invariant.)
+
 ## AC-2.2 (refinement) — recency-anchor sweep: dense vs sparse diverge
 Codex adversarial review (evidence/codex_review_h3.md) flagged that forced-all bypasses
 validity for the whole dense row and that sparse (real pruning) may have a coexisting H0.

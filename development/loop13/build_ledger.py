@@ -246,6 +246,34 @@ SAMPLE_IDS_ARTIFACT = "evidence/gsm8k_sample_ids.json"
 # AC-2.1 forced-all dense physical-slot + slot-validity assertions (R14) — also the AC-4 garbage counters
 # for the forced-all control (real garbage 0; the only unwritten slot is the current decode slot = H3).
 FORCED_ALL_ASSERT_ARTIFACT = "evidence/forced_all_assertions.json"
+# AC-2.4 NIAH recall-oracle@2048 corroboration (R18): per-regime recall@2048 for the production DS scorer.
+RECALL_ORACLE_ARTIFACT = "evidence/ac2_4_recall_oracle.json"
+
+
+def validate_recall_oracle_artifact():
+    """Fail closed unless the AC-2.4 recall-oracle artifact has both regimes with non-zero records.
+
+    The driver (niah_recall_oracle.py) is itself fail-closed (every issued trial must produce an oracle
+    record, zero span_out_of_range/exception markers), but the ledger must not silently RENDER AC-2.4 as
+    present if the artifact is absent or empty. Returns the per-regime recall@2048 summary.
+    """
+    p = os.path.join(HERE, RECALL_ORACLE_ARTIFACT)
+    assert os.path.exists(p), f"{RECALL_ORACLE_ARTIFACT} missing — run niah_recall_oracle.py"
+    d = json.load(open(p))
+    assert d.get("arm") == "production_ds", f"recall-oracle arm={d.get('arm')!r}, expected production_ds"
+    assert d.get("corroboration_only") is True, "recall-oracle must be labelled corroboration_only=true"
+    regs = d.get("regimes", {})
+    assert set(regs) >= {"dense", "sparse"}, f"recall-oracle regimes={sorted(regs)}, need dense+sparse"
+    summary = {}
+    for reg in ("dense", "sparse"):
+        v = regs[reg]
+        recs = v.get("oracle_records", 0)
+        r2048 = v.get("recall_at_2048")
+        assert recs > 0, f"recall-oracle {reg} oracle_records={recs}, expected >0"
+        assert r2048 is not None, f"recall-oracle {reg} recall_at_2048 is null"
+        summary[reg] = {"recall_at_2048": r2048, "oracle_records": recs,
+                        "selected_contains_needle_rate": v.get("selected_contains_needle_rate")}
+    return summary
 # AC-4 length-cap garbage counters for the SCORED selection of every served DS arm (real garbage 0 in both
 # regimes). production_ds EXCLUDES the current decode slot (current_slot_unwritten==0 = the H3 cause from the
 # selection side); the reference arms INCLUDE it (reference_include_current=true), so current_slot_unwritten>0.
@@ -464,11 +492,16 @@ open(os.path.join(EVID, "evidence_table.md"), "w").write("\n".join(lines) + "\n"
 # from the SAME GEN_BLOB/GEN_HEAD stamped into the per-arm JSONs, so the per-arm
 # JSONs, the table header, and run_meta can never disagree (Codex R4: they did —
 # run_meta had a stale blob 1391f0e... while the arms had f8771c7f2...).
+# AC-2.4: load + validate the recall-oracle corroboration artifact (fail-closed: both regimes, non-zero
+# records) and record its summary at the top level, so the ledger cannot render AC-2.4 present when it isn't.
+RECALL_ORACLE_SUMMARY = validate_recall_oracle_artifact()
+
 RUN_META = os.path.join(EVID, "meta", "run_meta.json")
 if os.path.exists(RUN_META):
     rm = json.load(open(RUN_META))
     rm["git_sha_current"] = GEN_HEAD
     rm["ledger_generator_blob_sha"] = GEN_BLOB
+    rm["recall_oracle_corroboration"] = {"artifact": RECALL_ORACLE_ARTIFACT, **RECALL_ORACLE_SUMMARY}
     json.dump(rm, open(RUN_META, "w"), indent=2)
 
 # Consistency assertion: the generator blob recorded in every per-arm JSON, in the
