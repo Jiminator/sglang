@@ -111,38 +111,45 @@ def head_agg_test(score_caps, top_k):
 
 def selected_index_equivalence(score_caps, sel_caps, top_k):
     """(B) production radix top-k (selection_capture) vs exact torch.topk on the
-    same post-reduce score row (score_capture). Assumes bs=1 captures."""
-    # final post-reduce score row per (req, layer): identical across ranks; take rank0
+    same post-reduce score row (score_capture), joined EXACTLY on
+    ``(req_pool_index, layer)`` via the selection record's ``req_pool_indices``.
+
+    Returns ``(rows, unmatched)``; ``unmatched`` counts selected rows with no
+    matching score row (a non-zero count means the join is incomplete and the
+    result must NOT be trusted)."""
     rows = []
-    # Build a layer->(req, scores) lookup from score caps (rank0).
-    score_by_layer = {}
-    for (req, layer), per_rank in score_caps.items():
-        r0 = per_rank.get(min(per_rank))
-        sc = r0.get("scores")
-        if sc is not None:
-            score_by_layer.setdefault(layer, []).append((req, sc.float().reshape(-1)))
+    unmatched = 0
     for rec in sel_caps:
         idx = rec.get("indices")        # [num_layers, bs, max_top_k]
         lens = rec.get("lengths")       # [num_layers, bs]
-        if idx is None:
+        rpi = rec.get("req_pool_indices")  # [bs]
+        if idx is None or rpi is None:
             continue
-        num_layers = idx.shape[0]
+        num_layers, bs = idx.shape[0], idx.shape[1]
         for layer in range(num_layers):
-            if layer not in score_by_layer:
-                continue
-            # bs=1 assumption: production selected set for row 0
-            prod = idx[layer, 0]
-            length = int(lens[layer, 0]) if lens is not None else int((prod >= 0).sum())
-            prod_set = set(int(i) for i in prod[:length].tolist() if int(i) >= 0)
-            for (req, scores) in score_by_layer[layer]:
+            for b in range(bs):
+                pool_idx = int(rpi[b])
+                per_rank = score_caps.get((pool_idx, layer))
+                if not per_rank:
+                    unmatched += 1
+                    continue
+                scores = per_rank[min(per_rank)].get("scores")
+                if scores is None:
+                    unmatched += 1
+                    continue
+                scores = scores.float().reshape(-1)
+                prod = idx[layer, b]
+                length = int(lens[layer, b]) if lens is not None else int((prod >= 0).sum())
+                prod_set = set(int(i) for i in prod[:length].tolist() if int(i) >= 0)
+                # exact torch.topk reference at the same k on the same score row
                 ref_set = _topk_set(scores, min(top_k, length if length > 0 else top_k))
                 rows.append({
-                    "layer": layer, "req": req, "step": rec.get("_step"),
+                    "req_pool_index": pool_idx, "layer": layer, "step": rec.get("_step"),
                     "prod_k": len(prod_set), "ref_k": len(ref_set),
                     "jaccard": round(_jaccard(prod_set, ref_set), 4),
                     "identical": prod_set == ref_set,
                 })
-    return rows
+    return rows, unmatched
 
 
 def main():
@@ -158,21 +165,34 @@ def main():
     print(f"loaded score-capture groups: {len(score_caps)} ; selection-capture rank0 records: {len(sel_caps)}")
 
     head = head_agg_test(score_caps, args.top_k)
-    equiv = selected_index_equivalence(score_caps, sel_caps, args.top_k)
+    equiv, unmatched = selected_index_equivalence(score_caps, sel_caps, args.top_k)
 
+    n_ident = sum(1 for r in equiv if r["identical"])
+    min_jac = min((r["jaccard"] for r in equiv), default=None)
     report = {
         "top_k": args.top_k,
         "n_score_groups": len(score_caps),
         "n_selection_records": len(sel_caps),
+        "join": "exact (req_pool_index, layer) via selection_capture.req_pool_indices",
         "head_agg_test": head,
         "selected_index_equivalence": equiv,
         "summary": {
-            "head_agg_rows_with_pre_reduce": len(head),
-            "head_agg_sum_eq_max_all": (all(r["sum_eq_max_topk"] for r in head) if head else None),
-            "equiv_rows": len(equiv),
-            "equiv_all_identical": (all(r["identical"] for r in equiv) if equiv else None),
+            "AC_2_3_equiv_rows": len(equiv),
+            "AC_2_3_unmatched_rows": unmatched,
+            "AC_2_3_radix_eq_torch_topk_all": (n_ident == len(equiv) and len(equiv) > 0),
+            "AC_2_3_identical_rows": f"{n_ident}/{len(equiv)}",
+            "AC_2_3_min_jaccard": min_jac,
+            "AC_2_2_head_agg_rows_with_pre_reduce": len(head),
+            "AC_2_2_served_sum_matches_post_reduce_all": (
+                all(r["served_sum_matches_post_reduce"] for r in head
+                    if r["served_sum_matches_post_reduce"] is not None) if head else None),
+            "AC_2_2_note": ("head-agg interpretation depends on pre_reduce_scores semantics; "
+                            "trust only if served_sum_matches_post_reduce is True"),
         },
     }
+    if unmatched:
+        report["WARNING"] = (f"{unmatched} selected rows had NO matching score row — the join is "
+                             "incomplete; AC-2.3 numbers above are only over the matched rows.")
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:
         json.dump(report, f, indent=2)

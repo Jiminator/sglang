@@ -1,6 +1,7 @@
 {
   "arm": "dsa_noradix",
-  "git_sha": "62ad643465e0bc99730a3063681f243e538e69c3",
+  "measured_git_sha": "180f6dd6decb1577da8e40bf002f79805ece693d",
+  "ledger_generated_git_sha": "ac479aeb3092cf94534077b011e84291f2b9649f",
   "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
   "mask_content_sha256": "5c89c516428f379c983461ceb58fb366c0d6cb12733b3f957d98edb5406f7b21",
   "serve_mode": "dsa_noradix",

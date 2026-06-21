@@ -82,6 +82,15 @@ def maybe_dump_selection_capture(forward_batch, attn_backend, tp_rank: int) -> N
     seq_lens_list = (
         seq_lens[:bs].detach().to("cpu").tolist() if seq_lens is not None else None
     )
+    # Stable row identity so the offline analyzer can join a selection row to its
+    # score-capture row on exact (req_pool_index, layer, decode-step). Diagnostic
+    # only (this fn no-ops unless the selection_capture flag sized the mirrors).
+    req_pool_indices = getattr(forward_batch, "req_pool_indices", None)
+    req_pool_indices_list = (
+        req_pool_indices[:bs].detach().to("cpu").tolist()
+        if req_pool_indices is not None
+        else None
+    )
     # Bucket identity: which captured variant served this step, at what
     # batch bucket and selector width. `graph_key` comes from the backend's
     # pre-replay stamp (None == eager path, whose graph state is freshly
@@ -99,6 +108,7 @@ def maybe_dump_selection_capture(forward_batch, attn_backend, tp_rank: int) -> N
     record = {
         "bs": bs,
         "seq_lens": seq_lens_list,
+        "req_pool_indices": req_pool_indices_list,  # [bs] — row identity for exact join
         # [num_layers, bs, max_top_k] int32 / [num_layers, bs] int32
         "indices": gs.capture_indices[:, :bs].detach().to("cpu").clone(),
         "lengths": gs.capture_lengths[:, :bs].detach().to("cpu").clone(),

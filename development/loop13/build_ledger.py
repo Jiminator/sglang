@@ -40,36 +40,44 @@ COMMON_ARGS = ("--tp-size 8 --kv-cache-dtype fp8_e4m3 --mem-fraction-static 0.8 
                "--disable-overlap-schedule --disable-piecewise-cuda-graph --random-seed 42 "
                "--trust-remote-code")
 
+# measured_git_sha: the commit the arm's run actually happened under (NOT the
+# generator HEAD). Baselines (dsa/dsa_noradix/production_ds) do not use any new
+# diagnostic code, so they are SHA-independent; recorded at the Round-0 base SHA.
+BASE_SHA = "180f6dd6decb1577da8e40bf002f79805ece693d"   # Round-0 baselines + plan/harness
+DIAG0_SHA = "fc6ac20a7"   # Round-0 diagnostic code (forced_all_dense_control)
+HARNESS_SHA = "29ec137bf"  # Round-0 harness with ds_anchor mode (anchor_mode pre-existing)
+R1_SHA = "fea920c06"      # Round-1 faithful/cosine reference code
+
 # arm -> (serve_mode, extra_args, dsa_by_regime, dense_out, sparse_out, dense_serial_out, note)
 ARMS = {
-    "dsa": dict(mode="dsa", extra="", ds=None,
+    "dsa": dict(mode="dsa", extra="", ds=None, measured_sha=BASE_SHA,
                 dense="dsa_batched_dense", sparse="dsa_batched_sparse",
                 dense_serial="dsa_serial_dense", sparse_serial="dsa_serial_sparse",
                 note="native DSA indexer (DS off) — accuracy target"),
-    "dsa_noradix": dict(mode="dsa_noradix", extra="--disable-radix-cache", ds=None,
+    "dsa_noradix": dict(mode="dsa_noradix", extra="--disable-radix-cache", ds=None, measured_sha=BASE_SHA,
                         dense="dsa_noradix_batched_dense", sparse="dsa_noradix_batched_sparse",
                         note="DSA + radix-cache disabled — output-neutral control"),
-    "production_ds": dict(mode="ds", extra="--disable-radix-cache --enable-double-sparsity",
+    "production_ds": dict(mode="ds", extra="--disable-radix-cache --enable-double-sparsity", measured_sha=BASE_SHA,
                           ds={"dense": [715, 716], "sparse": [2048, 5620]},
                           dense="ds_batched_dense", sparse="ds_batched_sparse",
                           dense_serial="ds_serial_dense",
                           note="table-free DS (scorer_norm=off,head_agg=max,bf16 reduce,radix,W=5120) — the regression"),
     "ref_faithful": dict(mode="ref_faithful", extra="--disable-radix-cache --disable-cuda-graph --enable-double-sparsity",
-                         ds={"dense": [714, 714], "sparse": [2048, 5610]},
+                         ds={"dense": [714, 714], "sparse": [2048, 5610]}, measured_sha=R1_SHA,
                          dense="ref_faithful_dense", sparse="ref_faithful_sparse",
                          note="faithful raw-dot ceiling: exact fp32, TF32 off, current slot incl (dense selected==seq_len)"),
     "ref_cosine": dict(mode="ref_cosine", extra="--disable-radix-cache --disable-cuda-graph --enable-double-sparsity",
-                       ds={"dense": [714, 714], "sparse": [2048, 5610]},
+                       ds={"dense": [714, 714], "sparse": [2048, 5610]}, measured_sha=R1_SHA,
                        dense="ref_cosine_dense", sparse="ref_cosine_sparse",
                        note="faithful COSINE ceiling: materialized per-head signature, normalize after gather"),
     "ds_forced_all": dict(mode="ds_forced_all", extra="--disable-radix-cache --disable-cuda-graph --enable-double-sparsity",
-                          ds={"dense": [716, 716]}, dense="ds_forced_all_dense", sparse=None,
+                          ds={"dense": [716, 716]}, dense="ds_forced_all_dense", sparse=None, measured_sha=DIAG0_SHA,
                           note="dense forced-all [0..seq-1] control (incl current); dense-only"),
     "ds_anchor_b1": dict(mode="ds_anchor (ANCHOR_BUDGET=1)", extra="--disable-radix-cache --enable-double-sparsity",
-                         ds=None, dense="ds_anchor1_dense", sparse="ds_anchor1_sparse",
+                         ds=None, dense="ds_anchor1_dense", sparse="ds_anchor1_sparse", measured_sha=HARNESS_SHA,
                          note="recency anchor budget=1 (current slot only) on production top-k"),
     "ds_anchor_b64": dict(mode="ds_anchor (ANCHOR_BUDGET=64)", extra="--disable-radix-cache --enable-double-sparsity",
-                          ds=None, dense="ds_anchor64_dense", sparse="ds_anchor64_sparse",
+                          ds=None, dense="ds_anchor64_dense", sparse="ds_anchor64_sparse", measured_sha=HARNESS_SHA,
                           note="recency anchor budget=64 on production top-k"),
 }
 
@@ -82,7 +90,8 @@ ledger = []
 for arm, a in ARMS.items():
     rec = {
         "arm": arm,
-        "git_sha": SHA,
+        "measured_git_sha": a["measured_sha"],
+        "ledger_generated_git_sha": SHA,
         "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
         "mask_content_sha256": "5c89c516428f379c983461ceb58fb366c0d6cb12733b3f957d98edb5406f7b21",
         "serve_mode": a["mode"],
@@ -106,7 +115,9 @@ for arm, a in ARMS.items():
 # regenerate evidence_table.md from the ledger
 lines = ["# Loop 13 — Per-arm GSM8K evidence ledger (AC-1 / AC-4), generated from evidence/meta/arms/*.json",
          "",
-         f"git_sha {SHA[:9]} · model GLM-5.1-FP8 · mask sha256 5c89c516… · TP=8 page64 fp8_e4m3 KV seed42 · temp0 max_tokens512 completion API",
+         f"ledger generated @ {SHA[:9]} · per-arm measured_git_sha in each evidence/meta/arms/*.json "
+         f"(baselines @180f6dd6d, R1 ref arms @fea920c06) · model GLM-5.1-FP8 · mask sha256 5c89c516… · "
+         f"TP=8 page64 fp8_e4m3 KV seed42 · temp0 max_tokens512 completion API",
          "Dense = 5-shot/200 (~716 tok < top_k 2048). Sparse = 24-shot/150 (~5.6k tok > 2048). batched=64 threads.",
          "selected/total: DS selected vs total tokens by regime (— = native DSA / no DS meta).",
          "",
