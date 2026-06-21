@@ -155,12 +155,15 @@ The R1 "sparse = just the scorer lock" was incomplete. R5 ran one clean single-v
 - Current-slot exclusion (H3) is a culprit in **BOTH** regimes (cosine: dense 0.940→0.625, sparse
   0.940→0.313), not dense-only. The faithful cosine 0.940 sparse ceiling used the non-production
   current-slot inclusion; the production-path cosine ceiling (current excluded) is **0.313** sparse.
-- Full per-leg AC-6 matrix in `evidence/ac6_bisection_matrix.json` (R6): scorer + current-slot
-  MEASURED; radix + width RETIRED (AC-2.3, 4992/4992); head_agg NOT-a-differing-variable (max on both
-  paths; AC-2.2 covers cross-TP); fp8-absorbed + bf16-reduce BLOCKED with exact code citation
-  (production absorbed_latent_kernel.py is scorer_norm="off"-only; config.py:110/170 reject cosine; a
-  cosine production kernel = a fix) + bounded second-order (raw-dot exact-fp32 0.013 vs fp8+bf16 0.000).
-  The R5 current-slot leg is corroborated on real captured rows: `evidence/ac6_ref_cosine_noinc_corrob.json`
+- Full per-leg AC-6 matrix in `evidence/ac6_bisection_matrix.json` (R6, completed R7): scorer +
+  current-slot MEASURED; radix + width RETIRED (AC-2.3, 4992/4992); bf16-vs-fp32 score-reduce MEASURED
+  (R7) via the runnable `score_reduce_dtype="fp32"` route — `ds_reduce_fp32` = production 0.620/0.000,
+  near-selection-neutral (median Jaccard 0.998, `ac6_score_reduce_fp32_corrob.json`), NOT a culprit;
+  head_agg NOT-a-differing-variable (max on both paths; AC-2.2 covers cross-TP); only fp8-absorbed
+  BLOCKED (no production config toggles absorbed precision; exact-fp32 absorbed only on the
+  multi-variable reference path) + bounded second-order (raw-dot exact-fp32 0.013 vs fp8 0.000 ≤~1.3pp).
+  The current-slot leg is corroborated in BOTH regimes (sparse 4992/4992 swap + dense 3744/3744 add):
+  `evidence/ac6_ref_cosine_noinc_corrob.json`
   (4992/4992 — the include flag swaps exactly the current decode slot; it is -inf-masked in every capture).
 
 ## AC-2.3 RESOLVED (Round 5, pruning-valid) — radix == torch.topk, width [5120] == full

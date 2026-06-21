@@ -1,6 +1,6 @@
 {
-  "arm": "ds_anchor_b64",
-  "measured_git_sha": "29ec137bf",
+  "arm": "ds_reduce_fp32",
+  "measured_git_sha": "8b55dfba3",
   "ledger_generated_from": {
     "head_sha_at_generation": "8b55dfba308fc4e5b9f49106a38ac1e2461a30f0",
     "generator_blob_sha": "1280fa0339429edae97501a202e73ae78ac9e2b1",
@@ -9,9 +9,9 @@
   },
   "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
   "mask_content_sha256": "5c89c516428f379c983461ceb58fb366c0d6cb12733b3f957d98edb5406f7b21",
-  "serve_mode": "ds_anchor (ANCHOR_BUDGET=64)",
-  "server_args": "--tp-size 8 --kv-cache-dtype fp8_e4m3 --mem-fraction-static 0.8 --max-running-requests 64 --cuda-graph-max-bs 64 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --random-seed 42 --trust-remote-code --disable-radix-cache --enable-double-sparsity",
-  "cuda_graph": "on (piecewise off)",
+  "serve_mode": "ds_reduce_fp32",
+  "server_args": "--tp-size 8 --kv-cache-dtype fp8_e4m3 --mem-fraction-static 0.8 --max-running-requests 64 --cuda-graph-max-bs 64 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --random-seed 42 --trust-remote-code --disable-radix-cache --disable-cuda-graph --enable-double-sparsity",
+  "cuda_graph": "off",
   "gsm8k": {
     "temperature": 0,
     "max_tokens": 512,
@@ -20,8 +20,8 @@
     "sparse_config": "24-shot/150"
   },
   "scores": {
-    "dense_batched": 0.96,
-    "sparse_batched": 0.007,
+    "dense_batched": 0.62,
+    "sparse_batched": 0.0,
     "dense_serial": null,
     "sparse_serial": null
   },
@@ -30,5 +30,8 @@
     "per_example_sample_ids_order (run_eval uses a fixed seed-42 gsm8k slice; the per-example id list is not emitted by the stock harness)",
     "per_step_length_cap_garbage_counts (invalid/unwritten/duplicate/out-of-range physical slots \u2014 requires logical_to_physical adapter instrumentation not built this loop)"
   ],
-  "note": "recency anchor budget=64 on production top-k"
+  "note": "AC-6 leg 7 (R7): production raw-dot with score_reduce_dtype=fp32 (the ONE variable vs production bf16-reduce). Reduce dtype is near-selection-neutral (bf16-vs-fp32 median Jaccard 0.998, ac6_score_reduce_fp32_corrob.json) -> expect ~production scores; reduce is NOT the regression driver.",
+  "measured_source": "worktree HEAD 8b55dfba3 (dirty: serve.sh ds_reduce_fp32 mode added R7; serve.sh blob 1324c5a6cf21a1916e34bbad0cbc1c57cf1d518d). Config-only diff vs `ds` (same graph mode): score_reduce_dtype=fp32; production raw-dot selection code unchanged.",
+  "ac6_leg": "score_reduce_dtype (bf16->fp32 cross-TP reduce)",
+  "corroboration_artifact": "evidence/ac6_score_reduce_fp32_corrob.json"
 }

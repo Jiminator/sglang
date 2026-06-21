@@ -46,6 +46,16 @@ case "$MODE" in
     DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "score_capture": true, "selection_capture": true}' "$MASK")
     EXTRA=( --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
     ;;
+  ds_reduce_fp32)
+    # AC-6 single-variable bisection arm (leg 7): EXACTLY the production `ds` config with the ONE
+    # variable flipped -> score_reduce_dtype="fp32" (cross-TP score SUM-reduce in fp32 vs the bf16
+    # default). Same graph mode as `ds`/production_ds so reduce dtype is the ONLY difference (a clean
+    # single-variable step; eager would also change the graph path). Config-only; no selection fix.
+    # (Dense-regime captures for the current-slot corroboration come from the separate eager run.)
+    [ -s "$MASK" ] || { echo "FATAL: mask $MASK missing"; exit 2; }
+    DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "score_reduce_dtype": "fp32"}' "$MASK")
+    EXTRA=( --disable-radix-cache --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
+    ;;
   ref)
     # Raw-dot REFERENCE scorer-ISOLATION control: exact fp32 absorbed channel-dot
     # but UNDER the production slot-validity condition (current decode slot still

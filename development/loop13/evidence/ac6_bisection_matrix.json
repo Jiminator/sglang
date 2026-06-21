@@ -17,6 +17,10 @@
     "ref_cosine_noinc": {
       "dense": 0.625,
       "sparse": 0.313
+    },
+    "ds_reduce_fp32": {
+      "dense": 0.62,
+      "sparse": 0.0
     }
   },
   "legs": [
@@ -79,9 +83,9 @@
           "sparse": 0.313
         }
       },
-      "corroboration": "evidence/ac6_ref_cosine_noinc_corrob.json (4992/4992 single-swap; current slot -inf-masked)",
+      "corroboration": "evidence/ac6_ref_cosine_noinc_corrob.json \u2014 BOTH regimes: sparse 4992/4992 (symdiff==2 swap, Jaccard 0.999024) + dense 3744/3744 (symdiff==1 add, valid_length seq_len-1->seq_len); current slot -inf-masked in every capture",
       "verdict": "measured",
-      "detail": "dense 0.940 -> 0.625 (= production 0.620), sparse 0.940 -> 0.313. Current-slot exclusion (H3) is a culprit in BOTH regimes; corroboration shows the selected sets differ by exactly the current decode slot at every step."
+      "detail": "dense 0.940 -> 0.625 (= production 0.620), sparse 0.940 -> 0.313. Current-slot exclusion (H3) is a culprit in BOTH regimes; corroboration shows the selected set changes by exactly the current decode slot at every step (a swap in sparse, a pure drop in dense)."
     },
     {
       "leg": 4,
@@ -108,26 +112,33 @@
     {
       "leg": 6,
       "variable": "fp8-in-register absorbed scoring (vs exact fp32 dequant)",
-      "base_arm": "(production raw-dot only)",
+      "base_arm": "(production raw-dot; no single-variable route)",
       "changed_variable": "absorbed_latent_fp8",
-      "config_diff": "production kernel scores fp8 absorbed latent in-register (deepseek_v2.py:2602); reference dequants to exact fp32",
+      "config_diff": "production kernel scores fp8 absorbed latent in-register (deepseek_v2.py:2602); exact fp32 only on the reference path",
       "dense_sparse": null,
-      "corroboration": "second-order bound: on the raw-dot path where exact-fp32 (ref_faithful) and fp8 (production) CAN be compared, sparse 0.013 (exact) vs 0.000 (fp8+bf16+excl) \u2014 fp8/reduce contribute <=~1.3pp beyond the scorer/current-slot effects",
+      "corroboration": "Bounded second-order: now that the bf16-vs-fp32 REDUCE leg is measured (leg 7, near-selection-neutral) and radix+width are retired, the remaining production-numeric difference is fp8 absorbed scoring; production raw-dot (fp8) sparse 0.000 vs exact-fp32 raw-dot (ref_faithful) sparse 0.013 bounds its selection effect to <=~1.3pp \u2014 far below the scorer (+92.7pp) and current-slot effects.",
       "verdict": "blocked",
-      "detail": "production scoring = DeepseekV2 `_select_topk_indices` (python/sglang/srt/models/deepseek_v2.py ~2570-2603) -> the absorbed-latent Triton scoring kernel (python/sglang/srt/layers/attention/double_sparsity/absorbed_latent_kernel.py), which implements ONLY scorer_norm='off' (raw channel-dot). config.py:110 _ALLOWED_SCORER_NORM=('off',) and the validation at config.py:170 hard-reject scorer_norm='cosine'. The reference path (reference_cosine_select) computes exact fp32 and does NOT route through this kernel.",
-      "blocker": "Isolating this variable UNDER cosine requires implementing cosine in the production Triton scoring kernel (the materialized per-head signature + normalization, as absorbed_latent_cosine_logical_fp8 does on the reference path) \u2014 a new selection-path kernel = a fix, forbidden in this diagnosis loop."
+      "detail": "No production config flag toggles fp8-vs-fp32 absorbed scoring: the graph-safe selector scores the fp8 resident latent IN-REGISTER (deepseek_v2.py:2602 absorbed_latent_fp8 -> absorbed_latent_kernel.py). Exact-fp32 absorbed scoring exists ONLY on the reference path (reference_rawdot_select dequants the resident latent to fp32), which ALSO changes current-slot/TF32/radix/width/reduce at once \u2014 no single-variable isolation. A production fp32-absorbed path = new selection-path code = a fix, forbidden this loop."
     },
     {
       "leg": 7,
-      "variable": "bf16 score-reduce (vs fp32)",
-      "base_arm": "(production raw-dot only)",
+      "variable": "score_reduce_dtype (bf16 vs fp32 cross-TP reduce)",
+      "base_arm": "production_ds (bf16 reduce) -> ds_reduce_fp32 (fp32 reduce)",
       "changed_variable": "score_reduce_dtype",
-      "config_diff": "production reduces cross-TP scores in bf16 (score_reduce_bf16, deepseek_v2.py:2588); reference reduces in fp32",
-      "dense_sparse": null,
-      "corroboration": "second-order bound: same as fp8 \u2014 exact-fp32 raw-dot 0.013 vs production fp8+bf16 0.000 sparse; reduce dtype is within that <=1.3pp residual",
-      "verdict": "blocked",
-      "detail": "production scoring = DeepseekV2 `_select_topk_indices` (python/sglang/srt/models/deepseek_v2.py ~2570-2603) -> the absorbed-latent Triton scoring kernel (python/sglang/srt/layers/attention/double_sparsity/absorbed_latent_kernel.py), which implements ONLY scorer_norm='off' (raw channel-dot). config.py:110 _ALLOWED_SCORER_NORM=('off',) and the validation at config.py:170 hard-reject scorer_norm='cosine'. The reference path (reference_cosine_select) computes exact fp32 and does NOT route through this kernel.",
-      "blocker": "Isolating this variable UNDER cosine requires implementing cosine in the production Triton scoring kernel (the materialized per-head signature + normalization, as absorbed_latent_cosine_logical_fp8 does on the reference path) \u2014 a new selection-path kernel = a fix, forbidden in this diagnosis loop."
+      "config_diff": "score_reduce_dtype 'bf16' -> 'fp32' (config.py accepts both; the ONLY change vs production)",
+      "dense_sparse": {
+        "bf16_reduce": {
+          "dense": 0.62,
+          "sparse": 0.0
+        },
+        "fp32_reduce": {
+          "dense": 0.62,
+          "sparse": 0.0
+        }
+      },
+      "corroboration": "evidence/ac6_score_reduce_fp32_corrob.json \u2014 bf16-vs-fp32 reduce of the SAME captured per-rank pre_reduce scores: median selected-set Jaccard 0.998 (near-selection-neutral; only bottom-of-top-k near-ties reshuffle)",
+      "verdict": "measured",
+      "detail": "RUNNABLE production config route (score_reduce_dtype='fp32') \u2014 NOT blocked. fp32 reduce gives ~production scores (reduce dtype is near-selection-neutral), so bf16 reduce is NOT the regression driver. Scoring + top-k stay fp32 either way; only the cross-TP transport dtype differs."
     }
   ],
   "summary_by_verdict": {
@@ -136,16 +147,16 @@
     ],
     "measured": [
       2,
-      3
+      3,
+      7
     ],
     "retired": [
       4,
       5
     ],
     "blocked": [
-      6,
-      7
+      6
     ]
   },
-  "conclusion": "Sparse recovery to ~0.94 needs BOTH the cosine scorer (leg 2) AND current-slot inclusion (leg 3); the two interact. radix+width (legs 4-5) are selection-neutral (retired). head_agg (leg 1) is not a reference->production difference. fp8/bf16 (legs 6-7) are blocked (production raw-dot kernel only; no non-fix cosine route) and bounded second-order. No leg is silently deferred."
+  "conclusion": "Sparse recovery to ~0.94 needs BOTH the cosine scorer (leg 2) AND current-slot inclusion (leg 3); the two interact. radix+width (legs 4-5) are selection-neutral (retired). bf16-vs-fp32 score-reduce (leg 7) is MEASURED via the runnable score_reduce_dtype='fp32' route -> near-selection-neutral, not a culprit. head_agg (leg 1) is not a reference->production difference (AC-2.2 covers cross-TP). Only fp8-absorbed (leg 6) is blocked \u2014 no production config toggles absorbed precision; exact-fp32 absorbed lives only on the multi-variable reference path \u2014 and it is bounded second-order (<=~1.3pp). No leg is silently deferred."
 }

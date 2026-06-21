@@ -11,131 +11,43 @@
       "sparse": 0.313
     }
   },
-  "source": "real captured sparse score rows (/sgl-workspace/sglang/development/loop13/evidence/.sglang_ds_scorecap_sparse); pruning subset seq_len>top_k=2048",
-  "method": "replay the REAL _select_topk_with_optional_current (the ONLY code differing between ref_cosine and ref_cosine_noinc) with include_current=True vs False on each captured score row; compare selected-index sets. Scorer-independent: the cosine arm differs only in score VALUES feeding the same top-k.",
-  "n_pruning_rows": 4992,
-  "current_slot_masked_in_capture": "4992/4992",
-  "current_slot_swapped_in_by_include_flag": "4992/4992",
-  "selected_index_jaccard_incl_vs_excl": {
-    "min": 0.999024,
-    "median": 0.999024,
-    "expected": 0.999024
-  },
-  "symdiff_size_distribution": {
-    "min": 2,
-    "max": 2,
-    "all_eq_2": true,
-    "explanation": "fixed-size top-k: force-including the current slot swaps in for 1 dropped token"
-  },
-  "current_slot_rank_among_finite": {
-    "note": "rank of the current slot under the captured PRODUCTION raw-dot scores; it is -inf (masked) in every row, so it is force-excluded regardless of merit \u2014 the H3 _slot_written exclusion. include_current=true undoes it.",
-    "median_rank_if_unmasked": 4282
-  },
-  "verdict": "CORROBORATED: on every pruning row the include flag swaps EXACTLY the current decode slot into the selected set (current_in_incl_not_excl + symdiff==2). The captured current slot is -inf (production-masked) in all rows, confirming the _slot_written exclusion. Excluding the current token from its own attention at every decode step is the measured 0.940->0.313 sparse / 0.940->0.625 dense cost of ref_cosine_noinc.",
-  "sample_rows": [
-    {
-      "key": [
-        0,
-        2,
-        0
-      ],
-      "seq_len": 4261,
-      "current_idx": 4260,
-      "current_score_is_masked_neg_inf": true,
-      "current_in_incl_not_excl": true,
-      "symdiff_size": 2,
-      "jaccard": 0.999024
+  "method": "replay the REAL _select_topk_with_optional_current (the ONLY code differing between ref_cosine and ref_cosine_noinc) with include_current=True vs False on captured score rows; compare selected-index sets. Scorer-independent; captured scores are production raw-dot rows used as real seq_len/position inputs.",
+  "regimes": {
+    "sparse": {
+      "regime": "sparse",
+      "n_rows": 4992,
+      "current_slot_masked_in_capture": "4992/4992",
+      "current_slot_added_by_include_flag": "4992/4992",
+      "selected_index_jaccard_incl_vs_excl": {
+        "min": 0.999024,
+        "median": 0.999024,
+        "expected": 0.999024
+      },
+      "symdiff_size": {
+        "min": 2,
+        "max": 2,
+        "expected": 2
+      },
+      "valid_length_invariant_holds": "4992/4992",
+      "invariant": "FULL top-k: include swaps the current slot in for the lowest-ranked token (symdiff==2, Jaccard==(k-1)/(k+1))"
     },
-    {
-      "key": [
-        0,
-        2,
-        1
-      ],
-      "seq_len": 4261,
-      "current_idx": 4260,
-      "current_score_is_masked_neg_inf": true,
-      "current_in_incl_not_excl": true,
-      "symdiff_size": 2,
-      "jaccard": 0.999024
-    },
-    {
-      "key": [
-        0,
-        2,
-        2
-      ],
-      "seq_len": 4261,
-      "current_idx": 4260,
-      "current_score_is_masked_neg_inf": true,
-      "current_in_incl_not_excl": true,
-      "symdiff_size": 2,
-      "jaccard": 0.999024
-    },
-    {
-      "key": [
-        0,
-        2,
-        3
-      ],
-      "seq_len": 4261,
-      "current_idx": 4260,
-      "current_score_is_masked_neg_inf": true,
-      "current_in_incl_not_excl": true,
-      "symdiff_size": 2,
-      "jaccard": 0.999024
-    },
-    {
-      "key": [
-        0,
-        2,
-        4
-      ],
-      "seq_len": 4261,
-      "current_idx": 4260,
-      "current_score_is_masked_neg_inf": true,
-      "current_in_incl_not_excl": true,
-      "symdiff_size": 2,
-      "jaccard": 0.999024
-    },
-    {
-      "key": [
-        0,
-        2,
-        5
-      ],
-      "seq_len": 4261,
-      "current_idx": 4260,
-      "current_score_is_masked_neg_inf": true,
-      "current_in_incl_not_excl": true,
-      "symdiff_size": 2,
-      "jaccard": 0.999024
-    },
-    {
-      "key": [
-        0,
-        2,
-        6
-      ],
-      "seq_len": 4261,
-      "current_idx": 4260,
-      "current_score_is_masked_neg_inf": true,
-      "current_in_incl_not_excl": true,
-      "symdiff_size": 2,
-      "jaccard": 0.999024
-    },
-    {
-      "key": [
-        0,
-        2,
-        7
-      ],
-      "seq_len": 4261,
-      "current_idx": 4260,
-      "current_score_is_masked_neg_inf": true,
-      "current_in_incl_not_excl": true,
-      "symdiff_size": 2,
-      "jaccard": 0.999024
+    "dense": {
+      "regime": "dense",
+      "n_rows": 3744,
+      "current_slot_masked_in_capture": "3744/3744",
+      "current_slot_added_by_include_flag": "3744/3744",
+      "selected_index_jaccard_incl_vs_excl": {
+        "min": 0.998713,
+        "median": 0.99874
+      },
+      "symdiff_size": {
+        "min": 1,
+        "max": 1,
+        "expected": 1
+      },
+      "valid_length_invariant_holds": "3744/3744",
+      "invariant": "seq_len<=top_k: exclude drops the current slot (valid_length seq_len-1); include adds it (valid_length seq_len); symdiff==1, no eviction"
     }
-  ]
+  },
+  "verdict": "CORROBORATED in BOTH regimes: the include flag changes the selected set by EXACTLY the current decode slot \u2014 a fixed-size SWAP in sparse (symdiff==2) and a pure ADD in dense (symdiff==1, valid_length seq_len-1->seq_len). The current slot is -inf-masked (production _slot_written) in every capture. Excluding it at every decode step is the measured 0.940->0.625 dense / 0.940->0.313 sparse cost of ref_cosine_noinc."
 }

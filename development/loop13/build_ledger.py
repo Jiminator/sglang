@@ -69,6 +69,11 @@ R5_NOINC_SHA = "393966c02d0d57d0c99c355367f52704c1964581"
 R5_NOINC_SOURCE = ("worktree HEAD 393966c02 (dirty: serve.sh ref_cosine_noinc mode added R5; "
                    "serve.sh blob e1c83e22a085f0aa499adfbaca155d9aa0069579; committed c7b66f04b). "
                    "reference_cosine_select selection code unchanged since R1 fea920c06.")
+# Round-7 measured-run identity for ds_reduce_fp32 (serve mode added R7).
+R7_REDUCE_SHA = "8b55dfba3"
+R7_REDUCE_SOURCE = ("worktree HEAD 8b55dfba3 (dirty: serve.sh ds_reduce_fp32 mode added R7; serve.sh "
+                    "blob 1324c5a6cf21a1916e34bbad0cbc1c57cf1d518d). Config-only diff vs `ds` (same graph "
+                    "mode): score_reduce_dtype=fp32; production raw-dot selection code unchanged.")
 
 # arm -> (serve_mode, extra_args, dsa_by_regime, dense_out, sparse_out, dense_serial_out, note)
 ARMS = {
@@ -103,6 +108,15 @@ ARMS = {
                                   "serve.sh ref_cosine_noinc mode added R5. RESULT: dense 0.940->0.625 (=production 0.620) AND "
                                   "sparse 0.940->0.313 -> current-slot exclusion (H3) is a major culprit in BOTH regimes, not "
                                   "dense-only. Sparse needs BOTH cosine scorer AND current-slot inclusion (see 2x2 in ROOT_CAUSE)."),
+    "ds_reduce_fp32": dict(mode="ds_reduce_fp32", extra="--disable-radix-cache --disable-cuda-graph --enable-double-sparsity",
+                           ds=None, measured_sha=R7_REDUCE_SHA, measured_source=R7_REDUCE_SOURCE,
+                           ac6_leg="score_reduce_dtype (bf16->fp32 cross-TP reduce)",
+                           corroboration="evidence/ac6_score_reduce_fp32_corrob.json",
+                           dense="ds_reduce_fp32_dense", sparse="ds_reduce_fp32_sparse",
+                           note="AC-6 leg 7 (R7): production raw-dot with score_reduce_dtype=fp32 (the ONE variable vs "
+                                "production bf16-reduce). Reduce dtype is near-selection-neutral (bf16-vs-fp32 median "
+                                "Jaccard 0.998, ac6_score_reduce_fp32_corrob.json) -> expect ~production scores; reduce "
+                                "is NOT the regression driver."),
     "ds_forced_all": dict(mode="ds_forced_all", extra="--disable-radix-cache --disable-cuda-graph --enable-double-sparsity",
                           ds={"dense": [716, 716]}, dense="ds_forced_all_dense", sparse=None, measured_sha=DIAG0_SHA,
                           note="dense forced-all [0..seq-1] control (incl current); dense-only"),
@@ -195,12 +209,15 @@ lines += ["",
           "physical slots). Gate uses the measured batched DSA comparator (0.975/0.973).",
           "",
           "Gate (AC-5, evidence/gate_ac5.md): naive-DS=best(faithful raw-dot, cosine): dense 0.950 (2.5pp), "
-          "sparse 0.940 (3.3pp) -> GOOD. Verdict (AC-6 bisection, R5): the scorer x current-slot 2x2 is "
-          "measured — sparse 0.94 needs BOTH the cosine scorer AND current-slot inclusion (cosine+excl=0.313, "
-          "rawdot+incl=0.013, rawdot+excl=production 0.000). Current-slot exclusion (H3) is a culprit in BOTH "
-          "regimes (cosine dense 0.940->0.625, sparse 0.940->0.313 when flipped). Radix+width retired on real "
-          "sparse rows (AC-2.3). Untested numeric legs (fp8/bf16-reduce/head_agg) need a production-path cosine "
-          "kernel = code change, out of scope (no fix)."]
+          "sparse 0.940 (3.3pp) -> GOOD. Verdict (AC-6 bisection, evidence/ac6_bisection_matrix.json): the "
+          "scorer x current-slot 2x2 is measured — sparse 0.94 needs BOTH the cosine scorer AND current-slot "
+          "inclusion (cosine+excl=0.313, rawdot+incl=0.013, rawdot+excl=production 0.000); current-slot "
+          "exclusion (H3) hurts BOTH regimes (corroborated both regimes, ac6_ref_cosine_noinc_corrob.json). "
+          "Per AC-6 leg: scorer+current-slot MEASURED; radix+width RETIRED (AC-2.3); bf16-vs-fp32 score-reduce "
+          "MEASURED (ds_reduce_fp32 arm; selection near-neutral, ac6_score_reduce_fp32_corrob.json median "
+          "Jaccard 0.998); head_agg NOT-a-differing-variable (max on both paths; AC-2.2 covers cross-TP); only "
+          "fp8-absorbed is BLOCKED (no production config for fp32 absorbed scoring; absorbed_latent_kernel.py "
+          "scores fp8 in-register; exact-fp32 absorbed only on the reference path)."]
 open(os.path.join(EVID, "evidence_table.md"), "w").write("\n".join(lines) + "\n")
 
 # Single source of truth for provenance: patch run_meta.json's generator fields

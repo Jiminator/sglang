@@ -305,6 +305,7 @@ runs/20260528_dsv32_mvp/p_over_topk.txt
 .sglang_ds_scorecap/
 .sglang_ds_scorecap_sparse/
 .sglang_ds_selcap_sparse/
+.sglang_ds_scorecap_dense/
 # Loop-9 raw run artifacts: per-step selection dumps (.pt, ~hundreds of MB) and
 # torch profiler trace dirs — regenerable at the recorded commits; the committed
 # evidence is the digests/summaries/cmp files beside them.

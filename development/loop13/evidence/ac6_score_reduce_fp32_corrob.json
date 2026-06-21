@@ -1,0 +1,21 @@
+{
+  "arm": "ds_reduce_fp32",
+  "ac6_leg": "score_reduce_dtype (bf16 -> fp32 cross-TP reduce)",
+  "source": "per-rank pre_reduce_scores from /sgl-workspace/sglang/development/loop13/evidence/.sglang_ds_scorecap_sparse (8-rank TP groups)",
+  "method": "reduce the SAME captured per-rank partial scores two ways \u2014 fp32 SUM vs bf16 SUM (each rank cast to bf16 first, the lossy transport) \u2014 and compare top-k selected sets. No second run; the reduce dtype is the only variable.",
+  "n_groups_8rank": 702,
+  "n_pruning_groups": 624,
+  "capture_validation_fp32sum_eq_post": "702/702",
+  "bf16_vs_fp32_selected_jaccard": {
+    "min": 0.971126,
+    "median": 0.998049,
+    "mean": 0.997473
+  },
+  "identical_selection_groups": "127/702",
+  "symdiff_size": {
+    "min": 0,
+    "max": 60,
+    "median": 4
+  },
+  "verdict": "bf16 and fp32 cross-TP reduce select NEARLY-identical sets (only near-tie tokens at the bottom of the top-2048 reshuffle) \u2014 the reduce dtype is near-selection-neutral / second-order, corroborating the measured GSM8K result (ds_reduce_fp32 ~= production bf16). NOT the regression driver."
+}

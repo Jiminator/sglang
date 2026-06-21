@@ -15,14 +15,16 @@ to transfer (not H0) and NOT a bad mask (not H2: the same mask reaches ≈DSA un
 
 > Baseline note: DSA batched here measures 0.975/0.973 (the plan's original-session sparse number
 > was 0.953; reproduced as 0.973). The gate uses the consistent **measured batched** comparator.
-> Scope note (updated Round 6): the AC-6 per-leg bisection matrix is complete
+> Scope note (updated Round 7): the AC-6 per-leg bisection matrix is complete
 > (`evidence/ac6_bisection_matrix.json`). scorer + current-slot are **measured** (the 2×2 below; the
-> current-slot leg corroborated on 4992 captured rows, `ac6_ref_cosine_noinc_corrob.json`) — sparse
-> ≈0.94 needs BOTH; current-slot exclusion (H3) hurts BOTH regimes. radix + width are **retired**
-> (AC-2.3, 4992/4992). head_agg is **not a reference→production difference** (max on both paths;
-> AC-2.2 covers cross-TP). fp8-absorbed + bf16-reduce are **blocked** with a specific code citation
-> (the production absorbed_latent_kernel.py is raw-dot-only; config.py:110/170 reject cosine; a cosine
-> production kernel = a fix) and bounded second-order (raw-dot exact-fp32 0.013 vs fp8+bf16 0.000).
+> current-slot leg corroborated in BOTH regimes — sparse 4992/4992 swap + dense 3744/3744 add,
+> `ac6_ref_cosine_noinc_corrob.json`) — sparse ≈0.94 needs BOTH; current-slot exclusion (H3) hurts BOTH
+> regimes. radix + width are **retired** (AC-2.3, 4992/4992). bf16-vs-fp32 score-reduce is **measured**
+> (R7) via the runnable `score_reduce_dtype="fp32"` route: `ds_reduce_fp32` = production 0.620/0.000,
+> near-selection-neutral (median Jaccard 0.998) — NOT a culprit. head_agg is **not a reference→production
+> difference** (max on both paths; AC-2.2 covers cross-TP). Only fp8-absorbed is **blocked** (no
+> production config toggles absorbed precision; exact-fp32 absorbed lives only on the multi-variable
+> reference path) and bounded second-order (raw-dot exact-fp32 0.013 vs fp8 0.000 ⇒ ≤~1.3 pp).
 
 1. **Dense 0.620 → H3: the current decode slot is excluded from its own attention** (the
    `_slot_written` invalidation in `_select_topk_indices` is not restored before the selected set
@@ -49,6 +51,7 @@ to transfer (not H0) and NOT a bad mask (not H2: the same mask reaches ≈DSA un
 | **FAITHFUL raw-dot** (current incl, TF32 off) | **0.950** | **0.013** | H3-clean ceiling; raw-dot collapses sparse |
 | **FAITHFUL cosine** (current incl, TF32 off) | **0.940** | **0.940** | **cosine recovers sparse 0.013→0.940 ≈ DSA**; DS active (2048<5610, no fallback) |
 | **cosine, current EXCLUDED** (`ref_cosine_noinc`, R5) | **0.625** | **0.313** | AC-6 single-variable arm: ONLY current-slot flipped vs faithful cosine → both regimes drop; sparse needs BOTH fixes |
+| **production raw-dot, fp32 reduce** (`ds_reduce_fp32`, R7) | **0.620** | **0.000** | AC-6 leg 7: ONLY `score_reduce_dtype` bf16→fp32 flipped vs production → identical to production ⇒ reduce dtype is NOT a culprit |
 
 The reference selectors are performance-naive and exact (fp32 dequant of the resident latent,
 exact absorbed channel-dot / cosine, exact full-width `torch.topk`; no fp8-in-register dequant,
@@ -106,19 +109,24 @@ blocker (no blanket "out of scope"):
 | 3 | current-slot (incl ↔ excl) | **measured** | `ref_cosine_noinc` 0.625/0.313 + `ac6_ref_cosine_noinc_corrob.json` (4992/4992 single-swap) |
 | 4 | radix top-k (exact ↔ blocked) | retired | `ac2_3_radix_width_equivalence.json` 4992/4992 |
 | 5 | selector width ([5120] ↔ full) | retired | `ac2_3_radix_width_equivalence.json` 4992/4992 |
-| 6 | fp8-absorbed (fp32 ↔ fp8) | **blocked** | code path below + second-order bound |
-| 7 | bf16-reduce (fp32 ↔ bf16) | **blocked** | code path below + second-order bound |
+| 6 | fp8-absorbed (fp32 ↔ fp8) | **blocked** | no config route (citation below) + second-order bound |
+| 7 | bf16-reduce (bf16 ↔ fp32) | **measured** | `ds_reduce_fp32` 0.620/0.000 = production; `ac6_score_reduce_fp32_corrob.json` |
 
-Legs 6–7 **blocker (specific, not blanket):** the fp8-absorbed and bf16-reduce variables live ONLY in
-the production absorbed-latent Triton scoring kernel
-(`absorbed_latent_kernel.py`, called from `deepseek_v2.py:_select_topk_indices` ~2588/2602), which
-implements **only** `scorer_norm="off"` (raw channel-dot); `config.py:110` `_ALLOWED_SCORER_NORM=("off",)`
-and the validation at `config.py:170` hard-reject `scorer_norm="cosine"`. The reference cosine path
-computes exact fp32 and does not route through that kernel, so there is **no config toggle** to test
-fp8/reduce under cosine — doing so needs a new production-path cosine kernel = a selection-path code
-change = a **fix**, forbidden this loop. They are bounded **second-order**: on the raw-dot path, where
-exact-fp32 (`ref_faithful`) and fp8+bf16 (production) can be compared, sparse 0.013 vs 0.000 ⇒ fp8/reduce
-contribute ≤~1.3 pp beyond the scorer/current-slot effects.
+Leg 7 (R7) is **measured via a runnable config route:** `score_reduce_dtype="fp32"` is an accepted
+production config (`config.py` allows `{fp32,bf16}`), so `ds_reduce_fp32` flips ONLY the cross-TP
+reduce dtype vs production. Result: **dense 0.620 / sparse 0.000 — identical to production_ds** ⇒ the
+reduce dtype is NOT a culprit. Corroborated at the selection level: reducing the SAME captured per-rank
+pre-reduce scores in bf16 vs fp32 gives median selected-set Jaccard **0.998** (`ac6_score_reduce_fp32_corrob.json`;
+`sum(pre_reduce)==post` 702/702) — only bottom-of-top-k near-ties reshuffle.
+
+Leg 6 (fp8-absorbed) **blocker (specific, re-verified R7):** no production config flag toggles fp8-vs-fp32
+absorbed scoring — the graph-safe selector scores the fp8 resident latent in-register
+(`deepseek_v2.py:2602` → `absorbed_latent_kernel.py`); exact-fp32 absorbed scoring exists ONLY on the
+`reference_*` path (`reference_rawdot_select` dequants to fp32), which simultaneously changes
+current-slot/TF32/radix/width/reduce — no single-variable isolation. A production fp32-absorbed path =
+new selection-path code = a **fix**, forbidden this loop. Bounded **second-order**: with reduce now
+measured (near-neutral) and radix/width retired, the residual production-numeric difference is fp8;
+production raw-dot (fp8) sparse 0.000 vs exact-fp32 raw-dot (`ref_faithful`) 0.013 bounds it to ≤~1.3 pp.
 
 ## Why NOT H0 / H2 (and why the no-mask ablation is moot)
 - NOT H0 (algorithm doesn't transfer): cosine reaches ≈DSA in both regimes, so the
