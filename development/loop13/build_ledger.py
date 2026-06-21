@@ -146,6 +146,20 @@ def ds_selector_behavior_for(arm):
             "head_agg": eff["head_agg"],
             "note": "production width/reduce/radix/fp8 knobs are bypassed on the reference path",
         }
+    if eff.get("forced_all_dense_control"):
+        # apply_forced_all_dense() OVERWRITES the production scored top-k for dense rows
+        # (seq_len <= top_k) with the logical sweep [0..seq_len-1] — so the final dense selected
+        # set is NOT the production top-k (deepseek_v2.py:2631, absorbed_latent.py:apply_forced_all_dense).
+        return {
+            "path": "forced-all dense diagnostic (production scoring then dense override)",
+            "selector_width": "full live dense rows (seq_len<=top_k)",
+            "score_reduce": "not used for the final dense selected set",
+            "topk": "forced [0..seq_len-1] after production scoring (dense rows seq_len<=top_k)",
+            "scoring": "production pre-override only (overridden for dense)",
+            "scorer": "raw-dot (scorer_norm=off) — pre-override",
+            "head_agg": eff["head_agg"],
+            "note": "downstream-isolation control: the scored selection is replaced by the dense sweep",
+        }
     return {  # selector_impl == "production": the graph-safe fp8 selector — configured knobs ARE used
         "path": "production (graph-safe, fp8 absorbed)",
         "selector_width": str(eff["selector_width_buckets"]),
@@ -308,6 +322,13 @@ for r in ledger:
                 assert bad not in used, (
                     f"reference arm {r['arm']} ds_selector_behavior shows production '{bad}' as used "
                     f"(width/reduce are bypassed on the reference path): {used!r}")
+        # AC-4 behavior surface: a forced_all_dense_control arm OVERRIDES the dense scored top-k, so its
+        # behavior.topk must reflect the forced sweep, not plain production blocked/radix. Codex R11.
+        if eff.get("forced_all_dense_control"):
+            topk = beh.get("topk", "")
+            assert "forced" in topk and topk != "blocked/radix", (
+                f"forced-all arm {r['arm']} ds_selector_behavior.topk must show the forced dense override, "
+                f"not plain production top-k: {topk!r}")
 
 # regenerate evidence_table.md from the ledger
 lines = ["# Loop 13 — Per-arm GSM8K evidence ledger (AC-1 / AC-4), generated from evidence/meta/arms/*.json",
@@ -333,7 +354,9 @@ def ds_cell(ds):
 def beh_cell(r):
     b = r.get("ds_selector_behavior")
     if not b: return "—"
-    path = "prod" if b["path"].startswith("production") else "ref"
+    path = ("prod" if b["path"].startswith("production")
+            else "forced-all" if b["path"].startswith("forced-all")
+            else "ref")
     return (f"{path} · {b['selector_width']} · {b['score_reduce']} · {b['topk']} · "
             f"{b['scorer']} · {b['head_agg']}")
 for r in ledger:

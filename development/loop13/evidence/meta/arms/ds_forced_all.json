@@ -2,8 +2,8 @@
   "arm": "ds_forced_all",
   "measured_git_sha": "fc6ac20a7",
   "ledger_generated_from": {
-    "head_sha_at_generation": "75158e50523d0b206b8c3388c451b6894081a316",
-    "generator_blob_sha": "4f83d15605ca030f8fe2a29c0106447344c639ac",
+    "head_sha_at_generation": "482ff808390ae2f489ab7246aa55d518ba44f6ef",
+    "generator_blob_sha": "a0eeed5f48328c2d2c2510b6d22dca6075db2ccd",
     "worktree": "dirty (+uncommitted evidence/generator)",
     "note": "generated BEFORE its own commit exists, so head_sha_at_generation is one commit behind the commit that contains this file; generator_blob_sha pins the source exactly"
   },
@@ -74,12 +74,13 @@
     "channel_mask_path": "/cluster-storage/models/glm51-fp8-channel-mask-loop12.safetensors"
   },
   "ds_selector_behavior": {
-    "path": "production (graph-safe, fp8 absorbed)",
-    "selector_width": "[5120]",
-    "score_reduce": "bf16",
-    "topk": "blocked/radix",
-    "scoring": "fp8 absorbed in-register",
-    "scorer": "raw-dot (scorer_norm=off)",
-    "head_agg": "max"
+    "path": "forced-all dense diagnostic (production scoring then dense override)",
+    "selector_width": "full live dense rows (seq_len<=top_k)",
+    "score_reduce": "not used for the final dense selected set",
+    "topk": "forced [0..seq_len-1] after production scoring (dense rows seq_len<=top_k)",
+    "scoring": "production pre-override only (overridden for dense)",
+    "scorer": "raw-dot (scorer_norm=off) \u2014 pre-override",
+    "head_agg": "max",
+    "note": "downstream-isolation control: the scored selection is replaced by the dense sweep"
   }
 }
