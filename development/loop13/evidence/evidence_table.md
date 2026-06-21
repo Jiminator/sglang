@@ -1,6 +1,6 @@
 # Loop 13 — Per-arm GSM8K evidence ledger (AC-1 / AC-4), generated from evidence/meta/arms/*.json
 
-ledger generator blob 0d914406af8b (head@gen 4d874b89e, worktree dirty (+uncommitted evidence/generator)) · per-arm measured_git_sha in each evidence/meta/arms/*.json (baselines @180f6dd6d, R1 ref arms @fea920c06) · model GLM-5.1-FP8 · mask sha256 5c89c516… · TP=8 page64 fp8_e4m3 KV seed42 · temp0 max_tokens512 completion API
+ledger generator blob b8f4ea711941 (head@gen 752752f6d, worktree dirty (+uncommitted evidence/generator)) · per-arm measured_git_sha in each evidence/meta/arms/*.json (baselines @180f6dd6d, R1 ref arms @fea920c06) · model GLM-5.1-FP8 · mask sha256 5c89c516… · TP=8 page64 fp8_e4m3 KV seed42 · temp0 max_tokens512 completion API
 Dense = 5-shot/200 (~716 tok < top_k 2048). Sparse = 24-shot/150 (~5.6k tok > 2048). batched=64 threads.
 selected/total: DS selected vs total tokens by regime (— = native DSA / no DS meta).
 

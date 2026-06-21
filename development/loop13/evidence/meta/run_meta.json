@@ -34,7 +34,7 @@
     "anchor_mode": "off"
   },
   "git_sha_baselines_round0": "180f6dd6decb1577da8e40bf002f79805ece693d",
-  "git_sha_current": "4d874b89e874441bdf0576a01280c6fcfe109335",
+  "git_sha_current": "752752f6dc7255b0810d5102e1835bf2c84229a9",
   "note": "Round-0 baseline arms (DSA, DSA-radix-off, production DS) ran at git 180f6dd6d (they do not use the new selector code, so their results are SHA-independent). Round-1 reference arms (ref_faithful, ref_cosine) ran at the Round-1 commits. Per-arm SHAs and full args are in evidence/meta/arms/*.json. | run_meta git_sha_current synced to HEAD; ledger source pinned by generator_blob_sha (commit-independent).",
-  "ledger_generator_blob_sha": "0d914406af8b81eef5c187c4d17a7bdf2b7fb911"
+  "ledger_generator_blob_sha": "b8f4ea711941ef3fd727309b4e1acb4830f918dd"
 }

@@ -51,15 +51,19 @@ def main():
                         "the scorer (+92.7pp) and current-slot effects.")
 
     legs = [
-        {"leg": 1, "variable": "head_agg (within-rank head aggregation)",
-         "base_arm": "ref_cosine", "changed_variable": "head_agg",
-         "config_diff": "none — production AND the reference both use head_agg='max'",
-         "dense_sparse": None, "corroboration": "n/a",
-         "verdict": "not-a-differing-variable",
-         "detail": ("head_agg='max' is identical on the production and reference paths, so it is not a "
-                    "reference->production bisection step. The distinct cross-TP question (local-max "
-                    "per rank then SUM across the TP group vs a true global max) is AC-2.2, examined "
-                    "separately via the capture head_agg_test (still PRELIMINARY).")},
+        {"leg": 1, "variable": "head aggregation (within-rank head_agg + cross-TP reduce)",
+         "base_arm": "ref_faithful (per-rank-local) vs production (cross-TP SUM)", "changed_variable": "cross-TP head aggregation",
+         "config_diff": "within-rank head_agg='max' is identical on both; cross-TP differs: production SUM (reduce_token_scores) vs reference per-rank-local (no cross-TP reduce, num_local_heads)",
+         "dense_sparse": None,
+         "corroboration": ("evidence/head_agg_tp_semantics.json (AC-2.2 SETTLED, 702/702 sum(pre)==post): "
+                           "served cross-TP SUM vs global-MAX median Jaccard 0.679 -> SUM != global-max"),
+         "verdict": "measured",
+         "detail": ("within-rank head_agg='max' is matched (not a difference). The CROSS-TP aggregation "
+                    "DOES differ (production SUM vs reference per-rank-local), but it is bounded "
+                    "SECOND-ORDER: on the raw-dot path production-SUM sparse 0.000 vs reference-local 0.013 "
+                    "=> <=~1.3pp, like fp8/reduce. Raw-dot collapses under both aggregations; the accuracy "
+                    "driver is the scorer + current-slot. cosine-under-production-SUM is not measured (no "
+                    "production cosine kernel, leg 6), so cosine recovery under SUM is NOT claimed.")},
         {"leg": 2, "variable": "scorer normalization (raw-dot vs cosine)",
          "base_arm": "ref_faithful (raw-dot) -> ref_cosine (cosine)", "changed_variable": "scorer_norm / selector_impl",
          "config_diff": "selector_impl reference_rawdot -> reference_cosine (scorer_norm off -> cosine)",
@@ -131,8 +135,9 @@ def main():
         "conclusion": ("Sparse recovery to ~0.94 needs BOTH the cosine scorer (leg 2) AND current-slot "
                        "inclusion (leg 3); the two interact. radix+width (legs 4-5) are selection-neutral "
                        "(retired). bf16-vs-fp32 score-reduce (leg 7) is MEASURED via the runnable "
-                       "score_reduce_dtype='fp32' route -> near-selection-neutral, not a culprit. head_agg "
-                       "(leg 1) is not a reference->production difference (AC-2.2 covers cross-TP). Only "
+                       "score_reduce_dtype='fp32' route -> near-selection-neutral, not a culprit. Head "
+                       "aggregation (leg 1, AC-2.2): within-rank head_agg='max' matched; cross-TP differs "
+                       "(SUM vs reference-local) but is MEASURED second-order (<=~1.3pp on raw-dot). Only "
                        "fp8-absorbed (leg 6) is blocked — no production config toggles absorbed precision; "
                        "exact-fp32 absorbed lives only on the multi-variable reference path — and it is "
                        "bounded second-order (<=~1.3pp). No leg is silently deferred."),
@@ -148,6 +153,31 @@ def main():
     if bad:
         print(f"FAIL: legs with invalid verdict: {bad}", file=sys.stderr)
         raise SystemExit(2)
+
+    # AC-2.2 consistency guard: once head_agg_tp_semantics.json validates the captures (sum(pre)==post on
+    # ALL groups), no generated surface may still publish the stale PRELIMINARY / served_sum_matches=false
+    # verdict (Codex R8). Fail-closed.
+    hav_p = os.path.join(HERE, "evidence", "head_agg_tp_semantics.json")
+    if os.path.exists(hav_p):
+        hav = json.load(open(hav_p))
+        v = hav.get("capture_validation_sum_pre_eq_post", "")
+        if "/" in v and v.split("/")[0] == v.split("/")[1] and v.split("/")[0] != "0":  # all groups validated
+            errs = []
+            this = open(out).read()
+            if "PRELIMINARY" in this:
+                errs.append("ac6_bisection_matrix.json still contains PRELIMINARY")
+            cc = json.load(open(os.path.join(HERE, "evidence", "cheap_controls.json")))
+            if any("served_sum_matches" in k for k in cc.get("summary", {})):
+                errs.append("cheap_controls.json.summary still has a served_sum_matches_* field")
+            if cc.get("summary", {}).get("AC_2_2_verdict", "").startswith("SETTLED") is False:
+                errs.append("cheap_controls.json.summary AC_2_2_verdict is not SETTLED")
+            if "cosine recovers under both" in json.dumps(hav):
+                errs.append("head_agg_tp_semantics.json still overclaims 'cosine recovers under both'")
+            if errs:
+                print("FAIL: AC-2.2 consistency guard:", file=sys.stderr)
+                for e in errs:
+                    print("  -", e, file=sys.stderr)
+                raise SystemExit(2)
 
 
 if __name__ == "__main__":

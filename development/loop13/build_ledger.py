@@ -75,6 +75,41 @@ R7_REDUCE_SOURCE = ("worktree HEAD 8b55dfba3 (dirty: serve.sh ds_reduce_fp32 mod
                     "blob 1324c5a6cf21a1916e34bbad0cbc1c57cf1d518d). Config-only diff vs `ds` (same graph "
                     "mode): score_reduce_dtype=fp32; production raw-dot selection code unchanged.")
 
+# Canonical per-arm DS launch config — the exact --double-sparsity-config serve.sh passes for each DS
+# mode (AC-1/AC-4 require the FULL launch config, not abbreviated extras).
+MASK_PATH = "/cluster-storage/models/glm51-fp8-channel-mask-loop12.safetensors"
+DS_BASE = {"top_k": 2048, "page_size": 64, "channel_mask_path": MASK_PATH, "device_buffer_size": 4096,
+           "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0,
+           "enable_lifted_budget_decode": False, "lifted_budget_top_k": 0}
+DS_OVERRIDES = {  # vs DS_BASE, matching serve.sh exactly
+    "production_ds": {},
+    "ref_faithful": {"selector_impl": "reference_rawdot", "reference_include_current": True},
+    "ref_cosine": {"selector_impl": "reference_cosine", "reference_include_current": True},
+    "ref_cosine_noinc": {"selector_impl": "reference_cosine", "reference_include_current": False},
+    "ds_reduce_fp32": {"score_reduce_dtype": "fp32"},
+    "ds_forced_all": {"forced_all_dense_control": True},
+    "ds_anchor_b1": {"anchor_mode": "recency", "anchor_budget": 1},
+    "ds_anchor_b64": {"anchor_mode": "recency", "anchor_budget": 64},
+}
+
+
+def ds_config_for(arm):
+    """The full canonical DS config for a DS arm (DS_BASE + per-arm overrides), or None for non-DS arms."""
+    if arm not in DS_OVERRIDES:
+        return None
+    return {**DS_BASE, **DS_OVERRIDES[arm]}
+
+
+def _server_args(arm, extra):
+    """Full launch command line: COMMON_ARGS + extra, plus the exact --double-sparsity-config serve.sh
+    passes for DS arms (so the ledger reconstructs the real launch, not an abbreviated one)."""
+    args = (COMMON_ARGS + " " + extra).strip()
+    cfg = ds_config_for(arm)
+    if cfg is not None:
+        args += " --double-sparsity-config '" + json.dumps(cfg, separators=(",", ":")) + "'"
+    return args
+
+
 # arm -> (serve_mode, extra_args, dsa_by_regime, dense_out, sparse_out, dense_serial_out, note)
 ARMS = {
     "dsa": dict(mode="dsa", extra="", ds=None, measured_sha=BASE_SHA,
@@ -112,7 +147,6 @@ ARMS = {
                            ds=None, measured_sha=R7_REDUCE_SHA, measured_source=R7_REDUCE_SOURCE,
                            ac6_leg="score_reduce_dtype (bf16->fp32 cross-TP reduce)",
                            corroboration="evidence/ac6_score_reduce_fp32_corrob.json",
-                           ds_config={"score_reduce_dtype": "fp32", "scorer_norm": "off", "head_agg": "max"},
                            dense="ds_reduce_fp32_dense", sparse="ds_reduce_fp32_sparse",
                            note="AC-6 leg 7 (R7): production raw-dot with score_reduce_dtype=fp32 (the ONE variable vs "
                                 "production bf16-reduce). Reduce dtype is near-selection-neutral (bf16-vs-fp32 median "
@@ -149,7 +183,7 @@ for arm, a in ARMS.items():
         "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
         "mask_content_sha256": "5c89c516428f379c983461ceb58fb366c0d6cb12733b3f957d98edb5406f7b21",
         "serve_mode": a["mode"],
-        "server_args": (COMMON_ARGS + " " + a["extra"]).strip(),
+        "server_args": _server_args(arm, a["extra"]),
         "cuda_graph": "off" if "--disable-cuda-graph" in a["extra"] else "on (piecewise off)",
         "gsm8k": {"temperature": 0, "max_tokens": 512, "api": "completion",
                   "dense_config": "5-shot/200", "sparse_config": "24-shot/150",
@@ -166,8 +200,9 @@ for arm, a in ARMS.items():
     }
     if a.get("measured_source"):
         rec["measured_source"] = a["measured_source"]
-    if a.get("ds_config"):
-        rec["ds_config"] = a["ds_config"]
+    _cfg = ds_config_for(arm)
+    if _cfg is not None:
+        rec["ds_config"] = _cfg
     if a.get("ac6_leg"):
         rec["ac6_leg"] = a["ac6_leg"]
         rec["corroboration_artifact"] = a.get("corroboration")
@@ -191,6 +226,16 @@ if _rf is not None:
     assert "--disable-cuda-graph" not in _rf["server_args"], "ds_reduce_fp32 ran graph-mode; server_args must not contain --disable-cuda-graph"
     assert _rf["cuda_graph"] != "off", f"ds_reduce_fp32 cuda_graph must be graph-enabled, got {_rf['cuda_graph']!r}"
     assert _rf.get("ds_config", {}).get("score_reduce_dtype") == "fp32", "ds_reduce_fp32 ds_config must record score_reduce_dtype=fp32"
+
+# AC-1/AC-4: every DS arm must record its FULL launch config — --double-sparsity-config in server_args
+# AND a complete structured ds_config (the abbreviated extras alone cannot reconstruct the DS launch).
+_REQUIRED_DS_KEYS = set(DS_BASE)
+for r in ledger:
+    if "--enable-double-sparsity" in r["server_args"]:
+        assert "--double-sparsity-config" in r["server_args"], (
+            f"DS arm {r['arm']} server_args missing --double-sparsity-config")
+        missing = _REQUIRED_DS_KEYS - set(r.get("ds_config") or {})
+        assert not missing, f"DS arm {r['arm']} ds_config missing required keys: {sorted(missing)}"
 
 # regenerate evidence_table.md from the ledger
 lines = ["# Loop 13 — Per-arm GSM8K evidence ledger (AC-1 / AC-4), generated from evidence/meta/arms/*.json",

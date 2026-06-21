@@ -20,8 +20,9 @@
     "facts": [
       "build_absorbed_projection uses num_local_heads -> per-rank scores are local-head maxes (sharded).",
       "the reference selector path (_reference_selector_topk) does NO cross-TP reduce (no reduce_token_scores / all-reduce) and scores over the rank's local heads.",
-      "so production (cross-TP SUM) and the reference (per-rank-local) use DIFFERENT head aggregation."
+      "so production (cross-TP SUM) and the reference (per-rank-local) use DIFFERENT cross-TP aggregation (the within-rank head_agg='max' is the same on both)."
     ],
-    "argument": "the GOOD accuracy ceiling holds under cosine on the reference (per-rank-local) path, while raw-dot collapses under BOTH aggregations (production cross-TP SUM sparse 0.000 ~ reference local raw-dot sparse 0.013). Since accuracy is governed by the scorer (cosine vs raw-dot) and the current-slot, NOT by which cross-TP head aggregation is used, the SUM-vs-MAX difference is not the accuracy driver. Consistent with AC-6: head_agg is not the regression culprit."
+    "measured_bound": "on the RAW-DOT path the two cross-TP aggregations can be compared directly: production cross-TP SUM sparse 0.000 vs reference per-rank-local sparse 0.013 (ref_faithful). So the cross-TP aggregation difference is bounded to <=~1.3pp on the raw-dot path -> second-order, like fp8/reduce (AC-6 legs 6-7).",
+    "argument": "raw-dot collapses under BOTH measured aggregations (SUM 0.000, local 0.013), so the cross-TP aggregation is not what breaks raw-dot. Accuracy is governed by the scorer (raw-dot->cosine, +92.7pp on the reference path) and the current-slot (AC-6). The SUM-vs-MAX selection difference (Jaccard 0.679) is therefore not the accuracy driver. NOTE: cosine was measured ONLY on the reference (per-rank-local) aggregation; cosine-under-production-SUM is NOT separately measured (no production cosine kernel \u2014 AC-6 leg 6 blocker), so we do NOT claim cosine recovers under SUM. The <=1.3pp raw-dot bound shows the aggregation is second-order regardless of scorer."
   }
 }

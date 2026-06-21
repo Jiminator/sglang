@@ -194,7 +194,12 @@ count and FAIL if pruning_rows==0 — so it cannot pass on smoke captures again.
 - SUM vs **global-MEAN**: Jaccard **1.0** (702/702) → SUM and MEAN select identically (scale-only).
 - **Exoneration (not the accuracy bottleneck):** `build_absorbed_projection` uses `num_local_heads` and
   the reference path does NO cross-TP reduce (`_reference_selector_topk` has no `reduce_token_scores`/
-  all-reduce), so production (cross-TP SUM) and the reference (per-rank-local) use DIFFERENT head
-  aggregation — yet cosine recovers under both and raw-dot collapses under both (production-SUM sparse
-  0.000 ≈ reference-local raw-dot 0.013). Accuracy is governed by the scorer + current-slot (AC-6), not by
-  the cross-TP head aggregation. head_agg is not the regression culprit.
+  all-reduce), so production (cross-TP SUM) and the reference (per-rank-local) differ in **cross-TP**
+  aggregation (within-rank `head_agg="max"` is the same on both). On the RAW-DOT path the two can be
+  compared directly: production cross-TP SUM sparse **0.000** vs reference per-rank-local sparse **0.013**
+  (`ref_faithful`) → the cross-TP aggregation difference is bounded to **≤~1.3 pp** (second-order, like
+  fp8/reduce). Raw-dot collapses under BOTH aggregations, so the aggregation is not what breaks it; the
+  accuracy driver is the scorer (+92.7 pp) and the current-slot (AC-6). **Not claimed:** cosine under
+  production-SUM — cosine was measured only on the reference (per-rank-local) path, and there is no
+  production cosine kernel (AC-6 leg 6 blocker), so cosine-under-SUM is unmeasured; the ≤1.3 pp raw-dot
+  bound shows the aggregation is second-order regardless. head_agg is not the regression culprit.

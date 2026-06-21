@@ -2,15 +2,15 @@
   "arm": "ds_anchor_b1",
   "measured_git_sha": "29ec137bf",
   "ledger_generated_from": {
-    "head_sha_at_generation": "4d874b89e874441bdf0576a01280c6fcfe109335",
-    "generator_blob_sha": "0d914406af8b81eef5c187c4d17a7bdf2b7fb911",
+    "head_sha_at_generation": "752752f6dc7255b0810d5102e1835bf2c84229a9",
+    "generator_blob_sha": "b8f4ea711941ef3fd727309b4e1acb4830f918dd",
     "worktree": "dirty (+uncommitted evidence/generator)",
     "note": "generated BEFORE its own commit exists, so head_sha_at_generation is one commit behind the commit that contains this file; generator_blob_sha pins the source exactly"
   },
   "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
   "mask_content_sha256": "5c89c516428f379c983461ceb58fb366c0d6cb12733b3f957d98edb5406f7b21",
   "serve_mode": "ds_anchor (ANCHOR_BUDGET=1)",
-  "server_args": "--tp-size 8 --kv-cache-dtype fp8_e4m3 --mem-fraction-static 0.8 --max-running-requests 64 --cuda-graph-max-bs 64 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --random-seed 42 --trust-remote-code --disable-radix-cache --enable-double-sparsity",
+  "server_args": "--tp-size 8 --kv-cache-dtype fp8_e4m3 --mem-fraction-static 0.8 --max-running-requests 64 --cuda-graph-max-bs 64 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --random-seed 42 --trust-remote-code --disable-radix-cache --enable-double-sparsity --double-sparsity-config '{\"top_k\":2048,\"page_size\":64,\"channel_mask_path\":\"/cluster-storage/models/glm51-fp8-channel-mask-loop12.safetensors\",\"device_buffer_size\":4096,\"scorer_norm\":\"off\",\"head_agg\":\"max\",\"anchor_mode\":\"recency\",\"anchor_budget\":1,\"enable_lifted_budget_decode\":false,\"lifted_budget_top_k\":0}'",
   "cuda_graph": "on (piecewise off)",
   "gsm8k": {
     "temperature": 0,
@@ -30,5 +30,17 @@
   "fields_not_instrumented": [
     "per_step_length_cap_garbage_counts (invalid/unwritten/duplicate/out-of-range physical slots \u2014 requires logical_to_physical adapter instrumentation not built this loop)"
   ],
-  "note": "recency anchor budget=1 (current slot only) on production top-k"
+  "note": "recency anchor budget=1 (current slot only) on production top-k",
+  "ds_config": {
+    "top_k": 2048,
+    "page_size": 64,
+    "channel_mask_path": "/cluster-storage/models/glm51-fp8-channel-mask-loop12.safetensors",
+    "device_buffer_size": 4096,
+    "scorer_norm": "off",
+    "head_agg": "max",
+    "anchor_mode": "recency",
+    "anchor_budget": 1,
+    "enable_lifted_budget_decode": false,
+    "lifted_budget_top_k": 0
+  }
 }

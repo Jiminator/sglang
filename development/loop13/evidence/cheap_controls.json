@@ -5780,21 +5780,24 @@
     }
   ],
   "summary": {
-    "AC_2_2_head_agg_rows_with_pre_reduce": 78,
-    "AC_2_2_served_sum_matches_post_reduce_all": false,
-    "AC_2_2_note": "head-agg interpretation depends on pre_reduce_scores semantics; trust only if served_sum_matches_post_reduce is True",
     "AC_2_3_verdict": "RESOLVED (pruning-valid, Round 5)",
     "AC_2_3_source": "evidence/ac2_3_radix_width_equivalence.json",
     "AC_2_3_pruning_rows": 4992,
     "AC_2_3_radix_eq_torch_topk": "4992/4992",
     "AC_2_3_radix_all_identical": true,
     "AC_2_3_width_5120_vs_full": "4992/4992",
-    "AC_2_3_seq_len_median": 4280
+    "AC_2_3_seq_len_median": 4280,
+    "AC_2_2_verdict": "SETTLED (Round 8) -> evidence/head_agg_tp_semantics.json",
+    "AC_2_2_n_groups": 702,
+    "AC_2_2_sum_pre_eq_post": "702/702",
+    "AC_2_2_SUM_vs_globalMAX_jaccard_median": 0.679,
+    "AC_2_2_SUM_vs_globalMAX_identical": "78/702",
+    "AC_2_2_SUM_vs_globalMEAN_jaccard_median": 1.0
   },
   "_status": {
     "join": "VALID \u2014 exact (req_pool_index, layer) join via the new selection_capture.req_pool_indices field; unmatched_rows=0.",
     "AC_2_3_radix_equivalence": "RESOLVED (Round 5) via verify_ac2_3.py on REAL SPARSE captures (median seq_len 4280): the production blocked/radix algorithm == exact select_topk_sequence_order on 4992/4992 pruning rows (seq_len>top_k), and selector-width [5120] == full 4992/4992 -> evidence/ac2_3_radix_width_equivalence.json. The verifier fails (exit 2) if pruning_rows==0, so it cannot pass on smoke captures. The 81/546 (now under `superseded_round3_join_summary`, no longer in `summary`) was the OLD seq_len=13 join artifact (this analyze_captures join path needs a shared decode-step id and is superseded by the direct same-score-row method). Radix + selector-width AC-2.3 suspects RETIRED on the actual sparse workload.",
-    "AC_2_2_head_agg": "SETTLED (Round 8) -> evidence/head_agg_tp_semantics.json. On 702 validated 8-rank groups (sum(pre_reduce)==post 702/702): served cross-TP SUM vs global-MAX median Jaccard 0.679 (78/702 identical) -> the served head_agg='max'+SUM is NOT a global max over heads; SUM==MEAN (scale-only, 702/702). EXONERATED as the accuracy bottleneck: the reference path does NO cross-TP reduce and uses num_local_heads, so production (SUM) and reference (per-rank-local) differ in head aggregation, yet cosine recovers under both and raw-dot collapses under both (0.000~0.013) -> head aggregation is not the culprit (consistent with AC-6)."
+    "AC_2_2_head_agg": "SETTLED (Round 8) -> evidence/head_agg_tp_semantics.json. 702 validated 8-rank groups (sum(pre)==post 702/702): served cross-TP SUM vs global-MAX median Jaccard 0.679 (78/702 identical) -> served head_agg='max'+SUM != global-max; SUM==MEAN (scale-only). NOT the accuracy bottleneck: on the RAW-DOT path the two cross-TP aggregations differ by <=~1.3pp (production-SUM 0.000 vs reference-local 0.013) -> second-order, like fp8/reduce. Raw-dot collapses under BOTH aggregations; the driver is scorer + current-slot (AC-6). Cosine-under-production-SUM is NOT measured (no production cosine kernel), so we do not claim cosine recovers under SUM."
   },
   "superseded_round3_join_summary": {
     "AC_2_3_equiv_rows": 546,
@@ -5803,5 +5806,11 @@
     "AC_2_3_identical_rows": "81/546",
     "AC_2_3_min_jaccard": 0.0909,
     "_note": "OLD seq_len=13 score-vs-selection join (this analyze_captures path needs a shared decode-step id and is superseded by the direct same-score-row method). NOT the current AC-2.3 verdict."
+  },
+  "superseded_round2_head_agg_test": {
+    "AC_2_2_head_agg_rows_with_pre_reduce": 78,
+    "AC_2_2_served_sum_matches_post_reduce_all": false,
+    "AC_2_2_note": "head-agg interpretation depends on pre_reduce_scores semantics; trust only if served_sum_matches_post_reduce is True",
+    "_note": "OLD analyze_captures head_agg_test (78 rows, served_sum_matches flag). SUPERSEDED by head_agg_tp_semantics.json (702/702 sum(pre)==post). Not the current AC-2.2 verdict."
   }
 }

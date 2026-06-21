@@ -2,15 +2,15 @@
   "arm": "ref_cosine_noinc",
   "measured_git_sha": "393966c02d0d57d0c99c355367f52704c1964581",
   "ledger_generated_from": {
-    "head_sha_at_generation": "4d874b89e874441bdf0576a01280c6fcfe109335",
-    "generator_blob_sha": "0d914406af8b81eef5c187c4d17a7bdf2b7fb911",
+    "head_sha_at_generation": "752752f6dc7255b0810d5102e1835bf2c84229a9",
+    "generator_blob_sha": "b8f4ea711941ef3fd727309b4e1acb4830f918dd",
     "worktree": "dirty (+uncommitted evidence/generator)",
     "note": "generated BEFORE its own commit exists, so head_sha_at_generation is one commit behind the commit that contains this file; generator_blob_sha pins the source exactly"
   },
   "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
   "mask_content_sha256": "5c89c516428f379c983461ceb58fb366c0d6cb12733b3f957d98edb5406f7b21",
   "serve_mode": "ref_cosine_noinc",
-  "server_args": "--tp-size 8 --kv-cache-dtype fp8_e4m3 --mem-fraction-static 0.8 --max-running-requests 64 --cuda-graph-max-bs 64 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --random-seed 42 --trust-remote-code --disable-radix-cache --disable-cuda-graph --enable-double-sparsity",
+  "server_args": "--tp-size 8 --kv-cache-dtype fp8_e4m3 --mem-fraction-static 0.8 --max-running-requests 64 --cuda-graph-max-bs 64 --page-size 64 --dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv --disable-overlap-schedule --disable-piecewise-cuda-graph --random-seed 42 --trust-remote-code --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config '{\"top_k\":2048,\"page_size\":64,\"channel_mask_path\":\"/cluster-storage/models/glm51-fp8-channel-mask-loop12.safetensors\",\"device_buffer_size\":4096,\"scorer_norm\":\"off\",\"head_agg\":\"max\",\"anchor_mode\":\"off\",\"anchor_budget\":0,\"enable_lifted_budget_decode\":false,\"lifted_budget_top_k\":0,\"selector_impl\":\"reference_cosine\",\"reference_include_current\":false}'",
   "cuda_graph": "off",
   "gsm8k": {
     "temperature": 0,
@@ -32,6 +32,20 @@
   ],
   "note": "AC-6 single-variable bisection arm (R5): cosine with reference_include_current=FALSE \u2014 the ONE variable flipped vs ref_cosine (production current-slot exclusion). head_agg=max, exact-fp32, TF32-off all unchanged. reference_cosine_select code unchanged since R1 fea920c06; serve.sh ref_cosine_noinc mode added R5. RESULT: dense 0.940->0.625 (=production 0.620) AND sparse 0.940->0.313 -> current-slot exclusion (H3) is a major culprit in BOTH regimes, not dense-only. Sparse needs BOTH cosine scorer AND current-slot inclusion (see 2x2 in ROOT_CAUSE).",
   "measured_source": "worktree HEAD 393966c02 (dirty: serve.sh ref_cosine_noinc mode added R5; serve.sh blob e1c83e22a085f0aa499adfbaca155d9aa0069579; committed c7b66f04b). reference_cosine_select selection code unchanged since R1 fea920c06.",
+  "ds_config": {
+    "top_k": 2048,
+    "page_size": 64,
+    "channel_mask_path": "/cluster-storage/models/glm51-fp8-channel-mask-loop12.safetensors",
+    "device_buffer_size": 4096,
+    "scorer_norm": "off",
+    "head_agg": "max",
+    "anchor_mode": "off",
+    "anchor_budget": 0,
+    "enable_lifted_budget_decode": false,
+    "lifted_budget_top_k": 0,
+    "selector_impl": "reference_cosine",
+    "reference_include_current": false
+  },
   "ac6_leg": "current-slot (reference_include_current true->false)",
   "corroboration_artifact": "evidence/ac6_ref_cosine_noinc_corrob.json"
 }
