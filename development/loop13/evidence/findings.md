@@ -120,6 +120,21 @@ slot (it is masked/excluded by the `_slot_written` invalidation). This is the H3
 forced-all control (AC-2.1) *forces* it in and finds it marked unwritten. Together: the adapter +
 selected-index path is clean in both regimes; the dense degradation is the current-slot exclusion (H3).
 
+### AC-4 length-cap garbage counters — REFERENCE arms (Round 17)
+`evidence/ac4_garbage_counters_ref_faithful.json` and `evidence/ac4_garbage_counters_ref_cosine.json`
+(`ac4_garbage_counters.py --arm ref_faithful|ref_cosine`), from guarded `ref_faithful_garbage` /
+`ref_cosine_garbage` eager runs — the served reference selector with `forced_all_assert:true` (the same
+hook, deepseek_v2.py:2722, gated only on the flag; the reference path falls through to `logical_to_physical`
+and the hook just like production). On **41808 dense + 37440 sparse** rows EACH, both reference arms have
+**zero real garbage** (0 duplicate / live-`-1` / out-of-range / adapter-error / NON-current unwritten in
+both regimes) — identical to production on the garbage axis. The ONE difference is the current slot:
+`current_slot_unwritten = rows` (41808 dense / 37440 sparse) on BOTH reference arms, because they set
+`reference_include_current=true` and so force the current decode slot INTO the selected set (where its
+`_slot_written` bit is False = the H3 marker present in the selection). This is the exact complement of
+production (`current_slot_unwritten = 0`, current slot EXCLUDED). So across ALL served DS arms the
+adapter + selected-index path is provably clean; the only moving part is whether the current slot is in the
+selection — production excludes it (the H3 dense regression), the faithful references include it (recovery).
+
 ## AC-2.2 (refinement) — recency-anchor sweep: dense vs sparse diverge
 Codex adversarial review (evidence/codex_review_h3.md) flagged that forced-all bypasses
 validity for the whole dense row and that sparse (real pruning) may have a coexisting H0.

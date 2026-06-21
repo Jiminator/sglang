@@ -121,6 +121,25 @@ case "$MODE" in
     DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "forced_all_assert": true}' "$MASK")
     EXTRA=( --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
     ;;
+  ref_faithful_garbage)
+    # AC-4 garbage counters for the FAITHFUL raw-dot reference: ref_faithful config (reference_rawdot,
+    # current slot INCLUDED) + forced_all_assert -> the same hook (deepseek_v2.py:2722, gated only on
+    # forced_all_assert) dumps the reference scored selection's post-adapter physical slots + _ds_slot_written
+    # bits, so the offline reducer can compute the AC-4 length-cap garbage-rate for this arm. Because the
+    # reference INCLUDES the current slot, current_slot_unwritten is expected NONZERO (vs production's 0).
+    # EAGER. Capture dir via SGLANG_DS_FORCEDALL_ASSERT_DIR.
+    [ -s "$MASK" ] || { echo "FATAL: mask $MASK missing"; exit 2; }
+    DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "selector_impl": "reference_rawdot", "reference_include_current": true, "forced_all_assert": true}' "$MASK")
+    EXTRA=( --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
+    ;;
+  ref_cosine_garbage)
+    # AC-4 garbage counters for the FAITHFUL COSINE reference: ref_cosine config (reference_cosine,
+    # current slot INCLUDED) + forced_all_assert. Same hook/dump as ref_faithful_garbage; current_slot_unwritten
+    # expected NONZERO. EAGER. Capture dir via SGLANG_DS_FORCEDALL_ASSERT_DIR.
+    [ -s "$MASK" ] || { echo "FATAL: mask $MASK missing"; exit 2; }
+    DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "selector_impl": "reference_cosine", "reference_include_current": true, "forced_all_assert": true}' "$MASK")
+    EXTRA=( --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
+    ;;
   ds_anchor)
     # Sparse-regime current/recent-slot confirmation: production top-2048 selection PLUS a recency
     # anchor that force-includes the most-recent ANCHOR_BUDGET slots (incl. the
@@ -131,7 +150,7 @@ case "$MODE" in
     DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "recency", "anchor_budget": %s, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0}' "$MASK" "$AB")
     EXTRA=( --disable-radix-cache --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
     ;;
-  *) echo "FATAL: mode must be 'dsa', 'dsa_noradix', 'ds', 'ds_capture', 'ref', 'ref_faithful', 'ref_cosine', 'ds_forced_all', or 'ds_anchor'"; exit 2 ;;
+  *) echo "FATAL: mode must be 'dsa', 'dsa_noradix', 'ds', 'ds_capture', 'ref', 'ref_faithful', 'ref_cosine', 'ref_cosine_noinc', 'ds_forced_all', 'ds_forced_all_assert', 'ds_garbage', 'ref_faithful_garbage', 'ref_cosine_garbage', or 'ds_anchor'"; exit 2 ;;
 esac
 
 # *** NO PYTHONPATH *** — default editable install = dev clone (the guard enforced this).

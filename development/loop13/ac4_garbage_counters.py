@@ -11,9 +11,14 @@ to the AC-4 per-arm length-cap garbage-rate on the actual selected physical slot
 No req_to_token / sweep equality is checked — the selection is scored, not [0..seq_len-1]. Rows are split
 by regime (dense seq_len<=top_k, sparse seq_len>top_k) and reported separately.
 
-Input dir defaults to the production SCORED capture `evidence/.sglang_ds_garbage` (the `ds_garbage` run),
-NOT the forced-all control `.sglang_ds_forcedall`. The report stamps `source_dir_basename` so downstream
-consumers (build_ledger) can verify the artifact came from the scored capture.
+Usage: ac4_garbage_counters.py [--arm NAME] [CAPDIR]. `--arm` (default `production_ds`) sets the report
+`arm` and the per-arm output filename (`ac4_garbage_counters.json` for production_ds, `..._{arm}.json`
+otherwise) — used to reduce the served REFERENCE arms (`ref_faithful`, `ref_cosine`), which run the same
+`forced_all_assert` hook but INCLUDE the current decode slot (so their current_slot_unwritten is nonzero).
+For production_ds the input dir defaults to the production SCORED capture `evidence/.sglang_ds_garbage`
+(the `ds_garbage` run), NOT the forced-all control `.sglang_ds_forcedall`; for any other arm pass its
+capture dir explicitly. The report stamps `source_dir_basename` so downstream consumers (build_ledger) can
+verify the artifact came from the expected capture.
 
 Fail-closed: nonzero exit on (a) a missing/empty regime — this production scored reducer REQUIRES BOTH
 dense and sparse with rows>0, so a dense-only forced-all dir cannot pass as scored evidence (and the JSON
@@ -47,7 +52,23 @@ def _regime_acc():
 
 
 def main():
-    capdir = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_DIR
+    # Usage: ac4_garbage_counters.py [--arm NAME] [CAPDIR]
+    #   --arm production_ds (default) | ref_faithful | ref_cosine | ... — sets the report `arm` and the
+    #   per-arm output filename. The capture dir defaults to DEFAULT_DIR only for production_ds; for any
+    #   other arm pass the arm's capture dir explicitly (its records live in a distinct .sglang_* dir).
+    args = sys.argv[1:]
+    arm = "production_ds"
+    positionals = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--arm":
+            arm = args[i + 1]; i += 2
+        elif a.startswith("--arm="):
+            arm = a.split("=", 1)[1]; i += 1
+        else:
+            positionals.append(a); i += 1
+    capdir = positionals[0] if positionals else DEFAULT_DIR
     files = sorted(glob.glob(os.path.join(capdir, "*.pt")))
     if not files:
         print(f"FAIL: no capture records in {capdir}", file=sys.stderr)
@@ -122,32 +143,35 @@ def main():
             "mismatches": a["mismatches"][:10],
         }
     # FAIL CLOSED on a structurally-wrong capture BEFORE writing, so a forced-all (dense-only) dir or a
-    # no-arg run over the wrong dir can never overwrite the canonical committed scored artifact. The
-    # production ds_garbage run captures BOTH regimes (5-shot dense + 24-shot sparse); a single-regime dir
-    # is the forced-all control or a partial capture and is NOT valid production scored evidence.
+    # no-arg run over the wrong dir can never overwrite the canonical committed scored artifact. A scored
+    # capture run captures BOTH regimes (5-shot dense + 24-shot sparse); a single-regime dir is the
+    # forced-all control or a partial capture and is NOT valid scored evidence for this arm.
     basename = os.path.basename(os.path.normpath(capdir))
     present = {r for r in ("dense", "sparse") if regimes.get(r, {}).get("rows", 0) > 0}
     missing = {"dense", "sparse"} - present
     if missing:
-        print(f"FAIL: production scored reducer requires BOTH dense and sparse regimes with rows>0; "
+        print(f"FAIL: {arm} scored reducer requires BOTH dense and sparse regimes with rows>0; "
               f"missing/empty: {sorted(missing)}. Capture dir {capdir} (basename '{basename}') — this looks "
-              f"like the forced-all control or a partial capture, not the .sglang_ds_garbage scored run. "
+              f"like the forced-all control or a partial capture, not a full scored run. "
               f"NOT writing the artifact (refusing to clobber the canonical one).", file=sys.stderr)
         raise SystemExit(2)
     report = {
-        "ac": "AC-4 length-cap garbage counters — production SCORED DS selection",
-        "source": f"{capdir} (ds_garbage eager run; forced_all_assert on, scored top-k, no forced-all override)",
+        "ac": f"AC-4 length-cap garbage counters — {arm} SCORED DS selection",
+        "source": f"{capdir} (forced_all_assert eager run; scored top-k, no forced-all override)",
         "source_dir_basename": basename,
-        "arm": "production_ds",
+        "arm": arm,
         "regimes": regimes,
-        "verdict": ("CLEAN — the production scored selection has zero real garbage (no duplicate / live-`-1` "
+        "verdict": (f"CLEAN — the {arm} scored selection has zero real garbage (no duplicate / live-`-1` "
                     "/ out-of-range / adapter-error / non-current unwritten slot) on the captured rows; any "
-                    "unwritten slot is the current decode slot (the H3 marker)." if real_garbage == 0
+                    "unwritten slot is the current decode slot (the H3 marker — present in the selected set "
+                    "for current-slot-INCLUDED reference arms, absent for the current-slot-EXCLUDED "
+                    "production arm)." if real_garbage == 0
                     else f"DIRTY — {real_garbage} real garbage events found; see per-regime mismatches."),
     }
-    out = os.path.join(HERE, "evidence", "ac4_garbage_counters.json")
+    out_name = "ac4_garbage_counters.json" if arm == "production_ds" else f"ac4_garbage_counters_{arm}.json"
+    out = os.path.join(HERE, "evidence", out_name)
     json.dump(report, open(out, "w"), indent=2)
-    print(json.dumps({"source_dir_basename": basename,
+    print(json.dumps({"arm": arm, "source_dir_basename": basename,
                       "regimes": {k: {kk: vv for kk, vv in v.items() if kk != "mismatches"}
                                   for k, v in regimes.items()}, "verdict": report["verdict"]}, indent=2))
     print("wrote", out)

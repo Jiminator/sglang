@@ -1,0 +1,31 @@
+{
+  "ac": "AC-4 length-cap garbage counters \u2014 ref_cosine SCORED DS selection",
+  "source": "development/loop13/evidence/.sglang_ds_ref_cosine_garbage (forced_all_assert eager run; scored top-k, no forced-all override)",
+  "source_dir_basename": ".sglang_ds_ref_cosine_garbage",
+  "arm": "ref_cosine",
+  "regimes": {
+    "dense": {
+      "rows": 41808,
+      "duplicate_physical": 0,
+      "live_lane_-1": 0,
+      "out_of_range_vs_kv_capacity": 0,
+      "adapter_errors": 0,
+      "noncurrent_unwritten (REAL garbage)": 0,
+      "current_slot_unwritten (H3 marker; not garbage)": 41808,
+      "real_garbage_total": 0,
+      "mismatches": []
+    },
+    "sparse": {
+      "rows": 37440,
+      "duplicate_physical": 0,
+      "live_lane_-1": 0,
+      "out_of_range_vs_kv_capacity": 0,
+      "adapter_errors": 0,
+      "noncurrent_unwritten (REAL garbage)": 0,
+      "current_slot_unwritten (H3 marker; not garbage)": 37440,
+      "real_garbage_total": 0,
+      "mismatches": []
+    }
+  },
+  "verdict": "CLEAN \u2014 the ref_cosine scored selection has zero real garbage (no duplicate / live-`-1` / out-of-range / adapter-error / non-current unwritten slot) on the captured rows; any unwritten slot is the current decode slot (the H3 marker \u2014 present in the selected set for current-slot-INCLUDED reference arms, absent for the current-slot-EXCLUDED production arm)."
+}

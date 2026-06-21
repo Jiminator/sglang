@@ -1,6 +1,6 @@
 {
-  "ac": "AC-4 length-cap garbage counters \u2014 production SCORED DS selection",
-  "source": "/sgl-workspace/sglang/development/loop13/evidence/.sglang_ds_garbage (ds_garbage eager run; forced_all_assert on, scored top-k, no forced-all override)",
+  "ac": "AC-4 length-cap garbage counters \u2014 production_ds SCORED DS selection",
+  "source": "/sgl-workspace/sglang/development/loop13/evidence/.sglang_ds_garbage (forced_all_assert eager run; scored top-k, no forced-all override)",
   "source_dir_basename": ".sglang_ds_garbage",
   "arm": "production_ds",
   "regimes": {
@@ -27,5 +27,5 @@
       "mismatches": []
     }
   },
-  "verdict": "CLEAN \u2014 the production scored selection has zero real garbage (no duplicate / live-`-1` / out-of-range / adapter-error / non-current unwritten slot) on the captured rows; any unwritten slot is the current decode slot (the H3 marker)."
+  "verdict": "CLEAN \u2014 the production_ds scored selection has zero real garbage (no duplicate / live-`-1` / out-of-range / adapter-error / non-current unwritten slot) on the captured rows; any unwritten slot is the current decode slot (the H3 marker \u2014 present in the selected set for current-slot-INCLUDED reference arms, absent for the current-slot-EXCLUDED production arm)."
 }

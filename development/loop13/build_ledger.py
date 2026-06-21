@@ -235,50 +235,67 @@ ARMS = {
                           note="recency anchor budget=64 on production top-k"),
 }
 
-NOT_INSTRUMENTED = ["per_step_length_cap_garbage_counts for the REFERENCE arms (ref_faithful, ref_cosine) "
-                    "and ds_anchor_* — production_ds is now instrumented (evidence/ac4_garbage_counters.json, "
-                    "R15: dense+sparse scored selection, real garbage 0) and the forced-all control via "
-                    "forced_all_assertions.json (R14); enabling the same forced_all_assert capture on the "
-                    "reference arms is the remaining AC-4 garbage-counter work"]
+NOT_INSTRUMENTED = ["per_step_length_cap_garbage_counts for ds_anchor_* only — every PRIMARY served DS arm "
+                    "is now instrumented: production_ds (evidence/ac4_garbage_counters.json, R15/R16: scored "
+                    "selection, current slot EXCLUDED, real garbage 0), the forced-all control "
+                    "(forced_all_assertions.json, R14), and BOTH reference arms ref_faithful + ref_cosine "
+                    "(evidence/ac4_garbage_counters_ref_*.json, R17: scored selection, current slot INCLUDED, "
+                    "real garbage 0). ds_anchor_* are auxiliary anchor-budget controls, not AC-4 core arms"]
 # AC-4 per-example sample IDs/order are now instrumented (deterministic stock loader, re-derived):
 SAMPLE_IDS_ARTIFACT = "evidence/gsm8k_sample_ids.json"
 # AC-2.1 forced-all dense physical-slot + slot-validity assertions (R14) — also the AC-4 garbage counters
 # for the forced-all control (real garbage 0; the only unwritten slot is the current decode slot = H3).
 FORCED_ALL_ASSERT_ARTIFACT = "evidence/forced_all_assertions.json"
-# AC-4 length-cap garbage counters for the production SCORED selection (R15): dense+sparse, real garbage 0;
-# the current slot is NOT in the scored selection (it is masked/excluded = the H3 cause from the selection side).
+# AC-4 length-cap garbage counters for the SCORED selection of every served DS arm (real garbage 0 in both
+# regimes). production_ds EXCLUDES the current decode slot (current_slot_unwritten==0 = the H3 cause from the
+# selection side); the reference arms INCLUDE it (reference_include_current=true), so current_slot_unwritten>0.
+# Each arm -> (relative artifact path, expected source_dir_basename, current-slot expectation).
+#   current_slot: "excluded" => assert ==0 ; "included" => assert >0.
 SCORED_GARBAGE_ARTIFACT = "evidence/ac4_garbage_counters.json"
+GARBAGE_ARTIFACTS = {
+    "production_ds": (SCORED_GARBAGE_ARTIFACT, ".sglang_ds_garbage", "excluded"),
+    "ref_faithful": ("evidence/ac4_garbage_counters_ref_faithful.json",
+                     ".sglang_ds_ref_faithful_garbage", "included"),
+    "ref_cosine": ("evidence/ac4_garbage_counters_ref_cosine.json",
+                   ".sglang_ds_ref_cosine_garbage", "included"),
+}
 
 
-def validate_scored_garbage_artifact():
-    """Fail closed unless the production_ds scored garbage artifact is the REAL scored capture.
+def validate_garbage_artifact(arm):
+    """Fail closed unless the per-arm SCORED garbage artifact is the REAL scored capture for that arm.
 
     R15 regressed by committing a forced-all (dense-only, current-slot force-INCLUDED) artifact as if it
     were the production scored result, because the reducer defaulted to the forced-all dir and failed open
-    on the missing sparse regime. This guard loads the artifact and refuses to wire it onto production_ds
-    unless it is the .sglang_ds_garbage scored capture with both regimes, zero real garbage, and the current
-    slot EXCLUDED (current_slot_unwritten==0 — the footer/findings prose claims exactly that). Returns the
-    validated dense/sparse summary so the ledger records what was checked.
+    on the missing sparse regime. This guard loads the artifact and refuses to wire it onto the arm unless
+    it self-identifies as that arm's scored capture: correct source_dir_basename, both regimes present,
+    rows>0, zero real (non-current) garbage in both. The current-slot expectation is arm-specific —
+    production EXCLUDES the current slot (count must be 0, the H3 cause from the selection side), the
+    reference arms INCLUDE it (count must be >0). Returns the validated dense/sparse summary.
     """
-    p = os.path.join(HERE, SCORED_GARBAGE_ARTIFACT)
-    assert os.path.exists(p), f"{SCORED_GARBAGE_ARTIFACT} missing — regenerate from .sglang_ds_garbage"
+    rel, want_basename, current_slot = GARBAGE_ARTIFACTS[arm]
+    p = os.path.join(HERE, rel)
+    assert os.path.exists(p), f"{rel} missing — regenerate from {want_basename}"
     d = json.load(open(p))
-    assert d.get("arm") == "production_ds", f"scored garbage arm={d.get('arm')!r}, expected production_ds"
-    assert d.get("source_dir_basename") == ".sglang_ds_garbage", (
-        f"scored garbage source_dir_basename={d.get('source_dir_basename')!r} — must be '.sglang_ds_garbage' "
-        f"(the production scored capture), NOT the forced-all control")
+    assert d.get("arm") == arm, f"garbage artifact arm={d.get('arm')!r}, expected {arm!r}"
+    assert d.get("source_dir_basename") == want_basename, (
+        f"{arm} garbage source_dir_basename={d.get('source_dir_basename')!r} — must be {want_basename!r} "
+        f"(the {arm} scored capture), NOT another arm's / the forced-all control")
     regs = d.get("regimes", {})
-    assert set(regs) == {"dense", "sparse"}, f"scored garbage regimes={sorted(regs)}, expected dense+sparse"
+    assert set(regs) == {"dense", "sparse"}, f"{arm} garbage regimes={sorted(regs)}, expected dense+sparse"
     summary = {}
     for reg in ("dense", "sparse"):
         v = regs[reg]
         rows = v.get("rows", 0)
         real = v.get("real_garbage_total", -1)
         cur = v.get("current_slot_unwritten (H3 marker; not garbage)", -1)
-        assert rows > 0, f"scored garbage {reg} rows={rows}, expected >0"
-        assert real == 0, f"scored garbage {reg} real_garbage_total={real}, expected 0"
-        assert cur == 0, (f"scored garbage {reg} current_slot_unwritten={cur}, expected 0 — the production "
-                          f"scored selection must EXCLUDE the current slot (H3 from the selection side)")
+        assert rows > 0, f"{arm} garbage {reg} rows={rows}, expected >0"
+        assert real == 0, f"{arm} garbage {reg} real_garbage_total={real}, expected 0"
+        if current_slot == "excluded":
+            assert cur == 0, (f"{arm} garbage {reg} current_slot_unwritten={cur}, expected 0 — the production "
+                              f"scored selection must EXCLUDE the current slot (H3 from the selection side)")
+        else:  # "included"
+            assert cur > 0, (f"{arm} garbage {reg} current_slot_unwritten={cur}, expected >0 — the reference "
+                             f"selection INCLUDES the current slot (reference_include_current=true)")
         summary[reg] = {"rows": rows, "real_garbage_total": real, "current_slot_unwritten": cur}
     return summary
 
@@ -321,10 +338,11 @@ for arm, a in ARMS.items():
         rec["ds_selector_behavior"] = ds_selector_behavior_for(arm)  # what the selector ACTUALLY does (AC-4)
         if effective_ds_config_for(arm).get("forced_all_dense_control"):
             rec["forced_all_assertions_artifact"] = FORCED_ALL_ASSERT_ARTIFACT  # AC-2.1 + AC-4 garbage counters
-        if arm == "production_ds":
-            # Load + VALIDATE before wiring — a forced-all/partial artifact must not pass as scored evidence.
-            rec["garbage_counters_artifact"] = SCORED_GARBAGE_ARTIFACT  # AC-4 scored-selection garbage (R15)
-            rec["garbage_counters_validated"] = validate_scored_garbage_artifact()  # fail-closed
+        if arm in GARBAGE_ARTIFACTS:
+            # Load + VALIDATE before wiring — a forced-all/partial/other-arm artifact must not pass as this
+            # arm's scored evidence. production_ds R15; reference arms R17 (current slot INCLUDED -> count>0).
+            rec["garbage_counters_artifact"] = GARBAGE_ARTIFACTS[arm][0]  # AC-4 scored-selection garbage
+            rec["garbage_counters_validated"] = validate_garbage_artifact(arm)  # fail-closed
     if a.get("ac6_leg"):
         rec["ac6_leg"] = a["ac6_leg"]
         rec["corroboration_artifact"] = a.get("corroboration")
@@ -417,12 +435,15 @@ lines += ["",
           "Per-example sample IDs/order: evidence/gsm8k_sample_ids.json (deterministic stock loader; all "
           "arms share the identical ordered slice — dense lines [5:205], sparse [24:174]). Per-step "
           "length-cap garbage counters (duplicate/unwritten/-1/out-of-range physical slots + adapter "
-          "errors) via _ds_slot_written, per (rank,req,layer,step): forced-all control "
-          "evidence/forced_all_assertions.json (R14, real garbage 0 across 61776 rows; only unwritten = the "
-          "current decode slot = the H3 marker); PRODUCTION SCORED selection "
-          "evidence/ac4_garbage_counters.json (R15, dense+sparse, real garbage 0 — the current slot is NOT "
-          "in the scored selection, i.e. masked/excluded = the H3 cause from the selection side). Enabling "
-          "the same capture on the REFERENCE arms is the remaining AC-4 garbage work. "
+          "errors) via _ds_slot_written, per (rank,req,layer,step), on EVERY primary served DS arm — real "
+          "(non-current) garbage 0 everywhere: forced-all control evidence/forced_all_assertions.json (R14, "
+          "61776 rows; only unwritten = the current decode slot = the H3 marker); PRODUCTION SCORED "
+          "evidence/ac4_garbage_counters.json (R15/R16, dense 41808 + sparse 37440, current slot EXCLUDED "
+          "from the scored selection = current_slot_unwritten 0 = the H3 cause from the selection side); "
+          "REFERENCE arms evidence/ac4_garbage_counters_ref_faithful.json + _ref_cosine.json (R17, dense "
+          "41808 + sparse 37440 each, current slot INCLUDED = current_slot_unwritten = rows). The "
+          "production-excludes vs reference-includes current-slot contrast pins H3 from both sides; the "
+          "adapter+selected-index path is clean (zero dup/-1/out-of-range/adapter garbage) on all arms. "
           "Gate uses the measured batched DSA comparator (0.975/0.973).",
           "",
           "Gate (AC-5, evidence/gate_ac5.md): naive-DS=best(faithful raw-dot, cosine): dense 0.950 (2.5pp), "
