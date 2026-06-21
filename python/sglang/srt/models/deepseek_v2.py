@@ -2715,12 +2715,35 @@ class DeepseekV2AttentionMLA(
                         error_count=error_count,
                         layer_id=layer_id,
                     )
-                    # AC-2.1 diagnostic (default-off): dump post-adapter physical slots for the
-                    # forced-all dense downstream-isolation assertions. Host-side copy only; the
-                    # selected set is unchanged whether or not this fires.
+                    # AC-2.1 diagnostic (default-off): dump post-adapter physical slots + the
+                    # _ds_slot_written validity bits for the forced-all dense downstream-isolation
+                    # assertions. Host-side copy only; the selected set is unchanged whether or not
+                    # this fires.
                     if getattr(_selector.config, "forced_all_assert", False) and (
                         req_to_token is not None and _rpi is not None
                     ):
+                        # Resolve the slot_written validity bitmap exactly as the production/reference
+                        # selector does; fail closed if the diagnostic is on but it is absent. Imports are
+                        # local to this default-off branch so binding never depends on another code path.
+                        from sglang.srt.layers.attention.tbo_backend import (
+                            TboAttnBackend as _FaTbo,
+                        )
+                        from sglang.srt.model_executor.forward_context import (
+                            get_attn_backend as _fa_get_backend,
+                            has_forward_context as _fa_has_ctx,
+                        )
+
+                        _fa_backend = None
+                        if _fa_has_ctx():
+                            _fa_backend = _fa_get_backend()
+                            if isinstance(_fa_backend, _FaTbo):
+                                _fa_backend = _fa_backend.primary
+                        _fa_sw = getattr(_fa_backend, "_ds_slot_written", None)
+                        if _fa_sw is None:
+                            raise RuntimeError(
+                                "forced_all_assert requires the _ds_slot_written validity bitmap, "
+                                "but it is absent on the attention backend."
+                            )
                         from sglang.srt.layers.attention.double_sparsity.forced_all_assert_capture import (
                             maybe_dump_forced_all_assert,
                         )
@@ -2732,6 +2755,7 @@ class DeepseekV2AttentionMLA(
                             req_pool_indices=_rpi,
                             req_to_token=req_to_token,
                             seq_lens=_seq_lens,
+                            slot_written=_fa_sw,
                             error_count=int(error_count),
                             layer_id=layer_id,
                         )

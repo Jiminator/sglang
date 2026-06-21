@@ -85,20 +85,28 @@ This is a DOWNSTREAM-of-selection / slot-validity bug (H3), NOT:
 The fix (force-include the current/recent slot, or restore _slot_written before selection)
 is a FOLLOW-UP loop — this diagnosis loop lands no fix.
 
-### AC-2.1 physical-slot assertions (Round 13) — the adapter is a clean no-op
+### AC-2.1 physical-slot + slot-validity assertions (Round 14) — adapter clean; H3 seen on the bitmap
 `evidence/forced_all_assertions.json` (ac2_1_forced_all_assertions.py), reduced from a guarded
-`ds_forced_all_assert` eager run (the new `forced_all_assert` diagnostic dumps the post-`logical_to_physical`
-physical slots per (rank,req,layer); host-side copy, production byte-identical when off). On **4368/4368**
-real dense rows (median seq_len 793):
-- forced logical sweep `[0..seq_len-1]` — 4368/4368;
-- physical slots == `req_to_token[req_pool, 0:seq_len]` (element-wise) — 4368/4368;
-- **0** duplicate, **0** live-lane `-1`, **0** out-of-range, **0** adapter `error_count`.
+`ds_forced_all_assert` eager run. The diagnostic dumps, per (rank, req, layer, **decode step**), the
+post-`logical_to_physical` PHYSICAL slots, the request's `req_to_token[req, 0:seq_len]` slice, the
+`_ds_slot_written[layer_id, physical_slot]` validity bit for each live slot, and the KV-slot capacity
+(host-side copy; production byte-identical when off). On **61776/61776** dense rows across 20+ decode steps:
+- forced logical sweep `[0..seq_len-1]` — 61776/61776;
+- physical slots == `req_to_token[req, 0:seq_len]` (element-wise gather) — 61776/61776;
+- **0** duplicate, **0** live-lane `-1`, **0** out-of-range (vs the true KV-slot capacity 504704, NOT the
+  202756 `req_to_token` max-context width), **0** adapter `error_count`;
+- **0** NON-current unwritten slots — every non-current slot is `_ds_slot_written` True.
 
-So when the dense selected set is forced to all tokens, the `logical_to_physical`→`transform_index_page_table_decode`
-adapter maps it to EXACTLY the request's own KV slots — the same slots DSA feeds — with zero garbage. The
-forced-all dense selection is therefore a **provable no-op**, which CONFIRMS the dense regression is
-downstream of selection (the `_slot_written` current-slot exclusion, H3), not a selected-index/adapter
-bug. These same counters are the AC-4 length-cap garbage-rate for the forced-all control (all zero).
+**H3 observed directly on the validity bitmap:** on **61776/61776** rows exactly ONE live slot is marked
+unwritten — and it is exactly the **current decode slot** (logical `seq_len-1`). That is the production
+`_slot_written[layer, out_cache_loc] = False` invalidation. So the `logical_to_physical`→
+`transform_index_page_table_decode` adapter + selected-index path is a **clean no-op** (exact gather, all
+non-current slots valid), and the dense regression localizes to the **current-slot invalidation (H3)** —
+now measured on the bitmap, not inferred. Forcing all tokens recovers dense to ~0.950, so the current
+slot's KV is valid at attention time and the unwritten bit is merely stale (the bug). These same counters
+are the AC-4 length-cap garbage-rate for the forced-all control: real garbage (non-current
+unwritten/dup/-1/out-of-range/adapter-error) = **0**; the current-slot invalidation is reported separately
+as the H3 marker.
 
 ## AC-2.2 (refinement) — recency-anchor sweep: dense vs sparse diverge
 Codex adversarial review (evidence/codex_review_h3.md) flagged that forced-all bypasses

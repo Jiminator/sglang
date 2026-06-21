@@ -1,23 +1,49 @@
 {
-  "ac": "AC-2.1 forced-all dense downstream-isolation assertions",
+  "ac": "AC-2.1 forced-all dense downstream-isolation assertions (per layer + decode step)",
   "source": "/sgl-workspace/sglang/development/loop13/evidence/.sglang_ds_forcedall (ds_forced_all_assert eager run)",
-  "records": 4368,
-  "dense_forced_all_rows": 4368,
+  "records": 61776,
+  "distinct_decode_steps": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19
+  ],
+  "dense_forced_all_rows": 61776,
   "assertions": {
-    "logical_sweep_[0..seq_len-1]": "4368/4368",
-    "physical==req_to_token[0:seq_len]": "4368/4368",
+    "logical_sweep_[0..seq_len-1]": "61776/61776",
+    "physical==req_to_token[0:seq_len]": "61776/61776",
+    "rows_with_NONcurrent_unwritten_slot (real garbage; must be 0)": 0,
+    "rows_with_CURRENT_slot_unwritten (the H3 marker; expected)": "61776/61776",
     "rows_with_duplicate_physical": 0,
     "rows_with_live_lane_-1": 0,
-    "rows_with_out_of_range_physical": 0,
+    "rows_with_out_of_range_physical (vs kv_capacity)": 0,
     "adapter_error_count_total": 0
   },
   "ac4_garbage_counters": {
     "duplicate": 0,
     "live_-1": 0,
     "out_of_range": 0,
-    "adapter_errors": 0,
-    "unwritten": "0 (subsumed by physical==req_to_token equality)"
+    "unwritten_noncurrent": 0,
+    "current_slot_unwritten_H3": 61776,
+    "adapter_errors": 0
   },
-  "verdict": "PASS \u2014 forced-all dense selection maps to exactly the request's own KV slots with zero duplicate/-1/out-of-range/adapter errors, so dense selection is a PROVABLE no-op and the residual dense degradation is DOWNSTREAM of selection (H3).",
+  "h3_finding": "On every dense row exactly ONE live slot is marked unwritten by _ds_slot_written, and it is exactly the CURRENT decode slot (logical seq_len-1) \u2014 the production _slot_written[layer,out_cache_loc]=False invalidation. The adapter gather is exact and every OTHER slot is written, so the selected-index/adapter path is clean; the dense regression localizes to this current-slot invalidation (H3), observed directly on the validity bitmap. Forcing all tokens recovers dense to ~0.950, so the current slot's KV is valid at attention time and the bit is merely stale.",
+  "verdict": "PASS \u2014 the forced-all dense adapter gather is exact (physical==req_to_token), every NON-current slot is written, and there are zero duplicate/-1/out-of-range/adapter errors across all layers+steps; the ONLY unwritten slot is the current decode slot on every row (the H3 marker). So the selected-index/adapter path is a clean no-op and the dense regression is DOWNSTREAM of selection at the slot-validity (H3) level.",
   "mismatches": []
 }

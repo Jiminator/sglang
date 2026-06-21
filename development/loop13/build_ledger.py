@@ -101,7 +101,8 @@ DS_DEFAULTS = {
     "recall_oracle": False, "selection_capture": False, "latent_capture": False, "score_capture": False,
     "selector_width_buckets": [5120], "selector_width_overflow_policy": "full_fallback",
     "score_reduce_dtype": "bf16", "enable_lifted_budget_decode": False, "lifted_budget_top_k": 0,
-    "selector_impl": "production", "forced_all_dense_control": False, "reference_include_current": False,
+    "selector_impl": "production", "forced_all_dense_control": False, "forced_all_assert": False,
+    "reference_include_current": False,
 }
 # AC-4 wants these effective fields per DS arm (selector width / reduce dtype / scorer / head-agg / impl):
 DS_EFFECTIVE_REQUIRED = ("selector_width_buckets", "score_reduce_dtype", "selector_impl",
@@ -240,8 +241,8 @@ NOT_INSTRUMENTED = ["per_step_length_cap_garbage_counts for the SCORED arms (pro
                     "remaining AC-4 garbage-counter work"]
 # AC-4 per-example sample IDs/order are now instrumented (deterministic stock loader, re-derived):
 SAMPLE_IDS_ARTIFACT = "evidence/gsm8k_sample_ids.json"
-# AC-2.1 forced-all dense physical-slot assertions (R13) — also the AC-4 garbage counters for the
-# forced-all downstream-isolation control (all zero; PASS).
+# AC-2.1 forced-all dense physical-slot + slot-validity assertions (R14) — also the AC-4 garbage counters
+# for the forced-all control (real garbage 0; the only unwritten slot is the current decode slot = H3).
 FORCED_ALL_ASSERT_ARTIFACT = "evidence/forced_all_assertions.json"
 
 ledger = []
@@ -373,9 +374,12 @@ for r in ledger:
                  f"{beh_cell(r)} | {r['note']} |")
 lines += ["",
           "Per-example sample IDs/order: evidence/gsm8k_sample_ids.json (deterministic stock loader; all "
-          "arms share the identical ordered slice — dense lines [5:205], sparse [24:174]). Still not "
-          "instrumented (listed in each arm JSON, not faked): per-step length-cap garbage counters "
-          "(invalid/unwritten/duplicate/out-of-range physical slots — needs adapter instrumentation). "
+          "arms share the identical ordered slice — dense lines [5:205], sparse [24:174]). Per-step "
+          "length-cap garbage counters (duplicate/unwritten/-1/out-of-range physical slots + adapter "
+          "errors) are instrumented for the forced-all control: evidence/forced_all_assertions.json "
+          "(R14, per (rank,req,layer,step) via _ds_slot_written) — real garbage 0 across 61776 dense rows; "
+          "the only unwritten slot is the current decode slot (the H3 marker). Enabling the same capture "
+          "on the SCORED arms (production_ds, ref_*) is the remaining AC-4 garbage-counter work. "
           "Gate uses the measured batched DSA comparator (0.975/0.973).",
           "",
           "Gate (AC-5, evidence/gate_ac5.md): naive-DS=best(faithful raw-dot, cosine): dense 0.950 (2.5pp), "

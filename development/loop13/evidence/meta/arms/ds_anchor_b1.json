@@ -2,8 +2,8 @@
   "arm": "ds_anchor_b1",
   "measured_git_sha": "29ec137bf",
   "ledger_generated_from": {
-    "head_sha_at_generation": "d11e752b8cfe4ba2c8be658b957631b70b9072e1",
-    "generator_blob_sha": "80e818a7ff8459d88433528f5ff8ec156f4f8f65",
+    "head_sha_at_generation": "e6211233505ce62bbc9f2adf3ca94c10bc87bc4b",
+    "generator_blob_sha": "91c2b679e8e0570e2c0852220781b44188797feb",
     "worktree": "dirty (+uncommitted evidence/generator)",
     "note": "generated BEFORE its own commit exists, so head_sha_at_generation is one commit behind the commit that contains this file; generator_blob_sha pins the source exactly"
   },
@@ -64,6 +64,7 @@
     "lifted_budget_top_k": 0,
     "selector_impl": "production",
     "forced_all_dense_control": false,
+    "forced_all_assert": false,
     "reference_include_current": false,
     "channel_mask_path": "/cluster-storage/models/glm51-fp8-channel-mask-loop12.safetensors"
   },
