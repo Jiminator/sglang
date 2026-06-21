@@ -2,8 +2,8 @@
   "arm": "dsa",
   "measured_git_sha": "180f6dd6decb1577da8e40bf002f79805ece693d",
   "ledger_generated_from": {
-    "head_sha_at_generation": "8b55dfba308fc4e5b9f49106a38ac1e2461a30f0",
-    "generator_blob_sha": "1280fa0339429edae97501a202e73ae78ac9e2b1",
+    "head_sha_at_generation": "4d874b89e874441bdf0576a01280c6fcfe109335",
+    "generator_blob_sha": "0d914406af8b81eef5c187c4d17a7bdf2b7fb911",
     "worktree": "dirty (+uncommitted evidence/generator)",
     "note": "generated BEFORE its own commit exists, so head_sha_at_generation is one commit behind the commit that contains this file; generator_blob_sha pins the source exactly"
   },
@@ -17,7 +17,8 @@
     "max_tokens": 512,
     "api": "completion",
     "dense_config": "5-shot/200",
-    "sparse_config": "24-shot/150"
+    "sparse_config": "24-shot/150",
+    "sample_ids_artifact": "evidence/gsm8k_sample_ids.json"
   },
   "scores": {
     "dense_batched": 0.975,
@@ -27,7 +28,6 @@
   },
   "ds_selected_vs_total_by_regime": null,
   "fields_not_instrumented": [
-    "per_example_sample_ids_order (run_eval uses a fixed seed-42 gsm8k slice; the per-example id list is not emitted by the stock harness)",
     "per_step_length_cap_garbage_counts (invalid/unwritten/duplicate/out-of-range physical slots \u2014 requires logical_to_physical adapter instrumentation not built this loop)"
   ],
   "note": "native DSA indexer (DS off) \u2014 accuracy target"

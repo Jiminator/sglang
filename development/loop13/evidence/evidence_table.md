@@ -1,6 +1,6 @@
 # Loop 13 — Per-arm GSM8K evidence ledger (AC-1 / AC-4), generated from evidence/meta/arms/*.json
 
-ledger generator blob 1280fa033942 (head@gen 8b55dfba3, worktree dirty (+uncommitted evidence/generator)) · per-arm measured_git_sha in each evidence/meta/arms/*.json (baselines @180f6dd6d, R1 ref arms @fea920c06) · model GLM-5.1-FP8 · mask sha256 5c89c516… · TP=8 page64 fp8_e4m3 KV seed42 · temp0 max_tokens512 completion API
+ledger generator blob 0d914406af8b (head@gen 4d874b89e, worktree dirty (+uncommitted evidence/generator)) · per-arm measured_git_sha in each evidence/meta/arms/*.json (baselines @180f6dd6d, R1 ref arms @fea920c06) · model GLM-5.1-FP8 · mask sha256 5c89c516… · TP=8 page64 fp8_e4m3 KV seed42 · temp0 max_tokens512 completion API
 Dense = 5-shot/200 (~716 tok < top_k 2048). Sparse = 24-shot/150 (~5.6k tok > 2048). batched=64 threads.
 selected/total: DS selected vs total tokens by regime (— = native DSA / no DS meta).
 
@@ -17,6 +17,6 @@ selected/total: DS selected vs total tokens by regime (— = native DSA / no DS 
 | ds_anchor_b1 | 0.970 | 0.000 | — | — | — | recency anchor budget=1 (current slot only) on production top-k |
 | ds_anchor_b64 | 0.960 | 0.007 | — | — | — | recency anchor budget=64 on production top-k |
 
-Fields not instrumented this loop (listed in each arm JSON, not faked): per-example sample IDs/order; per-step length-cap garbage counters (invalid/unwritten/duplicate/out-of-range physical slots). Gate uses the measured batched DSA comparator (0.975/0.973).
+Per-example sample IDs/order: evidence/gsm8k_sample_ids.json (deterministic stock loader; all arms share the identical ordered slice — dense lines [5:205], sparse [24:174]). Still not instrumented (listed in each arm JSON, not faked): per-step length-cap garbage counters (invalid/unwritten/duplicate/out-of-range physical slots — needs adapter instrumentation). Gate uses the measured batched DSA comparator (0.975/0.973).
 
 Gate (AC-5, evidence/gate_ac5.md): naive-DS=best(faithful raw-dot, cosine): dense 0.950 (2.5pp), sparse 0.940 (3.3pp) -> GOOD. Verdict (AC-6 bisection, evidence/ac6_bisection_matrix.json): the scorer x current-slot 2x2 is measured — sparse 0.94 needs BOTH the cosine scorer AND current-slot inclusion (cosine+excl=0.313, rawdot+incl=0.013, rawdot+excl=production 0.000); current-slot exclusion (H3) hurts BOTH regimes (corroborated both regimes, ac6_ref_cosine_noinc_corrob.json). Per AC-6 leg: scorer+current-slot MEASURED; radix+width RETIRED (AC-2.3); bf16-vs-fp32 score-reduce MEASURED (ds_reduce_fp32 arm; selection near-neutral, ac6_score_reduce_fp32_corrob.json median Jaccard 0.998); head_agg NOT-a-differing-variable (max on both paths; AC-2.2 covers cross-TP); only fp8-absorbed is BLOCKED (no production config for fp32 absorbed scoring; absorbed_latent_kernel.py scores fp8 in-register; exact-fp32 absorbed only on the reference path).

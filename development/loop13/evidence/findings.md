@@ -184,3 +184,17 @@ selector-width suspects for the sparse DS workload (selected≈2048 of ~5.6k). T
 separate score-vs-selection step-misalignment artifact. R5 fixed this by capturing the SPARSE regime
 (median seq_len 4280) and hardening verify_ac2_3.py to record the seq_len distribution + a pruning_rows
 count and FAIL if pruning_rows==0 — so it cannot pass on smoke captures again.
+
+## AC-2.2 SETTLED (Round 8) — TP head-aggregation micro-test
+`evidence/head_agg_tp_semantics.json` (ac2_2_head_agg.py), offline from the validated per-rank
+`pre_reduce_scores` (702 8-rank groups, `sum(pre_reduce)==post` 702/702):
+- served cross-TP **SUM** (= `reduce_token_scores`) vs **global-MAX** over heads: median Jaccard **0.679**
+  (min 0.54, 78/702 identical) → the served `head_agg="max"` + cross-TP SUM is **NOT** a global max over
+  all heads (the plan's negative test triggers).
+- SUM vs **global-MEAN**: Jaccard **1.0** (702/702) → SUM and MEAN select identically (scale-only).
+- **Exoneration (not the accuracy bottleneck):** `build_absorbed_projection` uses `num_local_heads` and
+  the reference path does NO cross-TP reduce (`_reference_selector_topk` has no `reduce_token_scores`/
+  all-reduce), so production (cross-TP SUM) and the reference (per-rank-local) use DIFFERENT head
+  aggregation — yet cosine recovers under both and raw-dot collapses under both (production-SUM sparse
+  0.000 ≈ reference-local raw-dot 0.013). Accuracy is governed by the scorer + current-slot (AC-6), not by
+  the cross-TP head aggregation. head_agg is not the regression culprit.

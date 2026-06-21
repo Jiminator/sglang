@@ -1,0 +1,27 @@
+{
+  "ac": "AC-2.2 TP head-aggregation micro-test",
+  "source": "captured per-rank pre_reduce_scores (/sgl-workspace/sglang/development/loop13/evidence/.sglang_ds_scorecap_sparse), 8-rank groups",
+  "n_groups": 702,
+  "capture_validation_sum_pre_eq_post": "702/702",
+  "served_reduction": "within-rank head_agg='max' over num_local_heads, then cross-TP SUM (reduce_token_scores)",
+  "SUM_vs_globalMAX": {
+    "jaccard_min": 0.5427,
+    "jaccard_median": 0.679,
+    "identical_groups": "78/702",
+    "conclusion": "served cross-TP SUM is NOT equal to a global max over all heads"
+  },
+  "SUM_vs_globalMEAN": {
+    "jaccard_median": 1.0,
+    "identical_groups": "702/702",
+    "conclusion": "SUM and MEAN select identically (they differ only by a constant 1/R scale)"
+  },
+  "ac2_2_answer": "The served head_agg='max' + cross-TP SUM does NOT equal a global max over heads (low SUM-vs-MAX Jaccard, ~0 identical groups). Per the plan's negative test the SUM-across-TP semantics is FLAGGED \u2014 but see the exoneration below.",
+  "exoneration_not_the_bottleneck": {
+    "facts": [
+      "build_absorbed_projection uses num_local_heads -> per-rank scores are local-head maxes (sharded).",
+      "the reference selector path (_reference_selector_topk) does NO cross-TP reduce (no reduce_token_scores / all-reduce) and scores over the rank's local heads.",
+      "so production (cross-TP SUM) and the reference (per-rank-local) use DIFFERENT head aggregation."
+    ],
+    "argument": "the GOOD accuracy ceiling holds under cosine on the reference (per-rank-local) path, while raw-dot collapses under BOTH aggregations (production cross-TP SUM sparse 0.000 ~ reference local raw-dot sparse 0.013). Since accuracy is governed by the scorer (cosine vs raw-dot) and the current-slot, NOT by which cross-TP head aggregation is used, the SUM-vs-MAX difference is not the accuracy driver. Consistent with AC-6: head_agg is not the regression culprit."
+  }
+}

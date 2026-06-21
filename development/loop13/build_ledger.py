@@ -108,10 +108,11 @@ ARMS = {
                                   "serve.sh ref_cosine_noinc mode added R5. RESULT: dense 0.940->0.625 (=production 0.620) AND "
                                   "sparse 0.940->0.313 -> current-slot exclusion (H3) is a major culprit in BOTH regimes, not "
                                   "dense-only. Sparse needs BOTH cosine scorer AND current-slot inclusion (see 2x2 in ROOT_CAUSE)."),
-    "ds_reduce_fp32": dict(mode="ds_reduce_fp32", extra="--disable-radix-cache --disable-cuda-graph --enable-double-sparsity",
+    "ds_reduce_fp32": dict(mode="ds_reduce_fp32", extra="--disable-radix-cache --enable-double-sparsity",
                            ds=None, measured_sha=R7_REDUCE_SHA, measured_source=R7_REDUCE_SOURCE,
                            ac6_leg="score_reduce_dtype (bf16->fp32 cross-TP reduce)",
                            corroboration="evidence/ac6_score_reduce_fp32_corrob.json",
+                           ds_config={"score_reduce_dtype": "fp32", "scorer_norm": "off", "head_agg": "max"},
                            dense="ds_reduce_fp32_dense", sparse="ds_reduce_fp32_sparse",
                            note="AC-6 leg 7 (R7): production raw-dot with score_reduce_dtype=fp32 (the ONE variable vs "
                                 "production bf16-reduce). Reduce dtype is near-selection-neutral (bf16-vs-fp32 median "
@@ -128,10 +129,10 @@ ARMS = {
                           note="recency anchor budget=64 on production top-k"),
 }
 
-NOT_INSTRUMENTED = ["per_example_sample_ids_order (run_eval uses a fixed seed-42 gsm8k slice; "
-                    "the per-example id list is not emitted by the stock harness)",
-                    "per_step_length_cap_garbage_counts (invalid/unwritten/duplicate/out-of-range "
+NOT_INSTRUMENTED = ["per_step_length_cap_garbage_counts (invalid/unwritten/duplicate/out-of-range "
                     "physical slots — requires logical_to_physical adapter instrumentation not built this loop)"]
+# AC-4 per-example sample IDs/order are now instrumented (deterministic stock loader, re-derived):
+SAMPLE_IDS_ARTIFACT = "evidence/gsm8k_sample_ids.json"
 
 ledger = []
 for arm, a in ARMS.items():
@@ -151,7 +152,8 @@ for arm, a in ARMS.items():
         "server_args": (COMMON_ARGS + " " + a["extra"]).strip(),
         "cuda_graph": "off" if "--disable-cuda-graph" in a["extra"] else "on (piecewise off)",
         "gsm8k": {"temperature": 0, "max_tokens": 512, "api": "completion",
-                  "dense_config": "5-shot/200", "sparse_config": "24-shot/150"},
+                  "dense_config": "5-shot/200", "sparse_config": "24-shot/150",
+                  "sample_ids_artifact": SAMPLE_IDS_ARTIFACT},
         "scores": {
             "dense_batched": score_from_out(a.get("dense")) if a.get("dense") else None,
             "sparse_batched": score_from_out(a.get("sparse")) if a.get("sparse") else None,
@@ -164,6 +166,8 @@ for arm, a in ARMS.items():
     }
     if a.get("measured_source"):
         rec["measured_source"] = a["measured_source"]
+    if a.get("ds_config"):
+        rec["ds_config"] = a["ds_config"]
     if a.get("ac6_leg"):
         rec["ac6_leg"] = a["ac6_leg"]
         rec["corroboration_artifact"] = a.get("corroboration")
@@ -179,6 +183,14 @@ for r in ledger:
         assert art and os.path.exists(os.path.join(HERE, art)), (
             f"AC-6 arm {r['arm']} has GSM8K scores but no corroboration artifact on disk "
             f"(corroboration_artifact={art!r})")
+
+# ds_reduce_fp32 is a graph-mode single-variable arm: its recorded metadata must match the actual run
+# (Codex R7: the arm JSON wrongly said --disable-cuda-graph). Fail loud if the metadata drifts again.
+_rf = next((r for r in ledger if r["arm"] == "ds_reduce_fp32"), None)
+if _rf is not None:
+    assert "--disable-cuda-graph" not in _rf["server_args"], "ds_reduce_fp32 ran graph-mode; server_args must not contain --disable-cuda-graph"
+    assert _rf["cuda_graph"] != "off", f"ds_reduce_fp32 cuda_graph must be graph-enabled, got {_rf['cuda_graph']!r}"
+    assert _rf.get("ds_config", {}).get("score_reduce_dtype") == "fp32", "ds_reduce_fp32 ds_config must record score_reduce_dtype=fp32"
 
 # regenerate evidence_table.md from the ledger
 lines = ["# Loop 13 — Per-arm GSM8K evidence ledger (AC-1 / AC-4), generated from evidence/meta/arms/*.json",
@@ -204,9 +216,11 @@ for r in ledger:
     lines.append(f"| {r['arm']} | {cell(s['dense_batched'])} | {cell(s['sparse_batched'])} | "
                  f"{cell(s['dense_serial'])} | {cell(s['sparse_serial'])} | {ds_cell(r['ds_selected_vs_total_by_regime'])} | {r['note']} |")
 lines += ["",
-          "Fields not instrumented this loop (listed in each arm JSON, not faked): per-example sample "
-          "IDs/order; per-step length-cap garbage counters (invalid/unwritten/duplicate/out-of-range "
-          "physical slots). Gate uses the measured batched DSA comparator (0.975/0.973).",
+          "Per-example sample IDs/order: evidence/gsm8k_sample_ids.json (deterministic stock loader; all "
+          "arms share the identical ordered slice — dense lines [5:205], sparse [24:174]). Still not "
+          "instrumented (listed in each arm JSON, not faked): per-step length-cap garbage counters "
+          "(invalid/unwritten/duplicate/out-of-range physical slots — needs adapter instrumentation). "
+          "Gate uses the measured batched DSA comparator (0.975/0.973).",
           "",
           "Gate (AC-5, evidence/gate_ac5.md): naive-DS=best(faithful raw-dot, cosine): dense 0.950 (2.5pp), "
           "sparse 0.940 (3.3pp) -> GOOD. Verdict (AC-6 bisection, evidence/ac6_bisection_matrix.json): the "
