@@ -1,7 +1,12 @@
 {
   "arm": "production_ds",
   "measured_git_sha": "180f6dd6decb1577da8e40bf002f79805ece693d",
-  "ledger_generated_git_sha": "ac479aeb3092cf94534077b011e84291f2b9649f",
+  "ledger_generated_from": {
+    "head_sha_at_generation": "29ed825fa1b3e302f12976628af595290edf4712",
+    "generator_blob_sha": "f8771c7f2f9adcdb09397e818c6027f8ac78880f",
+    "worktree": "dirty (+uncommitted evidence/generator)",
+    "note": "generated BEFORE its own commit exists, so head_sha_at_generation is one commit behind the commit that contains this file; generator_blob_sha pins the source exactly"
+  },
   "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
   "mask_content_sha256": "5c89c516428f379c983461ceb58fb366c0d6cb12733b3f957d98edb5406f7b21",
   "serve_mode": "ds",

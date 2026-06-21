@@ -24,6 +24,7 @@ import glob
 import json
 import os
 import re
+import sys
 from collections import defaultdict
 
 import torch
@@ -190,13 +191,26 @@ def main():
                             "trust only if served_sum_matches_post_reduce is True"),
         },
     }
+    # Fail-closed: a successful-looking artifact must NOT be produced from an
+    # incomplete/stale/empty capture set. These are hard errors, not warnings.
+    errors = []
+    if len(score_caps) == 0:
+        errors.append("zero score-capture groups loaded (capture dir empty/stale)")
+    if len(equiv) == 0:
+        errors.append("zero equivalence rows produced (no joinable selected rows)")
     if unmatched:
-        report["WARNING"] = (f"{unmatched} selected rows had NO matching score row — the join is "
-                             "incomplete; AC-2.3 numbers above are only over the matched rows.")
+        errors.append(f"{unmatched} selected rows had NO matching score row (incomplete join)")
+    if errors:
+        report["FAILED"] = errors
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:
         json.dump(report, f, indent=2)
     print(json.dumps(report["summary"], indent=2))
+    if errors:
+        print("ANALYZER FAILED (fail-closed):", file=sys.stderr)
+        for e in errors:
+            print("  -", e, file=sys.stderr)
+        raise SystemExit(2)
     print(f"wrote {args.out}")
 
 

@@ -24,6 +24,21 @@ def git_sha():
     return subprocess.check_output(["git", "-C", HERE, "rev-parse", "HEAD"]).decode().strip()
 
 
+def generator_provenance():
+    """Unambiguous generator-source identity even when run from a dirty worktree
+    (build_ledger.py emits evidence BEFORE the commit that contains it exists, so
+    HEAD alone is one commit behind). Returns (head_sha, generator_blob_sha,
+    worktree_state)."""
+    head = git_sha()
+    blob = subprocess.check_output(
+        ["git", "-C", HERE, "hash-object", os.path.abspath(__file__)]
+    ).decode().strip()  # content hash of THIS generator file (commit-independent)
+    dirty = bool(subprocess.check_output(
+        ["git", "-C", HERE, "status", "--porcelain", "."]  # "." == this loop13 dir (HERE)
+    ).decode().strip())
+    return head, blob, ("dirty (+uncommitted evidence/generator)" if dirty else "clean")
+
+
 def score_from_out(label_tag):
     """Read 'Score: X' from evidence/<label_tag>.out, or None."""
     p = os.path.join(EVID, f"{label_tag}.out")
@@ -33,7 +48,7 @@ def score_from_out(label_tag):
     return float(m[-1]) if m else None
 
 
-SHA = git_sha()
+GEN_HEAD, GEN_BLOB, GEN_WORKTREE = generator_provenance()
 COMMON_ARGS = ("--tp-size 8 --kv-cache-dtype fp8_e4m3 --mem-fraction-static 0.8 "
                "--max-running-requests 64 --cuda-graph-max-bs 64 --page-size 64 "
                "--dsa-prefill-backend flashmla_kv --dsa-decode-backend flashmla_kv "
@@ -91,7 +106,13 @@ for arm, a in ARMS.items():
     rec = {
         "arm": arm,
         "measured_git_sha": a["measured_sha"],
-        "ledger_generated_git_sha": SHA,
+        "ledger_generated_from": {
+            "head_sha_at_generation": GEN_HEAD,
+            "generator_blob_sha": GEN_BLOB,  # content hash of build_ledger.py — commit-independent
+            "worktree": GEN_WORKTREE,
+            "note": ("generated BEFORE its own commit exists, so head_sha_at_generation is one commit "
+                     "behind the commit that contains this file; generator_blob_sha pins the source exactly"),
+        },
         "model_path": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
         "mask_content_sha256": "5c89c516428f379c983461ceb58fb366c0d6cb12733b3f957d98edb5406f7b21",
         "serve_mode": a["mode"],
@@ -115,9 +136,10 @@ for arm, a in ARMS.items():
 # regenerate evidence_table.md from the ledger
 lines = ["# Loop 13 — Per-arm GSM8K evidence ledger (AC-1 / AC-4), generated from evidence/meta/arms/*.json",
          "",
-         f"ledger generated @ {SHA[:9]} · per-arm measured_git_sha in each evidence/meta/arms/*.json "
-         f"(baselines @180f6dd6d, R1 ref arms @fea920c06) · model GLM-5.1-FP8 · mask sha256 5c89c516… · "
-         f"TP=8 page64 fp8_e4m3 KV seed42 · temp0 max_tokens512 completion API",
+         f"ledger generator blob {GEN_BLOB[:12]} (head@gen {GEN_HEAD[:9]}, worktree {GEN_WORKTREE}) · "
+         f"per-arm measured_git_sha in each evidence/meta/arms/*.json (baselines @180f6dd6d, R1 ref arms "
+         f"@fea920c06) · model GLM-5.1-FP8 · mask sha256 5c89c516… · TP=8 page64 fp8_e4m3 KV seed42 · "
+         f"temp0 max_tokens512 completion API",
          "Dense = 5-shot/200 (~716 tok < top_k 2048). Sparse = 24-shot/150 (~5.6k tok > 2048). batched=64 threads.",
          "selected/total: DS selected vs total tokens by regime (— = native DSA / no DS meta).",
          "",

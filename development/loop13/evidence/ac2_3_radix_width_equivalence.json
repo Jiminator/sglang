@@ -1,0 +1,16 @@
+{
+  "source": "real captured GLM-5.1-FP8 post-reduce score rows (ds_capture)",
+  "n_rows": 624,
+  "method": "run select_topk_sequence_order (exact) and blocked_topk_sequence_order (the production blocked/radix algorithm) on the SAME captured score row; compare selected-index sets. No score-vs-selection alignment needed.",
+  "AC_2_3_radix_eq_torch_topk": {
+    "identical_rows": "624/624",
+    "all_identical": true,
+    "mismatches": []
+  },
+  "AC_2_3_width_5120_vs_full": {
+    "identical_rows": "624/624",
+    "all_identical": true,
+    "mismatches": []
+  },
+  "note": "blocked_topk_sequence_order is documented bit-identical to select_topk_sequence_order and is the algorithm the production Triton kernel (select_topk_sequence_order_triton) implements; proving it here on REAL captured GLM score rows retires the radix and selector-width AC-2.3 suspects. The loop verdict does not depend on this control."
+}

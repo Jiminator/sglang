@@ -138,3 +138,13 @@ mask-channel gather). Codex Round-0 demanded these and they overturn the Round-0
   2. dense = H3 current-slot exclusion. Cost ~33pp.
 - NOT H0 (cosine transfers) and NOT H2 (same mask works under cosine) → the no-mask ablation (AC-7,
   a BAD-branch action) is moot on the GOOD branch.
+
+## AC-2.3 RESOLVED (Round 4) — radix == torch.topk, width [5120] == full
+Proven directly on 624/624 REAL captured GLM-5.1-FP8 post-reduce score rows
+(verify_ac2_3.py -> evidence/ac2_3_radix_width_equivalence.json): the production blocked/radix
+algorithm (blocked_topk_sequence_order) == exact torch select_topk_sequence_order on every row
+(624/624 identical), and selector-width [5120] == full (624/624). Running both top-k methods on the
+SAME score row needs no score-vs-selection alignment, so it is conclusive (the Round-3 81/546 was the
+score-vs-selection step-misalignment artifact). The "approximate radix top-k" and "selector-width
+ladder" suspects from the draft are RETIRED on real data. (topk_kernel.py's Triton kernel implements
+this same blocked algorithm.)
