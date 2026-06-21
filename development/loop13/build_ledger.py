@@ -251,28 +251,51 @@ RECALL_ORACLE_ARTIFACT = "evidence/ac2_4_recall_oracle.json"
 
 
 def validate_recall_oracle_artifact():
-    """Fail closed unless the AC-2.4 recall-oracle artifact has both regimes with non-zero records.
+    """Fail closed unless the AC-2.4 recall-oracle artifact passes the FULL success contract.
 
-    The driver (niah_recall_oracle.py) is itself fail-closed (every issued trial must produce an oracle
-    record, zero span_out_of_range/exception markers), but the ledger must not silently RENDER AC-2.4 as
-    present if the artifact is absent or empty. Returns the per-regime recall@2048 summary.
+    The driver (niah_recall_oracle.py) is itself fail-closed, but the ledger must independently REJECT a
+    partial / failure-marker / wrong-source artifact rather than render AC-2.4 present from a nearby JSON
+    (the R15/R18 evidence-integrity class). Asserts: arm + corroboration_only label, EXACTLY dense+sparse
+    regimes, index_topk==2048, source_oracle_dir_basename==.sglang_ds_oracle, ZERO failure markers, and per
+    regime trials_with_records==trials_issued>0, oracle_records==recall_at_2048_records==
+    selected_contains_needle_records>0, recall_at_2048==selected_contains_needle_rate (non-null), and a
+    non-null server prompt-token sample. Returns the per-regime summary.
     """
     p = os.path.join(HERE, RECALL_ORACLE_ARTIFACT)
     assert os.path.exists(p), f"{RECALL_ORACLE_ARTIFACT} missing — run niah_recall_oracle.py"
     d = json.load(open(p))
     assert d.get("arm") == "production_ds", f"recall-oracle arm={d.get('arm')!r}, expected production_ds"
     assert d.get("corroboration_only") is True, "recall-oracle must be labelled corroboration_only=true"
+    assert d.get("index_topk") == 2048, f"recall-oracle index_topk={d.get('index_topk')!r}, expected 2048"
+    assert d.get("source_oracle_dir_basename") == ".sglang_ds_oracle", (
+        f"recall-oracle source_oracle_dir_basename={d.get('source_oracle_dir_basename')!r}, "
+        f"expected '.sglang_ds_oracle'")
+    fm = d.get("failure_markers", {}) or {}
+    assert sum(fm.values()) == 0, f"recall-oracle has failure markers (ANY is fatal): {fm}"
     regs = d.get("regimes", {})
-    assert set(regs) >= {"dense", "sparse"}, f"recall-oracle regimes={sorted(regs)}, need dense+sparse"
+    assert set(regs) == {"dense", "sparse"}, f"recall-oracle regimes={sorted(regs)}, expected exactly dense+sparse"
     summary = {}
     for reg in ("dense", "sparse"):
         v = regs[reg]
+        issuedn = v.get("trials_issued", 0)
+        withrec = v.get("trials_with_records", -1)
         recs = v.get("oracle_records", 0)
+        rkrec = v.get("recall_at_2048_records", -1)
+        selrec = v.get("selected_contains_needle_records", -1)
         r2048 = v.get("recall_at_2048")
+        selrate = v.get("selected_contains_needle_rate")
+        sample = v.get("server_prompt_tokens_sample", {}) or {}
+        assert issuedn > 0 and withrec == issuedn, (
+            f"recall-oracle {reg} trials_with_records={withrec} != trials_issued={issuedn} (or zero)")
         assert recs > 0, f"recall-oracle {reg} oracle_records={recs}, expected >0"
-        assert r2048 is not None, f"recall-oracle {reg} recall_at_2048 is null"
+        assert rkrec == recs, f"recall-oracle {reg} recall_at_2048_records={rkrec} != oracle_records={recs}"
+        assert selrec == recs, f"recall-oracle {reg} selected_contains_needle_records={selrec} != oracle_records={recs}"
+        assert r2048 is not None and selrate is not None and r2048 == selrate, (
+            f"recall-oracle {reg} recall_at_2048={r2048} != selected_contains_needle_rate={selrate}")
+        assert sample and all(t is not None for t in sample.values()), (
+            f"recall-oracle {reg} server_prompt_tokens_sample has null/empty entries: {sample}")
         summary[reg] = {"recall_at_2048": r2048, "oracle_records": recs,
-                        "selected_contains_needle_rate": v.get("selected_contains_needle_rate")}
+                        "selected_contains_needle_rate": selrate}
     return summary
 # AC-4 length-cap garbage counters for the SCORED selection of every served DS arm (real garbage 0 in both
 # regimes). production_ds EXCLUDES the current decode slot (current_slot_unwritten==0 = the H3 cause from the

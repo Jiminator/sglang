@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 # Boot GLM-5.1-FP8 from the DEV clone (no PYTHONPATH override).
-#   Usage:  serve.sh <dsa|dsa_noradix|ds|ds_capture|ref|ds_forced_all>
-#   - dsa           : native DSA indexer (DS off)          — the accuracy target
-#   - dsa_noradix   : DSA + --disable-radix-cache          — radix-cache-neutral control
-#   - ds            : current table-free Double Sparsity   — radix disabled (dev-clone gate)
-#   - ds_capture    : production DS, EAGER + score/selection capture — cheap-control data
-#   - ref           : fp32 raw-dot reference (EAGER) — scorer-isolation (production slot-validity)
-#   - ref_faithful  : fp32 raw-dot reference, TF32 off + current slot included (EAGER) — faithful ceiling
-#   - ref_cosine    : fp32 COSINE reference, TF32 off + current slot included (EAGER) — faithful cosine ceiling
-#   - ds_forced_all : dense forced-all [0..seq-1] control (EAGER) — downstream-isolation
+#   Usage:  serve.sh <MODE>   (the *) case below is the authoritative mode list)
+#   - dsa            : native DSA indexer (DS off)          — the accuracy target
+#   - dsa_noradix    : DSA + --disable-radix-cache          — radix-cache-neutral control
+#   - ds             : current table-free Double Sparsity   — radix disabled (dev-clone gate)
+#   - ds_capture     : production DS, EAGER + score/selection capture — cheap-control data
+#   - ds_reduce_fp32 : production DS + score_reduce_dtype=fp32 (graph) — AC-6 reduce leg
+#   - ref            : fp32 raw-dot reference (EAGER) — scorer-isolation (production slot-validity)
+#   - ref_faithful   : fp32 raw-dot reference, TF32 off + current slot included (EAGER) — faithful ceiling
+#   - ref_cosine     : fp32 COSINE reference, TF32 off + current slot included (EAGER) — faithful cosine ceiling
+#   - ref_cosine_noinc: ref_cosine with current slot EXCLUDED (EAGER) — AC-6 current-slot bisection arm
+#   - ds_forced_all  : dense forced-all [0..seq-1] control (EAGER) — downstream-isolation
+#   - ds_forced_all_assert: ds_forced_all + forced_all_assert capture (EAGER) — AC-2.1 physical-slot dump
+#   - ds_garbage     : production scored DS + forced_all_assert (EAGER) — AC-4 scored garbage counters
+#   - ref_faithful_garbage / ref_cosine_garbage: reference arms + forced_all_assert (EAGER) — AC-4 ref garbage
+#   - ds_recall_oracle: production DS + recall_oracle (EAGER) — AC-2.4 NIAH recall (launches in $EVID)
+#   - ds_anchor      : production DS + recency anchor (ANCHOR_BUDGET) — sparse current/recent-slot control
 # Run this BACKGROUNDED (it polls readiness with sleep). Writes PID to $PIDFILE.
 set -uo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
@@ -17,6 +24,11 @@ source "$HERE/_env.sh" || exit 1
 
 MODE="${1:?usage: serve.sh <dsa|ds>}"
 LOG="$EVID/serve_${MODE}.log"
+# The server process CWD. Most modes don't care (LOG/PIDFILE are absolute), but cross-process diagnostics
+# that resolve a default dir from the worker's CWD (e.g. the recall-oracle sink/trial dir,
+# cwd/.sglang_ds_oracle — env does NOT reach TP workers) require a deterministic launch CWD. Default to the
+# caller's CWD (unchanged behavior); a mode that needs a fixed CWD overrides LAUNCH_CWD in its case arm.
+LAUNCH_CWD="$PWD"
 
 COMMON=(
   --model-path "$MODEL" --host "$HOST" --port "$PORT"
@@ -150,6 +162,10 @@ case "$MODE" in
     [ -s "$MASK" ] || { echo "FATAL: mask $MASK missing"; exit 2; }
     DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "recall_oracle": true}' "$MASK")
     EXTRA=( --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
+    # The TP worker writes the oracle sink/trial to ITS CWD/.sglang_ds_oracle (env does not reach workers),
+    # so pin the launch CWD to $EVID -> the worker dir = $EVID/.sglang_ds_oracle, which is exactly the
+    # driver's default --oracle-dir. This makes `serve.sh ds_recall_oracle` correct from ANY caller CWD.
+    LAUNCH_CWD="$EVID"
     ;;
   ds_anchor)
     # Sparse-regime current/recent-slot confirmation: production top-2048 selection PLUS a recency
@@ -165,7 +181,9 @@ case "$MODE" in
 esac
 
 # *** NO PYTHONPATH *** — default editable install = dev clone (the guard enforced this).
-nohup python3 -m sglang.launch_server "${COMMON[@]}" "${EXTRA[@]}" > "$LOG" 2>&1 &
+# Launch in LAUNCH_CWD via a subshell; `exec` makes the subshell PID == the python PID, so $! and teardown
+# still track the server. $LOG/$PIDFILE are absolute, so the CWD change does not move them.
+( cd "$LAUNCH_CWD" && exec python3 -m sglang.launch_server "${COMMON[@]}" "${EXTRA[@]}" ) > "$LOG" 2>&1 &
 echo $! > "$PIDFILE"
 echo "[$MODE] PID=$(cat "$PIDFILE")  log=$LOG"
 

@@ -16,10 +16,12 @@ ranks the needle inside the 2048-token budget.
 
 Cross-process paths (CRITICAL): env vars set at server launch do NOT reach SGLang TP worker subprocesses
 (BL-20260602), so the worker resolves the sink/trial dir from ITS cwd default (``cwd/.sglang_ds_oracle``).
-The server is therefore launched with cwd=evidence/ and this driver points at evidence/.sglang_ds_oracle —
-the same dir — via the driver-side env overrides. A wrong needle span makes the server emit a
-``span_out_of_range`` hard-failure marker, so an incorrect offline tokenization FAILS LOUD (exit 2) rather
-than producing a silently-wrong artifact.
+``serve.sh ds_recall_oracle`` launches the server with cwd=evidence/ (LAUNCH_CWD=$EVID) and this driver
+defaults to evidence/.sglang_ds_oracle — the same dir. A wrong needle span makes the server emit a
+``span_out_of_range`` failure marker; the driver treats ANY oracle failure marker (also ``no_active_trial``
+and any future name) as fatal, and writes the canonical artifact ONLY via atomic rename after the full
+fail-closed contract passes — so a misaligned span / partial / failure-marker run FAILS LOUD (exit 2) and
+leaves the canonical artifact UNTOUCHED, never a silently-wrong or partial artifact.
 
 Usage:  niah_recall_oracle.py [--base-url URL] [--oracle-dir DIR] [--dense-tokens N] [--sparse-tokens N]
                               [--num N] [--decode-steps N]
@@ -46,7 +48,6 @@ MODEL = os.environ.get(
     "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db",
 )
 INDEX_TOPK = 2048
-_HARD_FAILURES = ("span_out_of_range", "exception")
 # Benign filler; one unit is a few tokens. The needle is a unique magic number per trial.
 _FILLER = ("The quarterly logistics review records routine warehouse activity across the regional "
            "depots, with nothing unusual to report for this period. ")
@@ -119,6 +120,100 @@ def _recall_at(rec, k: int):
     return None
 
 
+def _reduce_validate_write(sink_path, issued, server_tokens, delta, expected_num, decode_steps,
+                           oracle_dir, out_path):
+    """Reduce the sink into the per-regime recall@2048 report, run the FULL fail-closed contract, and write
+    the canonical artifact ONLY via atomic rename after every check passes.
+
+    Fail-closed (no canonical write on any failure): ANY oracle failure marker is fatal (not just
+    span_out_of_range/exception — `no_active_trial` and any future marker too); per regime
+    trials_issued==expected_num, trials_with_records==trials_issued, oracle_records>0,
+    recall_at_2048_records==oracle_records, selected_contains_needle_records==oracle_records,
+    recall_at_2048==selected_contains_needle_rate (the AC-1 per-row invariant), and every issued trial has a
+    non-null server prompt_tokens. A partial / failure-marker / missing-trial run leaves the canonical
+    artifact UNTOUCHED.
+    """
+    recs = _read_sink(sink_path)
+    by_req = defaultdict(list)
+    failures = defaultdict(int)
+    for r in recs:
+        if "failure" in r:
+            failures[str(r["failure"]).split(":")[0]] += 1
+        elif r.get("request_id") is not None:
+            by_req[r["request_id"]].append(r)
+
+    problems = []
+    regime_out = {}
+    for regime in ("dense", "sparse"):
+        ids = issued.get(regime, [])
+        with_recs = [rid for rid in ids if by_req.get(rid)]
+        rows = [r for rid in with_recs for r in by_req[rid]]
+        rk = [v for v in (_recall_at(r, INDEX_TOPK) for r in rows) if v is not None]
+        worst = [int(r["needle_worst_rank"]) for r in rows if "needle_worst_rank" in r]
+        contains = [bool(r["selected_contains_needle"]) for r in rows if "selected_contains_needle" in r]
+        recall = round(sum(rk) / len(rk), 4) if rk else None
+        sel_rate = round(sum(contains) / len(contains), 4) if contains else None
+        regime_out[regime] = {
+            "trials_issued": len(ids),
+            "trials_with_records": len(with_recs),
+            "oracle_records": len(rows),
+            "recall_at_2048": recall,
+            "recall_at_2048_records": len(rk),
+            "selected_contains_needle_rate": sel_rate,
+            "selected_contains_needle_records": len(contains),
+            "needle_worst_rank": ({"min": min(worst), "median": int(statistics.median(worst)),
+                                   "max": max(worst)} if worst else None),
+            "server_prompt_tokens_sample": {rid: server_tokens.get(rid) for rid in ids[:3]},
+        }
+        if len(ids) != expected_num:
+            problems.append(f"{regime}: trials_issued {len(ids)} != expected {expected_num}")
+        if len(with_recs) != len(ids):
+            problems.append(f"{regime}: trials_with_records {len(with_recs)} != trials_issued {len(ids)}")
+        if len(rows) == 0:
+            problems.append(f"{regime}: zero oracle records")
+        if len(rk) != len(rows):
+            problems.append(f"{regime}: recall_at_2048_records {len(rk)} != oracle_records {len(rows)}")
+        if len(contains) != len(rows):
+            problems.append(f"{regime}: selected_contains_needle_records {len(contains)} != oracle_records {len(rows)}")
+        if recall is None or sel_rate is None or recall != sel_rate:
+            problems.append(f"{regime}: recall_at_2048 {recall} != selected_contains_needle_rate {sel_rate} (AC-1 invariant)")
+        if any(server_tokens.get(rid) is None for rid in ids):
+            problems.append(f"{regime}: a trial has no server prompt_tokens")
+
+    total_failures = sum(failures.values())
+    if total_failures:
+        problems.append(f"oracle failure markers present (ANY is fatal): {dict(failures)}")
+
+    report = {
+        "ac": "AC-2.4 NIAH recall-oracle@2048 — production DS scorer (scorer_norm=off raw-dot)",
+        "arm": "production_ds",
+        "corroboration_only": True,
+        "note": ("recall@2048 is a NIAH score-ranking property, NOT a generic selected-index equivalence "
+                 "proof and NOT scorer exoneration (plan AC-2.4/DEC). Dense (prompt<top_k) selects all "
+                 "tokens so recall is trivially 1.0; sparse (prompt>top_k) measures whether the production "
+                 "raw-dot scorer ranks the needle inside the 2048 budget."),
+        "index_topk": INDEX_TOPK,
+        "decode_steps_per_trial": decode_steps,
+        "expected_trials_per_regime": expected_num,
+        "server_vs_offline_token_delta": delta,
+        "failure_markers": dict(failures),
+        "regimes": regime_out,
+        "source_oracle_dir_basename": os.path.basename(os.path.normpath(oracle_dir)),
+    }
+    if problems:
+        print("FAIL (fail-closed): " + " | ".join(problems), file=sys.stderr)
+        print("NOT writing the canonical artifact (a partial/failed run must not leave evidence).",
+              file=sys.stderr)
+        raise SystemExit(2)
+    # Atomic publish: write a temp then rename, so the canonical artifact is never a partial write and is
+    # only replaced after the full contract passes.
+    tmp = out_path + ".tmp"
+    json.dump(report, open(tmp, "w"), indent=2)
+    os.replace(tmp, out_path)
+    print(json.dumps(regime_out, indent=2))
+    print("wrote", out_path)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base-url", default=os.environ.get("DS_BASE_URL", "http://127.0.0.1:30000"))
@@ -181,73 +276,10 @@ def main():
         print(f"[niah] {regime:>6} target~{target}t: issued {len(issued[regime])}/{args.num} "
               f"trials ({time.time()-t0:.1f}s)", flush=True)
 
-    # ---- Fail-closed verification + reduction ----
-    recs = _read_sink(sink_path)
-    by_req = defaultdict(list)
-    failures = defaultdict(int)
-    for r in recs:
-        if "failure" in r:
-            failures[str(r["failure"]).split(":")[0]] += 1
-        elif r.get("request_id") is not None:
-            by_req[r["request_id"]].append(r)
-
-    problems = []
-    regime_out = {}
-    for regime in ("dense", "sparse"):
-        ids = issued[regime]
-        with_recs = [rid for rid in ids if by_req.get(rid)]
-        missing = [rid for rid in ids if not by_req.get(rid)]
-        if not ids:
-            problems.append(f"{regime}: zero trials issued")
-        if missing:
-            problems.append(f"{regime}: {len(missing)} trial(s) produced no oracle record: {missing[:4]}")
-        rows = [r for rid in with_recs for r in by_req[rid]]
-        rk = [_recall_at(r, INDEX_TOPK) for r in rows]
-        rk = [v for v in rk if v is not None]
-        worst = [int(r["needle_worst_rank"]) for r in rows if "needle_worst_rank" in r]
-        contains = [bool(r["selected_contains_needle"]) for r in rows if "selected_contains_needle" in r]
-        if not rk:
-            problems.append(f"{regime}: zero usable recall records")
-        regime_out[regime] = {
-            "trials_issued": len(ids),
-            "trials_with_records": len(with_recs),
-            "oracle_records": len(rows),
-            "recall_at_2048": (round(sum(rk) / len(rk), 4) if rk else None),
-            "recall_at_2048_records": len(rk),
-            "selected_contains_needle_rate": (round(sum(contains) / len(contains), 4) if contains else None),
-            "needle_worst_rank": ({"min": min(worst), "median": int(statistics.median(worst)),
-                                   "max": max(worst)} if worst else None),
-            "server_prompt_tokens_sample": {rid: server_tokens.get(rid) for rid in ids[:3]},
-        }
-
-    hard = sum(failures[k] for k in _HARD_FAILURES)
-    if hard:
-        problems.append(f"hard oracle failure markers: "
-                        f"{ {k: failures[k] for k in _HARD_FAILURES if failures[k]} }")
-
-    report = {
-        "ac": "AC-2.4 NIAH recall-oracle@2048 — production DS scorer (scorer_norm=off raw-dot)",
-        "arm": "production_ds",
-        "corroboration_only": True,
-        "note": ("recall@2048 is a NIAH score-ranking property, NOT a generic selected-index equivalence "
-                 "proof and NOT scorer exoneration (plan AC-2.4/DEC). Dense (prompt<top_k) selects all "
-                 "tokens so recall is trivially 1.0; sparse (prompt>top_k) measures whether the production "
-                 "raw-dot scorer ranks the needle inside the 2048 budget."),
-        "index_topk": INDEX_TOPK,
-        "decode_steps_per_trial": args.decode_steps,
-        "server_vs_offline_token_delta": delta,
-        "failure_markers": dict(failures),
-        "regimes": regime_out,
-        "source_oracle_dir_basename": os.path.basename(os.path.normpath(args.oracle_dir)),
-    }
-    out = os.path.join(EVID, "ac2_4_recall_oracle.json")
-    json.dump(report, open(out, "w"), indent=2)
-    print(json.dumps(regime_out, indent=2))
-    print("wrote", out)
-
-    if problems:
-        print("FAIL (fail-closed): " + " | ".join(problems), file=sys.stderr)
-        raise SystemExit(2)
+    # ---- Fail-closed verification + reduction (atomic write only after the full contract passes) ----
+    out_path = os.path.join(EVID, "ac2_4_recall_oracle.json")
+    _reduce_validate_write(sink_path, issued, server_tokens, delta, args.num, args.decode_steps,
+                           args.oracle_dir, out_path)
 
 
 if __name__ == "__main__":

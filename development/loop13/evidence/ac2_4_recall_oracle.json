@@ -5,11 +5,9 @@
   "note": "recall@2048 is a NIAH score-ranking property, NOT a generic selected-index equivalence proof and NOT scorer exoneration (plan AC-2.4/DEC). Dense (prompt<top_k) selects all tokens so recall is trivially 1.0; sparse (prompt>top_k) measures whether the production raw-dot scorer ranks the needle inside the 2048 budget.",
   "index_topk": 2048,
   "decode_steps_per_trial": 4,
+  "expected_trials_per_regime": 8,
   "server_vs_offline_token_delta": 0,
-  "failure_markers": {
-    "span_out_of_range": 0,
-    "exception": 0
-  },
+  "failure_markers": {},
   "regimes": {
     "dense": {
       "trials_issued": 8,
@@ -18,6 +16,7 @@
       "recall_at_2048": 1.0,
       "recall_at_2048_records": 2496,
       "selected_contains_needle_rate": 1.0,
+      "selected_contains_needle_records": 2496,
       "needle_worst_rank": {
         "min": 54,
         "median": 777,
@@ -36,6 +35,7 @@
       "recall_at_2048": 0.4103,
       "recall_at_2048_records": 2496,
       "selected_contains_needle_rate": 0.4103,
+      "selected_contains_needle_records": 2496,
       "needle_worst_rank": {
         "min": 72,
         "median": 2524,
