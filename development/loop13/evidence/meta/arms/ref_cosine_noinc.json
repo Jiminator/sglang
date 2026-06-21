@@ -1,9 +1,9 @@
 {
   "arm": "ref_cosine_noinc",
-  "measured_git_sha": "fea920c06",
+  "measured_git_sha": "393966c02d0d57d0c99c355367f52704c1964581",
   "ledger_generated_from": {
-    "head_sha_at_generation": "393966c02d0d57d0c99c355367f52704c1964581",
-    "generator_blob_sha": "8370696915345c5574d6b7a7505afb06825e2ee2",
+    "head_sha_at_generation": "c7b66f04b71c5716afc7cb4823e13747fe275e59",
+    "generator_blob_sha": "3757eb53630bac120431b7ff1fb4010bf76676cf",
     "worktree": "dirty (+uncommitted evidence/generator)",
     "note": "generated BEFORE its own commit exists, so head_sha_at_generation is one commit behind the commit that contains this file; generator_blob_sha pins the source exactly"
   },
@@ -30,5 +30,8 @@
     "per_example_sample_ids_order (run_eval uses a fixed seed-42 gsm8k slice; the per-example id list is not emitted by the stock harness)",
     "per_step_length_cap_garbage_counts (invalid/unwritten/duplicate/out-of-range physical slots \u2014 requires logical_to_physical adapter instrumentation not built this loop)"
   ],
-  "note": "AC-6 single-variable bisection arm (R5): cosine with reference_include_current=FALSE \u2014 the ONE variable flipped vs ref_cosine (production current-slot exclusion). head_agg=max, exact-fp32, TF32-off all unchanged. reference_cosine_select code unchanged since R1 fea920c06; serve.sh ref_cosine_noinc mode added R5. RESULT: dense 0.940->0.625 (=production 0.620) AND sparse 0.940->0.313 -> current-slot exclusion (H3) is a major culprit in BOTH regimes, not dense-only. Sparse needs BOTH cosine scorer AND current-slot inclusion (see 2x2 in ROOT_CAUSE)."
+  "note": "AC-6 single-variable bisection arm (R5): cosine with reference_include_current=FALSE \u2014 the ONE variable flipped vs ref_cosine (production current-slot exclusion). head_agg=max, exact-fp32, TF32-off all unchanged. reference_cosine_select code unchanged since R1 fea920c06; serve.sh ref_cosine_noinc mode added R5. RESULT: dense 0.940->0.625 (=production 0.620) AND sparse 0.940->0.313 -> current-slot exclusion (H3) is a major culprit in BOTH regimes, not dense-only. Sparse needs BOTH cosine scorer AND current-slot inclusion (see 2x2 in ROOT_CAUSE).",
+  "measured_source": "worktree HEAD 393966c02 (dirty: serve.sh ref_cosine_noinc mode added R5; serve.sh blob e1c83e22a085f0aa499adfbaca155d9aa0069579; committed c7b66f04b). reference_cosine_select selection code unchanged since R1 fea920c06.",
+  "ac6_leg": "current-slot (reference_include_current true->false)",
+  "corroboration_artifact": "evidence/ac6_ref_cosine_noinc_corrob.json"
 }

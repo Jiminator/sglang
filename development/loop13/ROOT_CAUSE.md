@@ -15,13 +15,14 @@ to transfer (not H0) and NOT a bad mask (not H2: the same mask reaches ≈DSA un
 
 > Baseline note: DSA batched here measures 0.975/0.973 (the plan's original-session sparse number
 > was 0.953; reproduced as 0.973). The gate uses the consistent **measured batched** comparator.
-> Scope note (updated Round 5): the scorer × current-slot single-variable bisection is now
-> **measured** (see the 2×2 in the AC-6 section) — the sparse recovery to ≈0.94 needs BOTH the cosine
-> scorer AND current-slot inclusion; current-slot exclusion (H3) hurts BOTH regimes. The radix-topk
-> and selector-width legs are **retired** on real sparse rows (AC-2.3, 4992/4992). The production-NUMERIC
-> legs (fp8-absorbed / bf16-reduce / head_agg cross-TP) remain **untested** — they need a production-path
-> cosine kernel (a code change), out of scope under "no fix" (production raw-dot 0.000 ≈ exact raw-dot
-> 0.013 shows them second-order).
+> Scope note (updated Round 6): the AC-6 per-leg bisection matrix is complete
+> (`evidence/ac6_bisection_matrix.json`). scorer + current-slot are **measured** (the 2×2 below; the
+> current-slot leg corroborated on 4992 captured rows, `ac6_ref_cosine_noinc_corrob.json`) — sparse
+> ≈0.94 needs BOTH; current-slot exclusion (H3) hurts BOTH regimes. radix + width are **retired**
+> (AC-2.3, 4992/4992). head_agg is **not a reference→production difference** (max on both paths;
+> AC-2.2 covers cross-TP). fp8-absorbed + bf16-reduce are **blocked** with a specific code citation
+> (the production absorbed_latent_kernel.py is raw-dot-only; config.py:110/170 reject cosine; a cosine
+> production kernel = a fix) and bounded second-order (raw-dot exact-fp32 0.013 vs fp8+bf16 0.000).
 
 1. **Dense 0.620 → H3: the current decode slot is excluded from its own attention** (the
    `_slot_written` invalidation in `_select_topk_indices` is not restored before the selected set
@@ -94,14 +95,30 @@ full 2×2:
 
 All deltas are far above the GSM8K single-run significance bar (n=150 binomial stderr ≈ 4 pp).
 
-**Remaining (out of scope — "no fix"):** the production-NUMERIC legs (fp8-absorbed vs exact fp32,
-bf16 vs fp32 reduce, head_agg cross-TP semantics) are second-order and **untestable via config toggle**
-— the reference selector computes in exact fp32, so a production-numerics cosine would need a
-production-path cosine kernel (a code change to the selection path), which this diagnosis loop does not
-land. The radix-topk and selector-width legs are **retired** on real sparse rows: AC-2.3
-(`evidence/ac2_3_radix_width_equivalence.json`) proves the production blocked/radix algorithm ==
-`torch.topk` (4992/4992) and width [5120] == full (4992/4992) on captured GLM-5.1 score rows with
-median seq_len 4280 (2048 of ~4280 pruned).
+**Per-leg AC-6 bisection matrix** (`evidence/ac6_bisection_matrix.json`, generated) — every
+reference→production variable is measured, retired, not-a-difference, or carries an explicit per-leg
+blocker (no blanket "out of scope"):
+
+| leg | variable | verdict | evidence |
+|---|---|---|---|
+| 1 | head_agg (within-rank) | not-a-differing-variable | production AND reference both use `head_agg="max"`; the cross-TP sum-of-max question is AC-2.2 (separate) |
+| 2 | scorer (raw-dot ↔ cosine) | **measured** | 2×2 + `test_reference_selectors.py` (materialized-raw == absorbed-raw selection) |
+| 3 | current-slot (incl ↔ excl) | **measured** | `ref_cosine_noinc` 0.625/0.313 + `ac6_ref_cosine_noinc_corrob.json` (4992/4992 single-swap) |
+| 4 | radix top-k (exact ↔ blocked) | retired | `ac2_3_radix_width_equivalence.json` 4992/4992 |
+| 5 | selector width ([5120] ↔ full) | retired | `ac2_3_radix_width_equivalence.json` 4992/4992 |
+| 6 | fp8-absorbed (fp32 ↔ fp8) | **blocked** | code path below + second-order bound |
+| 7 | bf16-reduce (fp32 ↔ bf16) | **blocked** | code path below + second-order bound |
+
+Legs 6–7 **blocker (specific, not blanket):** the fp8-absorbed and bf16-reduce variables live ONLY in
+the production absorbed-latent Triton scoring kernel
+(`absorbed_latent_kernel.py`, called from `deepseek_v2.py:_select_topk_indices` ~2588/2602), which
+implements **only** `scorer_norm="off"` (raw channel-dot); `config.py:110` `_ALLOWED_SCORER_NORM=("off",)`
+and the validation at `config.py:170` hard-reject `scorer_norm="cosine"`. The reference cosine path
+computes exact fp32 and does not route through that kernel, so there is **no config toggle** to test
+fp8/reduce under cosine — doing so needs a new production-path cosine kernel = a selection-path code
+change = a **fix**, forbidden this loop. They are bounded **second-order**: on the raw-dot path, where
+exact-fp32 (`ref_faithful`) and fp8+bf16 (production) can be compared, sparse 0.013 vs 0.000 ⇒ fp8/reduce
+contribute ≤~1.3 pp beyond the scorer/current-slot effects.
 
 ## Why NOT H0 / H2 (and why the no-mask ablation is moot)
 - NOT H0 (algorithm doesn't transfer): cosine reaches ≈DSA in both regimes, so the
@@ -128,5 +145,11 @@ No selection/adapter fix is landed in this diagnosis loop.
   the faithful, leak-free reference selectors (the accuracy-ceiling instruments).
 - `forced_all_dense_control` — the dense downstream-isolation control.
 - `serve.sh` modes: `dsa_noradix`, `ds_capture`, `ref`, `ref_faithful`, `ref_cosine`,
-  `ds_forced_all`, `ds_anchor`. `run_gsm8k.sh` `THREADS`/`REGIME` knobs; `analyze_captures.py`.
-- Per-arm metadata JSON under `evidence/meta/arms/`.
+  `ref_cosine_noinc` (the AC-6 current-slot single-variable arm), `ds_forced_all`, `ds_anchor`.
+  `run_gsm8k.sh` `THREADS`/`REGIME` knobs; `analyze_captures.py`.
+- `verify_ac2_3.py` (pruning-valid radix/width equivalence, fail-closed on zero pruning rows),
+  `ac6_corrob_ref_cosine_noinc.py` (current-slot selection-swap corroboration on captured rows),
+  `ac6_bisection_matrix.py` (the per-leg AC-6 matrix generator).
+- Per-arm metadata JSON under `evidence/meta/arms/` (with AC-6 leg/corroboration + measured-source
+  provenance); `build_ledger.py` asserts provenance consistency + fails closed on an uncorroborated
+  AC-6 arm.

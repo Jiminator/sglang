@@ -1,0 +1,151 @@
+{
+  "ac6": "single-variable bisection matrix (reference -> production)",
+  "rule": "exactly one variable changes per arm; multi-variable steps rejected; each measured delta corroborated",
+  "arms_scores": {
+    "production_ds": {
+      "dense": 0.62,
+      "sparse": 0.0
+    },
+    "ref_faithful": {
+      "dense": 0.95,
+      "sparse": 0.013
+    },
+    "ref_cosine": {
+      "dense": 0.94,
+      "sparse": 0.94
+    },
+    "ref_cosine_noinc": {
+      "dense": 0.625,
+      "sparse": 0.313
+    }
+  },
+  "legs": [
+    {
+      "leg": 1,
+      "variable": "head_agg (within-rank head aggregation)",
+      "base_arm": "ref_cosine",
+      "changed_variable": "head_agg",
+      "config_diff": "none \u2014 production AND the reference both use head_agg='max'",
+      "dense_sparse": null,
+      "corroboration": "n/a",
+      "verdict": "not-a-differing-variable",
+      "detail": "head_agg='max' is identical on the production and reference paths, so it is not a reference->production bisection step. The distinct cross-TP question (local-max per rank then SUM across the TP group vs a true global max) is AC-2.2, examined separately via the capture head_agg_test (still PRELIMINARY)."
+    },
+    {
+      "leg": 2,
+      "variable": "scorer normalization (raw-dot vs cosine)",
+      "base_arm": "ref_faithful (raw-dot) -> ref_cosine (cosine)",
+      "changed_variable": "scorer_norm / selector_impl",
+      "config_diff": "selector_impl reference_rawdot -> reference_cosine (scorer_norm off -> cosine)",
+      "dense_sparse": {
+        "current_incl": {
+          "rawdot": {
+            "dense": 0.95,
+            "sparse": 0.013
+          },
+          "cosine": {
+            "dense": 0.94,
+            "sparse": 0.94
+          }
+        },
+        "current_excl": {
+          "rawdot": {
+            "dense": 0.62,
+            "sparse": 0.0
+          },
+          "cosine": {
+            "dense": 0.625,
+            "sparse": 0.313
+          }
+        }
+      },
+      "corroboration": "2x2 + development/loop13/test_reference_selectors.py (materialized-raw == absorbed-raw selection, bit-identical)",
+      "verdict": "measured",
+      "detail": "holding current-slot INCLUDED: sparse rawdot 0.013 -> cosine 0.940 (+92.7pp); holding current-slot EXCLUDED: sparse rawdot 0.000 -> cosine 0.313. The cosine scorer is a primary culprit; interacts with the current-slot leg."
+    },
+    {
+      "leg": 3,
+      "variable": "current decode-slot inclusion",
+      "base_arm": "ref_cosine -> ref_cosine_noinc",
+      "changed_variable": "reference_include_current",
+      "config_diff": "reference_include_current true -> false (production _slot_written exclusion)",
+      "dense_sparse": {
+        "included": {
+          "dense": 0.94,
+          "sparse": 0.94
+        },
+        "excluded": {
+          "dense": 0.625,
+          "sparse": 0.313
+        }
+      },
+      "corroboration": "evidence/ac6_ref_cosine_noinc_corrob.json (4992/4992 single-swap; current slot -inf-masked)",
+      "verdict": "measured",
+      "detail": "dense 0.940 -> 0.625 (= production 0.620), sparse 0.940 -> 0.313. Current-slot exclusion (H3) is a culprit in BOTH regimes; corroboration shows the selected sets differ by exactly the current decode slot at every step."
+    },
+    {
+      "leg": 4,
+      "variable": "radix top-k (approximate vs exact)",
+      "base_arm": "production blocked/radix vs exact torch.topk",
+      "changed_variable": "top-k algorithm",
+      "config_diff": "blocked_topk_sequence_order vs select_topk_sequence_order",
+      "dense_sparse": null,
+      "corroboration": "evidence/ac2_3_radix_width_equivalence.json (4992/4992 identical, real sparse rows)",
+      "verdict": "retired",
+      "detail": "selection-neutral on the real sparse workload (median seq_len 4280, 2048 of ~4280 pruned)."
+    },
+    {
+      "leg": 5,
+      "variable": "selector width bucket ([5120] vs full)",
+      "base_arm": "width [5120] vs full",
+      "changed_variable": "selector_width_buckets",
+      "config_diff": "[5120] vs []",
+      "dense_sparse": null,
+      "corroboration": "evidence/ac2_3_radix_width_equivalence.json (4992/4992 identical, real sparse rows)",
+      "verdict": "retired",
+      "detail": "selection-neutral: the [5120] window covers the live region (seq_len<=5120) on the sparse workload."
+    },
+    {
+      "leg": 6,
+      "variable": "fp8-in-register absorbed scoring (vs exact fp32 dequant)",
+      "base_arm": "(production raw-dot only)",
+      "changed_variable": "absorbed_latent_fp8",
+      "config_diff": "production kernel scores fp8 absorbed latent in-register (deepseek_v2.py:2602); reference dequants to exact fp32",
+      "dense_sparse": null,
+      "corroboration": "second-order bound: on the raw-dot path where exact-fp32 (ref_faithful) and fp8 (production) CAN be compared, sparse 0.013 (exact) vs 0.000 (fp8+bf16+excl) \u2014 fp8/reduce contribute <=~1.3pp beyond the scorer/current-slot effects",
+      "verdict": "blocked",
+      "detail": "production scoring = DeepseekV2 `_select_topk_indices` (python/sglang/srt/models/deepseek_v2.py ~2570-2603) -> the absorbed-latent Triton scoring kernel (python/sglang/srt/layers/attention/double_sparsity/absorbed_latent_kernel.py), which implements ONLY scorer_norm='off' (raw channel-dot). config.py:110 _ALLOWED_SCORER_NORM=('off',) and the validation at config.py:170 hard-reject scorer_norm='cosine'. The reference path (reference_cosine_select) computes exact fp32 and does NOT route through this kernel.",
+      "blocker": "Isolating this variable UNDER cosine requires implementing cosine in the production Triton scoring kernel (the materialized per-head signature + normalization, as absorbed_latent_cosine_logical_fp8 does on the reference path) \u2014 a new selection-path kernel = a fix, forbidden in this diagnosis loop."
+    },
+    {
+      "leg": 7,
+      "variable": "bf16 score-reduce (vs fp32)",
+      "base_arm": "(production raw-dot only)",
+      "changed_variable": "score_reduce_dtype",
+      "config_diff": "production reduces cross-TP scores in bf16 (score_reduce_bf16, deepseek_v2.py:2588); reference reduces in fp32",
+      "dense_sparse": null,
+      "corroboration": "second-order bound: same as fp8 \u2014 exact-fp32 raw-dot 0.013 vs production fp8+bf16 0.000 sparse; reduce dtype is within that <=1.3pp residual",
+      "verdict": "blocked",
+      "detail": "production scoring = DeepseekV2 `_select_topk_indices` (python/sglang/srt/models/deepseek_v2.py ~2570-2603) -> the absorbed-latent Triton scoring kernel (python/sglang/srt/layers/attention/double_sparsity/absorbed_latent_kernel.py), which implements ONLY scorer_norm='off' (raw channel-dot). config.py:110 _ALLOWED_SCORER_NORM=('off',) and the validation at config.py:170 hard-reject scorer_norm='cosine'. The reference path (reference_cosine_select) computes exact fp32 and does NOT route through this kernel.",
+      "blocker": "Isolating this variable UNDER cosine requires implementing cosine in the production Triton scoring kernel (the materialized per-head signature + normalization, as absorbed_latent_cosine_logical_fp8 does on the reference path) \u2014 a new selection-path kernel = a fix, forbidden in this diagnosis loop."
+    }
+  ],
+  "summary_by_verdict": {
+    "not-a-differing-variable": [
+      1
+    ],
+    "measured": [
+      2,
+      3
+    ],
+    "retired": [
+      4,
+      5
+    ],
+    "blocked": [
+      6,
+      7
+    ]
+  },
+  "conclusion": "Sparse recovery to ~0.94 needs BOTH the cosine scorer (leg 2) AND current-slot inclusion (leg 3); the two interact. radix+width (legs 4-5) are selection-neutral (retired). head_agg (leg 1) is not a reference->production difference. fp8/bf16 (legs 6-7) are blocked (production raw-dot kernel only; no non-fix cosine route) and bounded second-order. No leg is silently deferred."
+}

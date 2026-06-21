@@ -62,6 +62,13 @@ BASE_SHA = "180f6dd6decb1577da8e40bf002f79805ece693d"   # Round-0 baselines + pl
 DIAG0_SHA = "fc6ac20a7"   # Round-0 diagnostic code (forced_all_dense_control)
 HARNESS_SHA = "29ec137bf"  # Round-0 harness with ds_anchor mode (anchor_mode pre-existing)
 R1_SHA = "fea920c06"      # Round-1 faithful/cosine reference code
+# Round-5 measured-run identity for ref_cosine_noinc: the serve mode was added in R5, so it did NOT
+# exist at R1_SHA. The arm ran at worktree HEAD 393966c02 with serve.sh dirty (the ref_cosine_noinc
+# mode), later committed as c7b66f04b; the serve.sh blob below pins the exact mode definition.
+R5_NOINC_SHA = "393966c02d0d57d0c99c355367f52704c1964581"
+R5_NOINC_SOURCE = ("worktree HEAD 393966c02 (dirty: serve.sh ref_cosine_noinc mode added R5; "
+                   "serve.sh blob e1c83e22a085f0aa499adfbaca155d9aa0069579; committed c7b66f04b). "
+                   "reference_cosine_select selection code unchanged since R1 fea920c06.")
 
 # arm -> (serve_mode, extra_args, dsa_by_regime, dense_out, sparse_out, dense_serial_out, note)
 ARMS = {
@@ -86,7 +93,9 @@ ARMS = {
                        dense="ref_cosine_dense", sparse="ref_cosine_sparse",
                        note="faithful COSINE ceiling: materialized per-head signature, normalize after gather"),
     "ref_cosine_noinc": dict(mode="ref_cosine_noinc", extra="--disable-radix-cache --disable-cuda-graph --enable-double-sparsity",
-                             ds=None, measured_sha=R1_SHA,
+                             ds=None, measured_sha=R5_NOINC_SHA, measured_source=R5_NOINC_SOURCE,
+                             ac6_leg="current-slot (reference_include_current true->false)",
+                             corroboration="evidence/ac6_ref_cosine_noinc_corrob.json",
                              dense="ref_cosine_noinc_dense", sparse="ref_cosine_noinc_sparse",
                              note="AC-6 single-variable bisection arm (R5): cosine with reference_include_current=FALSE — "
                                   "the ONE variable flipped vs ref_cosine (production current-slot exclusion). head_agg=max, "
@@ -139,8 +148,23 @@ for arm, a in ARMS.items():
         "fields_not_instrumented": NOT_INSTRUMENTED,
         "note": a["note"],
     }
+    if a.get("measured_source"):
+        rec["measured_source"] = a["measured_source"]
+    if a.get("ac6_leg"):
+        rec["ac6_leg"] = a["ac6_leg"]
+        rec["corroboration_artifact"] = a.get("corroboration")
     json.dump(rec, open(os.path.join(ARMS_DIR, f"{arm}.json"), "w"), indent=2)
     ledger.append(rec)
+
+# AC-6 corroboration guard: an arm tagged as an AC-6 bisection leg that records a GSM8K score MUST
+# point at a corroboration artifact that exists on disk (plan: each measured AC-6 delta is corroborated
+# by recall/selected-index/score-rank). Fail loud otherwise — a scores-only AC-6 arm is not AC-6 evidence.
+for r in ledger:
+    if r.get("ac6_leg") and any(v is not None for v in r["scores"].values()):
+        art = r.get("corroboration_artifact")
+        assert art and os.path.exists(os.path.join(HERE, art)), (
+            f"AC-6 arm {r['arm']} has GSM8K scores but no corroboration artifact on disk "
+            f"(corroboration_artifact={art!r})")
 
 # regenerate evidence_table.md from the ledger
 lines = ["# Loop 13 — Per-arm GSM8K evidence ledger (AC-1 / AC-4), generated from evidence/meta/arms/*.json",

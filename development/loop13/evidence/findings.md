@@ -155,8 +155,13 @@ The R1 "sparse = just the scorer lock" was incomplete. R5 ran one clean single-v
 - Current-slot exclusion (H3) is a culprit in **BOTH** regimes (cosine: dense 0.940→0.625, sparse
   0.940→0.313), not dense-only. The faithful cosine 0.940 sparse ceiling used the non-production
   current-slot inclusion; the production-path cosine ceiling (current excluded) is **0.313** sparse.
-- Untested numeric legs (fp8/bf16-reduce/head_agg) need a production-path cosine kernel (code) = out
-  of scope (no fix). Radix+width retired on real sparse rows (AC-2.3 below, 4992/4992).
+- Full per-leg AC-6 matrix in `evidence/ac6_bisection_matrix.json` (R6): scorer + current-slot
+  MEASURED; radix + width RETIRED (AC-2.3, 4992/4992); head_agg NOT-a-differing-variable (max on both
+  paths; AC-2.2 covers cross-TP); fp8-absorbed + bf16-reduce BLOCKED with exact code citation
+  (production absorbed_latent_kernel.py is scorer_norm="off"-only; config.py:110/170 reject cosine; a
+  cosine production kernel = a fix) + bounded second-order (raw-dot exact-fp32 0.013 vs fp8+bf16 0.000).
+  The R5 current-slot leg is corroborated on real captured rows: `evidence/ac6_ref_cosine_noinc_corrob.json`
+  (4992/4992 — the include flag swaps exactly the current decode slot; it is -inf-masked in every capture).
 
 ## AC-2.3 RESOLVED (Round 5, pruning-valid) — radix == torch.topk, width [5120] == full
 On **4992** real captured sparse GLM-5.1 score rows (median seq_len **4280**, 2048 of ~4280 pruned),
