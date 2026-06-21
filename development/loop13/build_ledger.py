@@ -249,6 +249,39 @@ FORCED_ALL_ASSERT_ARTIFACT = "evidence/forced_all_assertions.json"
 # the current slot is NOT in the scored selection (it is masked/excluded = the H3 cause from the selection side).
 SCORED_GARBAGE_ARTIFACT = "evidence/ac4_garbage_counters.json"
 
+
+def validate_scored_garbage_artifact():
+    """Fail closed unless the production_ds scored garbage artifact is the REAL scored capture.
+
+    R15 regressed by committing a forced-all (dense-only, current-slot force-INCLUDED) artifact as if it
+    were the production scored result, because the reducer defaulted to the forced-all dir and failed open
+    on the missing sparse regime. This guard loads the artifact and refuses to wire it onto production_ds
+    unless it is the .sglang_ds_garbage scored capture with both regimes, zero real garbage, and the current
+    slot EXCLUDED (current_slot_unwritten==0 — the footer/findings prose claims exactly that). Returns the
+    validated dense/sparse summary so the ledger records what was checked.
+    """
+    p = os.path.join(HERE, SCORED_GARBAGE_ARTIFACT)
+    assert os.path.exists(p), f"{SCORED_GARBAGE_ARTIFACT} missing — regenerate from .sglang_ds_garbage"
+    d = json.load(open(p))
+    assert d.get("arm") == "production_ds", f"scored garbage arm={d.get('arm')!r}, expected production_ds"
+    assert d.get("source_dir_basename") == ".sglang_ds_garbage", (
+        f"scored garbage source_dir_basename={d.get('source_dir_basename')!r} — must be '.sglang_ds_garbage' "
+        f"(the production scored capture), NOT the forced-all control")
+    regs = d.get("regimes", {})
+    assert set(regs) == {"dense", "sparse"}, f"scored garbage regimes={sorted(regs)}, expected dense+sparse"
+    summary = {}
+    for reg in ("dense", "sparse"):
+        v = regs[reg]
+        rows = v.get("rows", 0)
+        real = v.get("real_garbage_total", -1)
+        cur = v.get("current_slot_unwritten (H3 marker; not garbage)", -1)
+        assert rows > 0, f"scored garbage {reg} rows={rows}, expected >0"
+        assert real == 0, f"scored garbage {reg} real_garbage_total={real}, expected 0"
+        assert cur == 0, (f"scored garbage {reg} current_slot_unwritten={cur}, expected 0 — the production "
+                          f"scored selection must EXCLUDE the current slot (H3 from the selection side)")
+        summary[reg] = {"rows": rows, "real_garbage_total": real, "current_slot_unwritten": cur}
+    return summary
+
 ledger = []
 for arm, a in ARMS.items():
     rec = {
@@ -289,7 +322,9 @@ for arm, a in ARMS.items():
         if effective_ds_config_for(arm).get("forced_all_dense_control"):
             rec["forced_all_assertions_artifact"] = FORCED_ALL_ASSERT_ARTIFACT  # AC-2.1 + AC-4 garbage counters
         if arm == "production_ds":
+            # Load + VALIDATE before wiring — a forced-all/partial artifact must not pass as scored evidence.
             rec["garbage_counters_artifact"] = SCORED_GARBAGE_ARTIFACT  # AC-4 scored-selection garbage (R15)
+            rec["garbage_counters_validated"] = validate_scored_garbage_artifact()  # fail-closed
     if a.get("ac6_leg"):
         rec["ac6_leg"] = a["ac6_leg"]
         rec["corroboration_artifact"] = a.get("corroboration")

@@ -1,16 +1,28 @@
 {
   "ac": "AC-4 length-cap garbage counters \u2014 production SCORED DS selection",
-  "source": "/sgl-workspace/sglang/development/loop13/evidence/.sglang_ds_forcedall (ds_garbage eager run; forced_all_assert on, scored top-k, no forced-all override)",
+  "source": "/sgl-workspace/sglang/development/loop13/evidence/.sglang_ds_garbage (ds_garbage eager run; forced_all_assert on, scored top-k, no forced-all override)",
+  "source_dir_basename": ".sglang_ds_garbage",
   "arm": "production_ds",
   "regimes": {
     "dense": {
-      "rows": 61776,
+      "rows": 41808,
       "duplicate_physical": 0,
       "live_lane_-1": 0,
       "out_of_range_vs_kv_capacity": 0,
       "adapter_errors": 0,
       "noncurrent_unwritten (REAL garbage)": 0,
-      "current_slot_unwritten (H3 marker; not garbage)": 61776,
+      "current_slot_unwritten (H3 marker; not garbage)": 0,
+      "real_garbage_total": 0,
+      "mismatches": []
+    },
+    "sparse": {
+      "rows": 37440,
+      "duplicate_physical": 0,
+      "live_lane_-1": 0,
+      "out_of_range_vs_kv_capacity": 0,
+      "adapter_errors": 0,
+      "noncurrent_unwritten (REAL garbage)": 0,
+      "current_slot_unwritten (H3 marker; not garbage)": 0,
       "real_garbage_total": 0,
       "mismatches": []
     }

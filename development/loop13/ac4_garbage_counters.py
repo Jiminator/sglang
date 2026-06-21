@@ -11,8 +11,15 @@ to the AC-4 per-arm length-cap garbage-rate on the actual selected physical slot
 No req_to_token / sweep equality is checked — the selection is scored, not [0..seq_len-1]. Rows are split
 by regime (dense seq_len<=top_k, sparse seq_len>top_k) and reported separately.
 
-Fail-closed: nonzero exit on zero rows, any missing required field, or any REAL (non-current) garbage —
-the current-slot-unwritten H3 marker is NOT a failure. Writes evidence/ac4_garbage_counters.json. CPU-only.
+Input dir defaults to the production SCORED capture `evidence/.sglang_ds_garbage` (the `ds_garbage` run),
+NOT the forced-all control `.sglang_ds_forcedall`. The report stamps `source_dir_basename` so downstream
+consumers (build_ledger) can verify the artifact came from the scored capture.
+
+Fail-closed: nonzero exit on (a) a missing/empty regime — this production scored reducer REQUIRES BOTH
+dense and sparse with rows>0, so a dense-only forced-all dir cannot pass as scored evidence (and the JSON
+is NOT written in that case, so a wrong-dir run can't clobber the canonical artifact); (b) any missing
+required field; (c) any REAL (non-current) garbage — the current-slot-unwritten H3 marker is NOT a failure.
+Writes evidence/ac4_garbage_counters.json. CPU-only.
 """
 import glob
 import json
@@ -23,7 +30,11 @@ from collections import defaultdict
 import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DIR = os.path.join(HERE, "evidence", ".sglang_ds_forcedall")
+# The PRODUCTION SCORED capture dir (ds_garbage run). NOT `.sglang_ds_forcedall` — that holds the forced-all
+# control (dense-only, current-slot force-INCLUDED), a different dataset; reducing it here and committing it
+# as "production scored" is exactly the R15 provenance regression. The reducer below fails closed unless
+# BOTH regimes are present, so a forced-all dir (dense-only) can no longer pass as scored evidence.
+DEFAULT_DIR = os.path.join(HERE, "evidence", ".sglang_ds_garbage")
 TOP_K = 2048
 _REQUIRED = ("physical_slots", "logical_positions", "slot_written_bits", "kv_capacity",
              "valid_length", "seq_len", "decode_step", "adapter_error_count",
@@ -110,9 +121,23 @@ def main():
             "real_garbage_total": real,
             "mismatches": a["mismatches"][:10],
         }
+    # FAIL CLOSED on a structurally-wrong capture BEFORE writing, so a forced-all (dense-only) dir or a
+    # no-arg run over the wrong dir can never overwrite the canonical committed scored artifact. The
+    # production ds_garbage run captures BOTH regimes (5-shot dense + 24-shot sparse); a single-regime dir
+    # is the forced-all control or a partial capture and is NOT valid production scored evidence.
+    basename = os.path.basename(os.path.normpath(capdir))
+    present = {r for r in ("dense", "sparse") if regimes.get(r, {}).get("rows", 0) > 0}
+    missing = {"dense", "sparse"} - present
+    if missing:
+        print(f"FAIL: production scored reducer requires BOTH dense and sparse regimes with rows>0; "
+              f"missing/empty: {sorted(missing)}. Capture dir {capdir} (basename '{basename}') — this looks "
+              f"like the forced-all control or a partial capture, not the .sglang_ds_garbage scored run. "
+              f"NOT writing the artifact (refusing to clobber the canonical one).", file=sys.stderr)
+        raise SystemExit(2)
     report = {
         "ac": "AC-4 length-cap garbage counters — production SCORED DS selection",
         "source": f"{capdir} (ds_garbage eager run; forced_all_assert on, scored top-k, no forced-all override)",
+        "source_dir_basename": basename,
         "arm": "production_ds",
         "regimes": regimes,
         "verdict": ("CLEAN — the production scored selection has zero real garbage (no duplicate / live-`-1` "
@@ -122,12 +147,10 @@ def main():
     }
     out = os.path.join(HERE, "evidence", "ac4_garbage_counters.json")
     json.dump(report, open(out, "w"), indent=2)
-    print(json.dumps({"regimes": {k: {kk: vv for kk, vv in v.items() if kk != "mismatches"}
+    print(json.dumps({"source_dir_basename": basename,
+                      "regimes": {k: {kk: vv for kk, vv in v.items() if kk != "mismatches"}
                                   for k, v in regimes.items()}, "verdict": report["verdict"]}, indent=2))
     print("wrote", out)
-    if total_rows == 0:
-        print("FAIL: zero usable rows", file=sys.stderr)
-        raise SystemExit(2)
     if real_garbage > 0:
         print(f"FAIL: {real_garbage} real (non-current) garbage events in the scored selection", file=sys.stderr)
         raise SystemExit(2)
