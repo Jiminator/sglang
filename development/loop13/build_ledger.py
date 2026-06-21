@@ -93,11 +93,35 @@ DS_OVERRIDES = {  # vs DS_BASE, matching serve.sh exactly
 }
 
 
+# Full resolved DoubleSparsityConfig defaults (config.py) — the EFFECTIVE runtime config after defaults.
+# channel_mask_path is required (no default) and comes from the launch JSON.
+DS_DEFAULTS = {
+    "top_k": 2048, "page_size": 64, "device_buffer_size": 4096,
+    "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0,
+    "recall_oracle": False, "selection_capture": False, "latent_capture": False, "score_capture": False,
+    "selector_width_buckets": [5120], "selector_width_overflow_policy": "full_fallback",
+    "score_reduce_dtype": "bf16", "enable_lifted_budget_decode": False, "lifted_budget_top_k": 0,
+    "selector_impl": "production", "forced_all_dense_control": False, "reference_include_current": False,
+}
+# AC-4 wants these effective fields per DS arm (selector width / reduce dtype / scorer / head-agg / impl):
+DS_EFFECTIVE_REQUIRED = ("selector_width_buckets", "score_reduce_dtype", "selector_impl",
+                         "head_agg", "scorer_norm")
+
+
 def ds_config_for(arm):
-    """The full canonical DS config for a DS arm (DS_BASE + per-arm overrides), or None for non-DS arms."""
+    """The literal launch-JSON DS config for a DS arm (DS_BASE + per-arm overrides) — exactly what
+    serve.sh passed via --double-sparsity-config. None for non-DS arms."""
     if arm not in DS_OVERRIDES:
         return None
     return {**DS_BASE, **DS_OVERRIDES[arm]}
+
+
+def effective_ds_config_for(arm):
+    """The EFFECTIVE runtime DS config = all DoubleSparsityConfig fields resolved (defaults +
+    channel_mask_path + the arm's launch overrides). None for non-DS arms."""
+    if arm not in DS_OVERRIDES:
+        return None
+    return {**DS_DEFAULTS, "channel_mask_path": MASK_PATH, **DS_OVERRIDES[arm]}
 
 
 def _server_args(arm, extra):
@@ -202,7 +226,8 @@ for arm, a in ARMS.items():
         rec["measured_source"] = a["measured_source"]
     _cfg = ds_config_for(arm)
     if _cfg is not None:
-        rec["ds_config"] = _cfg
+        rec["ds_config"] = _cfg                              # literal launch JSON (serve.sh)
+        rec["effective_ds_config"] = effective_ds_config_for(arm)  # full resolved runtime config
     if a.get("ac6_leg"):
         rec["ac6_leg"] = a["ac6_leg"]
         rec["corroboration_artifact"] = a.get("corroboration")
@@ -235,7 +260,11 @@ for r in ledger:
         assert "--double-sparsity-config" in r["server_args"], (
             f"DS arm {r['arm']} server_args missing --double-sparsity-config")
         missing = _REQUIRED_DS_KEYS - set(r.get("ds_config") or {})
-        assert not missing, f"DS arm {r['arm']} ds_config missing required keys: {sorted(missing)}"
+        assert not missing, f"DS arm {r['arm']} ds_config missing launch keys: {sorted(missing)}"
+        # AC-4 needs the EFFECTIVE config (defaults expanded) with the selector-width/reduce/scorer keys.
+        eff = r.get("effective_ds_config") or {}
+        eff_missing = [k for k in DS_EFFECTIVE_REQUIRED if k not in eff]
+        assert not eff_missing, f"DS arm {r['arm']} effective_ds_config missing AC-4 keys: {eff_missing}"
 
 # regenerate evidence_table.md from the ledger
 lines = ["# Loop 13 — Per-arm GSM8K evidence ledger (AC-1 / AC-4), generated from evidence/meta/arms/*.json",
@@ -246,9 +275,10 @@ lines = ["# Loop 13 — Per-arm GSM8K evidence ledger (AC-1 / AC-4), generated f
          f"temp0 max_tokens512 completion API",
          "Dense = 5-shot/200 (~716 tok < top_k 2048). Sparse = 24-shot/150 (~5.6k tok > 2048). batched=64 threads.",
          "selected/total: DS selected vs total tokens by regime (— = native DSA / no DS meta).",
+         "DS effective: impl/width/reduce/scorer/head-agg from effective_ds_config (defaults expanded; full config in each arm JSON).",
          "",
-         "| Arm | dense (b) | sparse (b) | dense (serial) | sparse (serial) | DS selected/total (dense; sparse) | note |",
-         "|---|---|---|---|---|---|---|"]
+         "| Arm | dense (b) | sparse (b) | dense (serial) | sparse (serial) | DS selected/total (dense; sparse) | DS effective (impl·width·reduce·scorer·head-agg) | note |",
+         "|---|---|---|---|---|---|---|---|"]
 def cell(x): return "—" if x is None else f"{x:.3f}"
 def ds_cell(ds):
     if not ds: return "—"
@@ -256,10 +286,16 @@ def ds_cell(ds):
     for k in ("dense", "sparse"):
         if k in ds: parts.append(f"{k} {ds[k][0]}/{ds[k][1]}")
     return "; ".join(parts) if parts else "—"
+def eff_cell(r):
+    e = r.get("effective_ds_config")
+    if not e: return "—"
+    return (f"{e['selector_impl']} · W{e['selector_width_buckets']} · {e['score_reduce_dtype']} · "
+            f"{e['scorer_norm']} · {e['head_agg']}")
 for r in ledger:
     s = r["scores"]
     lines.append(f"| {r['arm']} | {cell(s['dense_batched'])} | {cell(s['sparse_batched'])} | "
-                 f"{cell(s['dense_serial'])} | {cell(s['sparse_serial'])} | {ds_cell(r['ds_selected_vs_total_by_regime'])} | {r['note']} |")
+                 f"{cell(s['dense_serial'])} | {cell(s['sparse_serial'])} | {ds_cell(r['ds_selected_vs_total_by_regime'])} | "
+                 f"{eff_cell(r)} | {r['note']} |")
 lines += ["",
           "Per-example sample IDs/order: evidence/gsm8k_sample_ids.json (deterministic stock loader; all "
           "arms share the identical ordered slice — dense lines [5:205], sparse [24:174]). Still not "
@@ -274,9 +310,11 @@ lines += ["",
           "exclusion (H3) hurts BOTH regimes (corroborated both regimes, ac6_ref_cosine_noinc_corrob.json). "
           "Per AC-6 leg: scorer+current-slot MEASURED; radix+width RETIRED (AC-2.3); bf16-vs-fp32 score-reduce "
           "MEASURED (ds_reduce_fp32 arm; selection near-neutral, ac6_score_reduce_fp32_corrob.json median "
-          "Jaccard 0.998); head_agg NOT-a-differing-variable (max on both paths; AC-2.2 covers cross-TP); only "
-          "fp8-absorbed is BLOCKED (no production config for fp32 absorbed scoring; absorbed_latent_kernel.py "
-          "scores fp8 in-register; exact-fp32 absorbed only on the reference path)."]
+          "Jaccard 0.998); head aggregation (AC-2.2) MEASURED — within-rank head_agg='max' matched, but "
+          "cross-TP (production SUM vs reference per-rank-local) is a second-order <=1.3pp difference "
+          "(head_agg_tp_semantics.json); only fp8-absorbed is BLOCKED (no production config for fp32 absorbed "
+          "scoring; absorbed_latent_kernel.py scores fp8 in-register; exact-fp32 absorbed only on the "
+          "reference path)."]
 open(os.path.join(EVID, "evidence_table.md"), "w").write("\n".join(lines) + "\n")
 
 # Single source of truth for provenance: patch run_meta.json's generator fields

@@ -173,6 +173,20 @@ def main():
                 errs.append("cheap_controls.json.summary AC_2_2_verdict is not SETTLED")
             if "cosine recovers under both" in json.dumps(hav):
                 errs.append("head_agg_tp_semantics.json still overclaims 'cosine recovers under both'")
+            # leg 1 is MEASURED -> no generated surface may still call head aggregation a non-difference
+            leg1 = next((l for l in legs if l["leg"] == 1), None)
+            if leg1 and leg1["verdict"] == "measured":
+                for fn in ("evidence_table.md", "findings.md"):
+                    fp = os.path.join(HERE, "evidence", fn)
+                    if os.path.exists(fp) and "head_agg NOT-a-differing-variable" in open(fp).read():
+                        errs.append(f"{fn} still says head_agg NOT-a-differing-variable (leg 1 is measured)")
+            # the stale row-level served_sum_matches data is allowed ONLY under a superseded_* section
+            for k, v in cc.items():
+                if k.startswith("superseded") or k in ("summary", "_status"):
+                    continue
+                if "served_sum_matches" in json.dumps(v):
+                    errs.append(f"cheap_controls.json top-level '{k}' still carries served_sum_matches "
+                                f"(move under a superseded_* key)")
             if errs:
                 print("FAIL: AC-2.2 consistency guard:", file=sys.stderr)
                 for e in errs:

@@ -2,8 +2,8 @@
   "arm": "ref_cosine_noinc",
   "measured_git_sha": "393966c02d0d57d0c99c355367f52704c1964581",
   "ledger_generated_from": {
-    "head_sha_at_generation": "752752f6dc7255b0810d5102e1835bf2c84229a9",
-    "generator_blob_sha": "b8f4ea711941ef3fd727309b4e1acb4830f918dd",
+    "head_sha_at_generation": "5d48cbd0d6775dbbe2b06c566a476172e4258f03",
+    "generator_blob_sha": "d8d93f638b6b0c95a5b62b4b78963e370a26af13",
     "worktree": "dirty (+uncommitted evidence/generator)",
     "note": "generated BEFORE its own commit exists, so head_sha_at_generation is one commit behind the commit that contains this file; generator_blob_sha pins the source exactly"
   },
@@ -45,6 +45,30 @@
     "lifted_budget_top_k": 0,
     "selector_impl": "reference_cosine",
     "reference_include_current": false
+  },
+  "effective_ds_config": {
+    "top_k": 2048,
+    "page_size": 64,
+    "device_buffer_size": 4096,
+    "scorer_norm": "off",
+    "head_agg": "max",
+    "anchor_mode": "off",
+    "anchor_budget": 0,
+    "recall_oracle": false,
+    "selection_capture": false,
+    "latent_capture": false,
+    "score_capture": false,
+    "selector_width_buckets": [
+      5120
+    ],
+    "selector_width_overflow_policy": "full_fallback",
+    "score_reduce_dtype": "bf16",
+    "enable_lifted_budget_decode": false,
+    "lifted_budget_top_k": 0,
+    "selector_impl": "reference_cosine",
+    "forced_all_dense_control": false,
+    "reference_include_current": false,
+    "channel_mask_path": "/cluster-storage/models/glm51-fp8-channel-mask-loop12.safetensors"
   },
   "ac6_leg": "current-slot (reference_include_current true->false)",
   "corroboration_artifact": "evidence/ac6_ref_cosine_noinc_corrob.json"

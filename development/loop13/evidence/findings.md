@@ -159,9 +159,10 @@ The R1 "sparse = just the scorer lock" was incomplete. R5 ran one clean single-v
   current-slot MEASURED; radix + width RETIRED (AC-2.3, 4992/4992); bf16-vs-fp32 score-reduce MEASURED
   (R7) via the runnable `score_reduce_dtype="fp32"` route — `ds_reduce_fp32` = production 0.620/0.000,
   near-selection-neutral (median Jaccard 0.998, `ac6_score_reduce_fp32_corrob.json`), NOT a culprit;
-  head_agg NOT-a-differing-variable (max on both paths; AC-2.2 covers cross-TP); only fp8-absorbed
-  BLOCKED (no production config toggles absorbed precision; exact-fp32 absorbed only on the
-  multi-variable reference path) + bounded second-order (raw-dot exact-fp32 0.013 vs fp8 0.000 ≤~1.3pp).
+  head aggregation (AC-2.2) MEASURED — within-rank `head_agg="max"` is matched, but cross-TP (production
+  SUM vs reference per-rank-local) is a second-order ≤~1.3pp difference (`head_agg_tp_semantics.json`);
+  only fp8-absorbed BLOCKED (no production config toggles absorbed precision; exact-fp32 absorbed only on
+  the multi-variable reference path) + bounded second-order (raw-dot exact-fp32 0.013 vs fp8 0.000 ≤~1.3pp).
   The current-slot leg is corroborated in BOTH regimes (sparse 4992/4992 swap + dense 3744/3744 add):
   `evidence/ac6_ref_cosine_noinc_corrob.json`
   (4992/4992 — the include flag swaps exactly the current decode slot; it is -inf-masked in every capture).
