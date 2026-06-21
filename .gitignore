@@ -230,6 +230,8 @@ work_dirs/
 # Executables
 *.exe
 *.out
+# but DO track the loop13 GSM8K run logs (the raw scores behind the committed evidence table)
+!development/loop13/evidence/*.out
 *.app
 *.iml
 
@@ -283,8 +285,10 @@ sgl-kernel/csrc/**/*_musa/
 artifacts/
 .claude/scheduled_tasks.lock
 
-# Humanize local loop state (never committed)
-.humanize*
+# Humanize RLCR loop records (round summaries/reviews, goal trackers, bitlesson, methodology analysis):
+# TRACKED on this branch as the single source of truth for the diagnostic loops (e.g. loop13).
+# NOTE: the multi-GB raw .pt capture scratch under development/loop13/evidence/.sglang_ds_* stays ignored
+# below — it is regenerable and would bloat the repo; the reduced/committed evidence already captures it.
 
 # RLCR active plan file (kept on disk, not tracked during the loop)
 development/loop5/refined_plan_v1.md

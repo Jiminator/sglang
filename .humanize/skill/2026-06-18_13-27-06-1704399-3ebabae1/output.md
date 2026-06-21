@@ -1,0 +1,13 @@
+ALLOWLIST_CONFIRMED: no as-written. 16/6 package split is OK only if you also strip dropped diagnostic callers/flags: `model_runner.py:3256-3263` imports dropped `selection_capture` whenever DS is on; `selection_kernel.py:631` imports dropped `oracle_artifact_sink` from eager path called at `selection_kernel.py:1207`; also strip `score_capture`/`latent_capture` config hooks (`config.py:30-33`, `139-142`, `365-372`; `deepseek_v2.py:2381-2386`, `2457-2459`; `selection_kernel.py:1186-1191`). `calibrate.py` is optional but OK per decision.
+
+NEWFILE_VERDICTS:
+1. `managers/scheduler_components/output_streamer.py`: SHIP, closure-required for DS meta response. Aggregates `req.per_request_summary` at `output_streamer.py:460-471` and emits it into `BatchTokenIDOutput` at `output_streamer.py:516`.
+2. `managers/multi_tokenizer_mixin.py`: SHIP, runtime-optional/not conc-64 default. Required only for multi-tokenizer splitting; preserves `{key: [one_entry]}` at `multi_tokenizer_mixin.py:130-153`, passed at `245` and `327`.
+3. `managers/detokenizer_manager.py`: SHIP, closure-required for normal detokenized client response. Forwards `per_request_summary` into `BatchStrOutput` at `detokenizer_manager.py:395`; tokenizer consumes it at `tokenizer_manager.py:1799-1806`.
+4. `distributed/device_communicators/custom_all_reduce_v2.py`: SHIP, closure-required for conc-64/custom-AR DS score reduce. `selection_kernel.py:197-198` passes `override_algo`; callee support is `custom_all_reduce_v2.py:129-144`, `150-161`.
+5. `layers/attention/dsa/dequant_k_cache.py`: SHIP if `lifted_budget.py` ships; closure-required only for lifted-budget graph-safe decode, not default boot/conc-64. Caller is `lifted_budget.py:301-305`; graph path is `dsa_backend.py:2139-2167`.
+6. `bench_serving.py`: DROP, eval instrumentation only. DS/meta capture is `bench_serving.py:108`, `659-725`, `1980-2002`; not import/boot/server runtime closure.
+
+MISSING_CLOSURE: No additional files found beyond your accounted list + these 6. Strip-only misses: `server_args.py:666`, `6107-6120`, `7215-7222` and `validator.py:328-343`, `357+`, `546+` radix-fixture artifact/gate if fixture scaffolding is not shipping.
+
+KERNEL_DEPS: NONE-NEW. Existing deps used: Triton DS kernels (`absorbed_latent_kernel.py:27-31`, `page_table_adapter.py:30-35`, `topk_kernel.py:42-48`, required fast path asserts at `topk_kernel.py:267`); existing `sgl_kernel.flash_mla.flash_mla_sparse_fwd` for lifted-budget (`dsa_backend.py:2198`, already in base); existing CustomAllReduceV2 JIT all-reduce (`custom_all_reduce_v2.py:10`); `deep_gemm` is existing DSA/DeepSeek, not newly introduced by DS.

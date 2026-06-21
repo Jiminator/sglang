@@ -1,0 +1,10 @@
+CompletionSampler initialized with self.model='/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db' self.temperature=0.0 self.max_tokens=512 self.stop=['Question', 'Assistant:', '<|separator|>']
+  0%|          | 0/200 [00:00<?, ?it/s]  0%|          | 1/200 [00:14<48:24, 14.60s/it]  2%|▏         | 3/200 [00:44<48:21, 14.73s/it] 35%|███▌      | 70/200 [00:45<00:55,  2.34it/s] 38%|███▊      | 75/200 [00:45<00:48,  2.56it/s] 40%|███▉      | 79/200 [00:46<00:43,  2.79it/s] 46%|████▋     | 93/200 [00:46<00:27,  3.89it/s] 50%|████▉     | 99/200 [00:47<00:22,  4.45it/s] 52%|█████▏    | 103/200 [00:47<00:19,  4.96it/s] 55%|█████▌    | 110/200 [00:47<00:14,  6.08it/s] 64%|██████▍   | 128/200 [00:48<00:07,  9.54it/s] 77%|███████▋  | 154/200 [00:49<00:03, 13.55it/s] 86%|████████▌ | 171/200 [00:50<00:01, 14.98it/s] 90%|█████████ | 180/200 [00:50<00:01, 16.65it/s] 94%|█████████▍| 189/200 [00:51<00:00, 16.29it/s]100%|█████████▉| 199/200 [00:51<00:00, 18.63it/s]100%|██████████| 200/200 [00:51<00:00,  3.85it/s]
+Total latency: 51.928 s
+Score: 0.620
+Output throughput: 559.847 token/s
+[METRIC] gsm8k_score=0.62 labels={"model": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db", "eval": "gsm8k"}
+[METRIC] gsm8k_latency=51.92842983826995 labels={"model": "/cluster-storage/models/models--zai-org--GLM-5.1-FP8/snapshots/f396cf805182f4ca10fa675e1a99815b3ca384db", "eval": "gsm8k"}
+Writing report to /tmp/gsm8k__cluster-storage_models_models--zai-org--GLM-5.1-FP8_snapshots_f396cf805182f4ca10fa675e1a99815b3ca384db.html
+{'score:std': np.float64(0.48538644398046393), 'score': np.float64(0.62), 'latency': 51.92842983826995, 'output_throughput': 559.8474687284819}
+Writing results to /tmp/gsm8k__cluster-storage_models_models--zai-org--GLM-5.1-FP8_snapshots_f396cf805182f4ca10fa675e1a99815b3ca384db.json
