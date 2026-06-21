@@ -108,6 +108,18 @@ are the AC-4 length-cap garbage-rate for the forced-all control: real garbage (n
 unwritten/dup/-1/out-of-range/adapter-error) = **0**; the current-slot invalidation is reported separately
 as the H3 marker.
 
+### AC-4 length-cap garbage counters — production SCORED selection (Round 15)
+`evidence/ac4_garbage_counters.json` (ac4_garbage_counters.py), from a guarded `ds_garbage` eager run
+(the same `forced_all_assert` capture, but WITHOUT `forced_all_dense_control`, so it captures the REAL
+production scored top-k, not the forced sweep). On **41808 dense + 37440 sparse** captured rows the
+production scored selection has **zero real garbage**: 0 duplicate, 0 live-lane `-1`, 0 out-of-range
+(vs the true KV capacity), 0 adapter errors, **0 NON-current unwritten** in both regimes. And
+`current_slot_unwritten = 0` — the production scored selection does **not** include the current decode
+slot (it is masked/excluded by the `_slot_written` invalidation). This is the H3 cause seen from the
+**selection** side: production *excludes* the current slot (so it's never in the scored set), while the
+forced-all control (AC-2.1) *forces* it in and finds it marked unwritten. Together: the adapter +
+selected-index path is clean in both regimes; the dense degradation is the current-slot exclusion (H3).
+
 ## AC-2.2 (refinement) — recency-anchor sweep: dense vs sparse diverge
 Codex adversarial review (evidence/codex_review_h3.md) flagged that forced-all bypasses
 validity for the whole dense row and that sparse (real pruning) may have a coexisting H0.

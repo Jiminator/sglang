@@ -2,8 +2,8 @@
   "arm": "ds_reduce_fp32",
   "measured_git_sha": "8b55dfba3",
   "ledger_generated_from": {
-    "head_sha_at_generation": "e6211233505ce62bbc9f2adf3ca94c10bc87bc4b",
-    "generator_blob_sha": "91c2b679e8e0570e2c0852220781b44188797feb",
+    "head_sha_at_generation": "08caeda272e5fe6f23635dd6489225d9b55ee44b",
+    "generator_blob_sha": "ecf6546ce613ca1eea801266c0d6e1d1e5484196",
     "worktree": "dirty (+uncommitted evidence/generator)",
     "note": "generated BEFORE its own commit exists, so head_sha_at_generation is one commit behind the commit that contains this file; generator_blob_sha pins the source exactly"
   },
@@ -28,7 +28,7 @@
   },
   "ds_selected_vs_total_by_regime": null,
   "fields_not_instrumented": [
-    "per_step_length_cap_garbage_counts for the SCORED arms (production_ds, ref_*, ds_anchor_*) \u2014 the forced_all_assert adapter instrumentation exists (R13) and is currently run on the ds_forced_all control; enabling it on the other DS arms is the remaining AC-4 garbage-counter work"
+    "per_step_length_cap_garbage_counts for the REFERENCE arms (ref_faithful, ref_cosine) and ds_anchor_* \u2014 production_ds is now instrumented (evidence/ac4_garbage_counters.json, R15: dense+sparse scored selection, real garbage 0) and the forced-all control via forced_all_assertions.json (R14); enabling the same forced_all_assert capture on the reference arms is the remaining AC-4 garbage-counter work"
   ],
   "note": "AC-6 leg 7 (R7): production raw-dot with score_reduce_dtype=fp32 (the ONE variable vs production bf16-reduce). Reduce dtype is near-selection-neutral (bf16-vs-fp32 median Jaccard 0.998, ac6_score_reduce_fp32_corrob.json) -> expect ~production scores; reduce is NOT the regression driver.",
   "measured_source": "worktree HEAD 8b55dfba3 (dirty: serve.sh ds_reduce_fp32 mode added R7; serve.sh blob 1324c5a6cf21a1916e34bbad0cbc1c57cf1d518d). Config-only diff vs `ds` (same graph mode): score_reduce_dtype=fp32; production raw-dot selection code unchanged.",

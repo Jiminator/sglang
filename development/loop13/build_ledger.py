@@ -235,15 +235,19 @@ ARMS = {
                           note="recency anchor budget=64 on production top-k"),
 }
 
-NOT_INSTRUMENTED = ["per_step_length_cap_garbage_counts for the SCORED arms (production_ds, ref_*, "
-                    "ds_anchor_*) — the forced_all_assert adapter instrumentation exists (R13) and is "
-                    "currently run on the ds_forced_all control; enabling it on the other DS arms is the "
-                    "remaining AC-4 garbage-counter work"]
+NOT_INSTRUMENTED = ["per_step_length_cap_garbage_counts for the REFERENCE arms (ref_faithful, ref_cosine) "
+                    "and ds_anchor_* — production_ds is now instrumented (evidence/ac4_garbage_counters.json, "
+                    "R15: dense+sparse scored selection, real garbage 0) and the forced-all control via "
+                    "forced_all_assertions.json (R14); enabling the same forced_all_assert capture on the "
+                    "reference arms is the remaining AC-4 garbage-counter work"]
 # AC-4 per-example sample IDs/order are now instrumented (deterministic stock loader, re-derived):
 SAMPLE_IDS_ARTIFACT = "evidence/gsm8k_sample_ids.json"
 # AC-2.1 forced-all dense physical-slot + slot-validity assertions (R14) — also the AC-4 garbage counters
 # for the forced-all control (real garbage 0; the only unwritten slot is the current decode slot = H3).
 FORCED_ALL_ASSERT_ARTIFACT = "evidence/forced_all_assertions.json"
+# AC-4 length-cap garbage counters for the production SCORED selection (R15): dense+sparse, real garbage 0;
+# the current slot is NOT in the scored selection (it is masked/excluded = the H3 cause from the selection side).
+SCORED_GARBAGE_ARTIFACT = "evidence/ac4_garbage_counters.json"
 
 ledger = []
 for arm, a in ARMS.items():
@@ -284,6 +288,8 @@ for arm, a in ARMS.items():
         rec["ds_selector_behavior"] = ds_selector_behavior_for(arm)  # what the selector ACTUALLY does (AC-4)
         if effective_ds_config_for(arm).get("forced_all_dense_control"):
             rec["forced_all_assertions_artifact"] = FORCED_ALL_ASSERT_ARTIFACT  # AC-2.1 + AC-4 garbage counters
+        if arm == "production_ds":
+            rec["garbage_counters_artifact"] = SCORED_GARBAGE_ARTIFACT  # AC-4 scored-selection garbage (R15)
     if a.get("ac6_leg"):
         rec["ac6_leg"] = a["ac6_leg"]
         rec["corroboration_artifact"] = a.get("corroboration")
@@ -376,10 +382,12 @@ lines += ["",
           "Per-example sample IDs/order: evidence/gsm8k_sample_ids.json (deterministic stock loader; all "
           "arms share the identical ordered slice — dense lines [5:205], sparse [24:174]). Per-step "
           "length-cap garbage counters (duplicate/unwritten/-1/out-of-range physical slots + adapter "
-          "errors) are instrumented for the forced-all control: evidence/forced_all_assertions.json "
-          "(R14, per (rank,req,layer,step) via _ds_slot_written) — real garbage 0 across 61776 dense rows; "
-          "the only unwritten slot is the current decode slot (the H3 marker). Enabling the same capture "
-          "on the SCORED arms (production_ds, ref_*) is the remaining AC-4 garbage-counter work. "
+          "errors) via _ds_slot_written, per (rank,req,layer,step): forced-all control "
+          "evidence/forced_all_assertions.json (R14, real garbage 0 across 61776 rows; only unwritten = the "
+          "current decode slot = the H3 marker); PRODUCTION SCORED selection "
+          "evidence/ac4_garbage_counters.json (R15, dense+sparse, real garbage 0 — the current slot is NOT "
+          "in the scored selection, i.e. masked/excluded = the H3 cause from the selection side). Enabling "
+          "the same capture on the REFERENCE arms is the remaining AC-4 garbage work. "
           "Gate uses the measured batched DSA comparator (0.975/0.973).",
           "",
           "Gate (AC-5, evidence/gate_ac5.md): naive-DS=best(faithful raw-dot, cosine): dense 0.950 (2.5pp), "

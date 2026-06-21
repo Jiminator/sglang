@@ -43,6 +43,7 @@
     "current_slot_unwritten_H3": 61776,
     "adapter_errors": 0
   },
+  "h3_marker_on_all_rows": true,
   "h3_finding": "On every dense row exactly ONE live slot is marked unwritten by _ds_slot_written, and it is exactly the CURRENT decode slot (logical seq_len-1) \u2014 the production _slot_written[layer,out_cache_loc]=False invalidation. The adapter gather is exact and every OTHER slot is written, so the selected-index/adapter path is clean; the dense regression localizes to this current-slot invalidation (H3), observed directly on the validity bitmap. Forcing all tokens recovers dense to ~0.950, so the current slot's KV is valid at attention time and the bit is merely stale.",
   "verdict": "PASS \u2014 the forced-all dense adapter gather is exact (physical==req_to_token), every NON-current slot is written, and there are zero duplicate/-1/out-of-range/adapter errors across all layers+steps; the ONLY unwritten slot is the current decode slot on every row (the H3 marker). So the selected-index/adapter path is a clean no-op and the dense regression is DOWNSTREAM of selection at the slot-validity (H3) level.",
   "mismatches": []

@@ -112,6 +112,9 @@ def main():
     # unwritten is NOT a failure — it is the H3 marker (the slot-validity invalidation under test).
     all_pass = (dense_rows > 0 and eq == dense_rows and logical_sweep_ok == dense_rows
                 and dup == 0 and neg == 0 and oor == 0 and noncurrent_unwritten == 0 and err == 0)
+    # The H3 finding ("current slot unwritten on every row") is only assertable when it actually holds on
+    # ALL dense rows — make the prose conditional so a future rerun cannot inherit a stale claim.
+    h3_on_all_rows = (dense_rows > 0 and current_unwritten == dense_rows)
     report = {
         "ac": "AC-2.1 forced-all dense downstream-isolation assertions (per layer + decode step)",
         "source": f"{capdir} (ds_forced_all_assert eager run)",
@@ -134,13 +137,18 @@ def main():
         "ac4_garbage_counters": {"duplicate": dup, "live_-1": neg, "out_of_range": oor,
                                  "unwritten_noncurrent": noncurrent_unwritten,
                                  "current_slot_unwritten_H3": current_unwritten, "adapter_errors": err},
-        "h3_finding": ("On every dense row exactly ONE live slot is marked unwritten by _ds_slot_written, "
-                       "and it is exactly the CURRENT decode slot (logical seq_len-1) — the production "
-                       "_slot_written[layer,out_cache_loc]=False invalidation. The adapter gather is exact "
-                       "and every OTHER slot is written, so the selected-index/adapter path is clean; the "
-                       "dense regression localizes to this current-slot invalidation (H3), observed "
-                       "directly on the validity bitmap. Forcing all tokens recovers dense to ~0.950, so "
-                       "the current slot's KV is valid at attention time and the bit is merely stale."),
+        "h3_marker_on_all_rows": h3_on_all_rows,
+        "h3_finding": (("On every dense row exactly ONE live slot is marked unwritten by _ds_slot_written, "
+                        "and it is exactly the CURRENT decode slot (logical seq_len-1) — the production "
+                        "_slot_written[layer,out_cache_loc]=False invalidation. The adapter gather is exact "
+                        "and every OTHER slot is written, so the selected-index/adapter path is clean; the "
+                        "dense regression localizes to this current-slot invalidation (H3), observed "
+                        "directly on the validity bitmap. Forcing all tokens recovers dense to ~0.950, so "
+                        "the current slot's KV is valid at attention time and the bit is merely stale.")
+                       if h3_on_all_rows else
+                       (f"current-slot-unwritten holds on {current_unwritten}/{dense_rows} dense rows "
+                        "(NOT all) — the H3-on-every-row claim does not apply to this capture; see the "
+                        "per-row counters.")),
         "verdict": ("PASS — the forced-all dense adapter gather is exact (physical==req_to_token), every "
                     "NON-current slot is written, and there are zero duplicate/-1/out-of-range/adapter "
                     "errors across all layers+steps; the ONLY unwritten slot is the current decode slot on "

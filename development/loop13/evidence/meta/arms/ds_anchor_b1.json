@@ -2,8 +2,8 @@
   "arm": "ds_anchor_b1",
   "measured_git_sha": "29ec137bf",
   "ledger_generated_from": {
-    "head_sha_at_generation": "e6211233505ce62bbc9f2adf3ca94c10bc87bc4b",
-    "generator_blob_sha": "91c2b679e8e0570e2c0852220781b44188797feb",
+    "head_sha_at_generation": "08caeda272e5fe6f23635dd6489225d9b55ee44b",
+    "generator_blob_sha": "ecf6546ce613ca1eea801266c0d6e1d1e5484196",
     "worktree": "dirty (+uncommitted evidence/generator)",
     "note": "generated BEFORE its own commit exists, so head_sha_at_generation is one commit behind the commit that contains this file; generator_blob_sha pins the source exactly"
   },
@@ -28,7 +28,7 @@
   },
   "ds_selected_vs_total_by_regime": null,
   "fields_not_instrumented": [
-    "per_step_length_cap_garbage_counts for the SCORED arms (production_ds, ref_*, ds_anchor_*) \u2014 the forced_all_assert adapter instrumentation exists (R13) and is currently run on the ds_forced_all control; enabling it on the other DS arms is the remaining AC-4 garbage-counter work"
+    "per_step_length_cap_garbage_counts for the REFERENCE arms (ref_faithful, ref_cosine) and ds_anchor_* \u2014 production_ds is now instrumented (evidence/ac4_garbage_counters.json, R15: dense+sparse scored selection, real garbage 0) and the forced-all control via forced_all_assertions.json (R14); enabling the same forced_all_assert capture on the reference arms is the remaining AC-4 garbage-counter work"
   ],
   "note": "recency anchor budget=1 (current slot only) on production top-k",
   "ds_config": {
