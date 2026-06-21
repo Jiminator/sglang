@@ -2,8 +2,8 @@
   "arm": "ds_reduce_fp32",
   "measured_git_sha": "8b55dfba3",
   "ledger_generated_from": {
-    "head_sha_at_generation": "482ff808390ae2f489ab7246aa55d518ba44f6ef",
-    "generator_blob_sha": "a0eeed5f48328c2d2c2510b6d22dca6075db2ccd",
+    "head_sha_at_generation": "d11e752b8cfe4ba2c8be658b957631b70b9072e1",
+    "generator_blob_sha": "80e818a7ff8459d88433528f5ff8ec156f4f8f65",
     "worktree": "dirty (+uncommitted evidence/generator)",
     "note": "generated BEFORE its own commit exists, so head_sha_at_generation is one commit behind the commit that contains this file; generator_blob_sha pins the source exactly"
   },
@@ -28,7 +28,7 @@
   },
   "ds_selected_vs_total_by_regime": null,
   "fields_not_instrumented": [
-    "per_step_length_cap_garbage_counts (invalid/unwritten/duplicate/out-of-range physical slots \u2014 requires logical_to_physical adapter instrumentation not built this loop)"
+    "per_step_length_cap_garbage_counts for the SCORED arms (production_ds, ref_*, ds_anchor_*) \u2014 the forced_all_assert adapter instrumentation exists (R13) and is currently run on the ds_forced_all control; enabling it on the other DS arms is the remaining AC-4 garbage-counter work"
   ],
   "note": "AC-6 leg 7 (R7): production raw-dot with score_reduce_dtype=fp32 (the ONE variable vs production bf16-reduce). Reduce dtype is near-selection-neutral (bf16-vs-fp32 median Jaccard 0.998, ac6_score_reduce_fp32_corrob.json) -> expect ~production scores; reduce is NOT the regression driver.",
   "measured_source": "worktree HEAD 8b55dfba3 (dirty: serve.sh ds_reduce_fp32 mode added R7; serve.sh blob 1324c5a6cf21a1916e34bbad0cbc1c57cf1d518d). Config-only diff vs `ds` (same graph mode): score_reduce_dtype=fp32; production raw-dot selection code unchanged.",

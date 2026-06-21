@@ -234,10 +234,15 @@ ARMS = {
                           note="recency anchor budget=64 on production top-k"),
 }
 
-NOT_INSTRUMENTED = ["per_step_length_cap_garbage_counts (invalid/unwritten/duplicate/out-of-range "
-                    "physical slots — requires logical_to_physical adapter instrumentation not built this loop)"]
+NOT_INSTRUMENTED = ["per_step_length_cap_garbage_counts for the SCORED arms (production_ds, ref_*, "
+                    "ds_anchor_*) — the forced_all_assert adapter instrumentation exists (R13) and is "
+                    "currently run on the ds_forced_all control; enabling it on the other DS arms is the "
+                    "remaining AC-4 garbage-counter work"]
 # AC-4 per-example sample IDs/order are now instrumented (deterministic stock loader, re-derived):
 SAMPLE_IDS_ARTIFACT = "evidence/gsm8k_sample_ids.json"
+# AC-2.1 forced-all dense physical-slot assertions (R13) — also the AC-4 garbage counters for the
+# forced-all downstream-isolation control (all zero; PASS).
+FORCED_ALL_ASSERT_ARTIFACT = "evidence/forced_all_assertions.json"
 
 ledger = []
 for arm, a in ARMS.items():
@@ -276,6 +281,8 @@ for arm, a in ARMS.items():
         rec["ds_config"] = _cfg                              # literal launch JSON (serve.sh)
         rec["effective_ds_config"] = effective_ds_config_for(arm)  # full resolved config OBJECT
         rec["ds_selector_behavior"] = ds_selector_behavior_for(arm)  # what the selector ACTUALLY does (AC-4)
+        if effective_ds_config_for(arm).get("forced_all_dense_control"):
+            rec["forced_all_assertions_artifact"] = FORCED_ALL_ASSERT_ARTIFACT  # AC-2.1 + AC-4 garbage counters
     if a.get("ac6_leg"):
         rec["ac6_leg"] = a["ac6_leg"]
         rec["corroboration_artifact"] = a.get("corroboration")

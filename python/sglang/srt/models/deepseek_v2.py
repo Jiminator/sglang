@@ -2715,6 +2715,26 @@ class DeepseekV2AttentionMLA(
                         error_count=error_count,
                         layer_id=layer_id,
                     )
+                    # AC-2.1 diagnostic (default-off): dump post-adapter physical slots for the
+                    # forced-all dense downstream-isolation assertions. Host-side copy only; the
+                    # selected set is unchanged whether or not this fires.
+                    if getattr(_selector.config, "forced_all_assert", False) and (
+                        req_to_token is not None and _rpi is not None
+                    ):
+                        from sglang.srt.layers.attention.double_sparsity.forced_all_assert_capture import (
+                            maybe_dump_forced_all_assert,
+                        )
+
+                        maybe_dump_forced_all_assert(
+                            ds_out=ds_out,
+                            selected_indices=selected_indices,
+                            valid_lengths=valid_lengths,
+                            req_pool_indices=_rpi,
+                            req_to_token=req_to_token,
+                            seq_lens=_seq_lens,
+                            error_count=int(error_count),
+                            layer_id=layer_id,
+                        )
                 return ds_out
 
             error_state: Dict[str, Any] = {}

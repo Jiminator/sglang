@@ -2,8 +2,8 @@
   "arm": "ref_cosine_noinc",
   "measured_git_sha": "393966c02d0d57d0c99c355367f52704c1964581",
   "ledger_generated_from": {
-    "head_sha_at_generation": "482ff808390ae2f489ab7246aa55d518ba44f6ef",
-    "generator_blob_sha": "a0eeed5f48328c2d2c2510b6d22dca6075db2ccd",
+    "head_sha_at_generation": "d11e752b8cfe4ba2c8be658b957631b70b9072e1",
+    "generator_blob_sha": "80e818a7ff8459d88433528f5ff8ec156f4f8f65",
     "worktree": "dirty (+uncommitted evidence/generator)",
     "note": "generated BEFORE its own commit exists, so head_sha_at_generation is one commit behind the commit that contains this file; generator_blob_sha pins the source exactly"
   },
@@ -28,7 +28,7 @@
   },
   "ds_selected_vs_total_by_regime": null,
   "fields_not_instrumented": [
-    "per_step_length_cap_garbage_counts (invalid/unwritten/duplicate/out-of-range physical slots \u2014 requires logical_to_physical adapter instrumentation not built this loop)"
+    "per_step_length_cap_garbage_counts for the SCORED arms (production_ds, ref_*, ds_anchor_*) \u2014 the forced_all_assert adapter instrumentation exists (R13) and is currently run on the ds_forced_all control; enabling it on the other DS arms is the remaining AC-4 garbage-counter work"
   ],
   "note": "AC-6 single-variable bisection arm (R5): cosine with reference_include_current=FALSE \u2014 the ONE variable flipped vs ref_cosine (production current-slot exclusion). head_agg=max, exact-fp32, TF32-off all unchanged. reference_cosine_select code unchanged since R1 fea920c06; serve.sh ref_cosine_noinc mode added R5. RESULT: dense 0.940->0.625 (=production 0.620) AND sparse 0.940->0.313 -> current-slot exclusion (H3) is a major culprit in BOTH regimes, not dense-only. Sparse needs BOTH cosine scorer AND current-slot inclusion (see 2x2 in ROOT_CAUSE).",
   "measured_source": "worktree HEAD 393966c02 (dirty: serve.sh ref_cosine_noinc mode added R5; serve.sh blob e1c83e22a085f0aa499adfbaca155d9aa0069579; committed c7b66f04b). reference_cosine_select selection code unchanged since R1 fea920c06.",

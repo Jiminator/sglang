@@ -102,6 +102,15 @@ case "$MODE" in
     DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "forced_all_dense_control": true}' "$MASK")
     EXTRA=( --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
     ;;
+  ds_forced_all_assert)
+    # Same forced-all dense control, EAGER, with forced_all_assert -> dump the post-adapter physical
+    # slots per (rank,req,layer) for the AC-2.1 downstream-isolation assertions (guarded diagnostic,
+    # host-side copy only). Capture dir defaults to CWD/.sglang_ds_forcedall; override via
+    # SGLANG_DS_FORCEDALL_ASSERT_DIR.
+    [ -s "$MASK" ] || { echo "FATAL: mask $MASK missing"; exit 2; }
+    DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "forced_all_dense_control": true, "forced_all_assert": true}' "$MASK")
+    EXTRA=( --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
+    ;;
   ds_anchor)
     # Sparse-regime current/recent-slot confirmation: production top-2048 selection PLUS a recency
     # anchor that force-includes the most-recent ANCHOR_BUDGET slots (incl. the

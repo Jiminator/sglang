@@ -1,0 +1,23 @@
+{
+  "ac": "AC-2.1 forced-all dense downstream-isolation assertions",
+  "source": "/sgl-workspace/sglang/development/loop13/evidence/.sglang_ds_forcedall (ds_forced_all_assert eager run)",
+  "records": 4368,
+  "dense_forced_all_rows": 4368,
+  "assertions": {
+    "logical_sweep_[0..seq_len-1]": "4368/4368",
+    "physical==req_to_token[0:seq_len]": "4368/4368",
+    "rows_with_duplicate_physical": 0,
+    "rows_with_live_lane_-1": 0,
+    "rows_with_out_of_range_physical": 0,
+    "adapter_error_count_total": 0
+  },
+  "ac4_garbage_counters": {
+    "duplicate": 0,
+    "live_-1": 0,
+    "out_of_range": 0,
+    "adapter_errors": 0,
+    "unwritten": "0 (subsumed by physical==req_to_token equality)"
+  },
+  "verdict": "PASS \u2014 forced-all dense selection maps to exactly the request's own KV slots with zero duplicate/-1/out-of-range/adapter errors, so dense selection is a PROVABLE no-op and the residual dense degradation is DOWNSTREAM of selection (H3).",
+  "mismatches": []
+}

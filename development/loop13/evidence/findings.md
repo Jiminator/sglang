@@ -85,6 +85,21 @@ This is a DOWNSTREAM-of-selection / slot-validity bug (H3), NOT:
 The fix (force-include the current/recent slot, or restore _slot_written before selection)
 is a FOLLOW-UP loop — this diagnosis loop lands no fix.
 
+### AC-2.1 physical-slot assertions (Round 13) — the adapter is a clean no-op
+`evidence/forced_all_assertions.json` (ac2_1_forced_all_assertions.py), reduced from a guarded
+`ds_forced_all_assert` eager run (the new `forced_all_assert` diagnostic dumps the post-`logical_to_physical`
+physical slots per (rank,req,layer); host-side copy, production byte-identical when off). On **4368/4368**
+real dense rows (median seq_len 793):
+- forced logical sweep `[0..seq_len-1]` — 4368/4368;
+- physical slots == `req_to_token[req_pool, 0:seq_len]` (element-wise) — 4368/4368;
+- **0** duplicate, **0** live-lane `-1`, **0** out-of-range, **0** adapter `error_count`.
+
+So when the dense selected set is forced to all tokens, the `logical_to_physical`→`transform_index_page_table_decode`
+adapter maps it to EXACTLY the request's own KV slots — the same slots DSA feeds — with zero garbage. The
+forced-all dense selection is therefore a **provable no-op**, which CONFIRMS the dense regression is
+downstream of selection (the `_slot_written` current-slot exclusion, H3), not a selected-index/adapter
+bug. These same counters are the AC-4 length-cap garbage-rate for the forced-all control (all zero).
+
 ## AC-2.2 (refinement) — recency-anchor sweep: dense vs sparse diverge
 Codex adversarial review (evidence/codex_review_h3.md) flagged that forced-all bypasses
 validity for the whole dense row and that sparse (real pruning) may have a coexisting H0.
