@@ -8,7 +8,6 @@ probes. Fields that require harness instrumentation not built this loop
 (per-example sample IDs/order, per-step length-cap garbage counters) are listed
 under "fields_not_instrumented" rather than faked — fail-honest, not fail-closed-silent.
 """
-import glob
 import json
 import os
 import re
