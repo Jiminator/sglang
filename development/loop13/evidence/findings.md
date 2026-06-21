@@ -139,12 +139,40 @@ mask-channel gather). Codex Round-0 demanded these and they overturn the Round-0
 - NOT H0 (cosine transfers) and NOT H2 (same mask works under cosine) → the no-mask ablation (AC-7,
   a BAD-branch action) is moot on the GOOD branch.
 
-## AC-2.3 RESOLVED (Round 4) — radix == torch.topk, width [5120] == full
-Proven directly on 624/624 REAL captured GLM-5.1-FP8 post-reduce score rows
-(verify_ac2_3.py -> evidence/ac2_3_radix_width_equivalence.json): the production blocked/radix
-algorithm (blocked_topk_sequence_order) == exact torch select_topk_sequence_order on every row
-(624/624 identical), and selector-width [5120] == full (624/624). Running both top-k methods on the
-SAME score row needs no score-vs-selection alignment, so it is conclusive (the Round-3 81/546 was the
-score-vs-selection step-misalignment artifact). The "approximate radix top-k" and "selector-width
-ladder" suspects from the draft are RETIRED on real data. (topk_kernel.py's Triton kernel implements
-this same blocked algorithm.)
+## ROUND 5 — AC-6 bisection refines R1: the two culprits INTERACT (scorer × current-slot 2×2)
+The R1 "sparse = just the scorer lock" was incomplete. R5 ran one clean single-variable arm
+(`ref_cosine_noinc`: cosine with `reference_include_current=false`, the ONLY change vs faithful cosine)
+→ dense **0.940→0.625**, sparse **0.940→0.313**. Full 2×2 (dense / sparse):
+
+| scorer \ current-slot | EXCLUDED (production) | INCLUDED (faithful) |
+|---|---|---|
+| raw-dot | production 0.620 / 0.000 | ref_faithful 0.950 / 0.013 |
+| cosine | ref_cosine_noinc 0.625 / 0.313 | ref_cosine 0.940 / 0.940 |
+
+- Sparse ≈0.94 needs **BOTH** cosine scorer AND current-slot inclusion; neither alone (cosine+excl
+  0.313, rawdot+incl 0.013). Corroborated by `ds_anchor` (current-slot forced back on raw-dot → still
+  0.000/0.007). The two regressions interact.
+- Current-slot exclusion (H3) is a culprit in **BOTH** regimes (cosine: dense 0.940→0.625, sparse
+  0.940→0.313), not dense-only. The faithful cosine 0.940 sparse ceiling used the non-production
+  current-slot inclusion; the production-path cosine ceiling (current excluded) is **0.313** sparse.
+- Untested numeric legs (fp8/bf16-reduce/head_agg) need a production-path cosine kernel (code) = out
+  of scope (no fix). Radix+width retired on real sparse rows (AC-2.3 below, 4992/4992).
+
+## AC-2.3 RESOLVED (Round 5, pruning-valid) — radix == torch.topk, width [5120] == full
+On **4992** real captured sparse GLM-5.1 score rows (median seq_len **4280**, 2048 of ~4280 pruned),
+`verify_ac2_3.py` (`evidence/ac2_3_radix_width_equivalence.json`) shows the production blocked/radix
+algorithm == exact `select_topk_sequence_order` (**4992/4992**) and selector-width [5120] == full
+(**4992/4992**). The verifier fails (exit 2) if `pruning_rows==0`, so it cannot pass on smoke captures.
+The radix and selector-width AC-2.3 suspects are RETIRED on the actual sparse workload. (Superseding
+the Round-4 over-claim below, which ran on seq_len=13 smoke rows.)
+
+### Why the Round-4 AC-2.3 claim was invalid (history; superseded by the RESOLVED section above)
+The Round-4 method is right (run BOTH the production blocked/radix algorithm and exact
+select_topk_sequence_order on the SAME captured score row; no score-vs-selection alignment needed),
+but its captures were INVALID for the sparse regime: all 624 committed score rows are seq_len=13 while
+top_k=2048, so both methods select every position — pruning is never exercised and the width-[5120]
+check is vacuous (w=min(5120,13)=13). A select-all sanity check cannot retire the radix or
+selector-width suspects for the sparse DS workload (selected≈2048 of ~5.6k). The Round-3 81/546 was a
+separate score-vs-selection step-misalignment artifact. R5 fixed this by capturing the SPARSE regime
+(median seq_len 4280) and hardening verify_ac2_3.py to record the seq_len distribution + a pruning_rows
+count and FAIL if pruning_rows==0 — so it cannot pass on smoke captures again.

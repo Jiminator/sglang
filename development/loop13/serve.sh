@@ -73,6 +73,17 @@ case "$MODE" in
     DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "selector_impl": "reference_cosine", "reference_include_current": true}' "$MASK")
     EXTRA=( --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
     ;;
+  ref_cosine_noinc)
+    # Single-variable bisection arm: EXACTLY ref_cosine with the ONE production-vs-faithful
+    # variable flipped -> reference_include_current=false (production excludes the current decode
+    # slot). Same cosine scorer, same head_agg=max, same exact-fp32/TF32-off path. Isolates whether
+    # the sparse cosine recovery survives the production current-slot exclusion (sparse expected to
+    # stay high -> scorer-driven, current-slot-independent; dense expected to drop -> current-slot is
+    # the dense variable). EAGER.
+    [ -s "$MASK" ] || { echo "FATAL: mask $MASK missing"; exit 2; }
+    DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "selector_impl": "reference_cosine", "reference_include_current": false}' "$MASK")
+    EXTRA=( --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
+    ;;
   ds_forced_all)
     # Dense forced-all downstream-isolation control: for seq <= top_k the selector
     # emits logical [0..seq_len-1] (selection is a no-op), so residual dense

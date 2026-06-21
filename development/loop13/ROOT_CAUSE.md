@@ -15,11 +15,13 @@ to transfer (not H0) and NOT a bad mask (not H2: the same mask reaches ≈DSA un
 
 > Baseline note: DSA batched here measures 0.975/0.973 (the plan's original-session sparse number
 > was 0.953; reproduced as 0.973). The gate uses the consistent **measured batched** comparator.
-> Scope note: the sparse attribution below is established at the **reference-ceiling** level
-> (cosine vs raw-dot, with the materialized-raw selection-equality proof). The full
-> **production-path** one-variable bisection (head_agg / fp8-absorbed / bf16-reduce / radix-topk /
-> selector-width arms; production-style cosine) is **pending** (next round) — the remaining
-> production opts are shown second-order (production raw-dot 0.000 ≈ exact raw-dot 0.013).
+> Scope note (updated Round 5): the scorer × current-slot single-variable bisection is now
+> **measured** (see the 2×2 in the AC-6 section) — the sparse recovery to ≈0.94 needs BOTH the cosine
+> scorer AND current-slot inclusion; current-slot exclusion (H3) hurts BOTH regimes. The radix-topk
+> and selector-width legs are **retired** on real sparse rows (AC-2.3, 4992/4992). The production-NUMERIC
+> legs (fp8-absorbed / bf16-reduce / head_agg cross-TP) remain **untested** — they need a production-path
+> cosine kernel (a code change), out of scope under "no fix" (production raw-dot 0.000 ≈ exact raw-dot
+> 0.013 shows them second-order).
 
 1. **Dense 0.620 → H3: the current decode slot is excluded from its own attention** (the
    `_slot_written` invalidation in `_select_topk_indices` is not restored before the selected set
@@ -29,7 +31,9 @@ to transfer (not H0) and NOT a bad mask (not H2: the same mask reaches ≈DSA un
    the absorbed-latent identity only holds for the raw dot — i.e. it **dropped the Loop-7 cosine
    scorer** (Loop 7 measured cosine lifting 16K NIAH recall 5%→40%). The raw-dot scorer collapses
    long-context selection (faithful raw-dot sparse **0.013**); the **cosine** scorer, re-materialized
-   here on a per-head signature, recovers sparse to **0.940 ≈ DSA**.
+   here on a per-head signature, recovers sparse to **0.940 ≈ DSA** — **but only together with the H3
+   fix below** (R5 single-variable bisection: cosine with the production current-slot exclusion reaches
+   only sparse **0.313**; the two regressions interact — see the AC-6 2×2). Sparse needs both fixes.
 
 ## Per-arm GSM8K evidence
 
@@ -43,6 +47,7 @@ to transfer (not H0) and NOT a bad mask (not H2: the same mask reaches ≈DSA un
 | anchor-recency b=1 (current slot ONLY) | 0.970 | 0.000 | airtight H3: ONE token recovers dense |
 | **FAITHFUL raw-dot** (current incl, TF32 off) | **0.950** | **0.013** | H3-clean ceiling; raw-dot collapses sparse |
 | **FAITHFUL cosine** (current incl, TF32 off) | **0.940** | **0.940** | **cosine recovers sparse 0.013→0.940 ≈ DSA**; DS active (2048<5610, no fallback) |
+| **cosine, current EXCLUDED** (`ref_cosine_noinc`, R5) | **0.625** | **0.313** | AC-6 single-variable arm: ONLY current-slot flipped vs faithful cosine → both regimes drop; sparse needs BOTH fixes |
 
 The reference selectors are performance-naive and exact (fp32 dequant of the resident latent,
 exact absorbed channel-dot / cosine, exact full-width `torch.topk`; no fp8-in-register dequant,
@@ -57,22 +62,46 @@ naive-DS = best(faithful raw-dot, cosine): dense best(0.950, 0.940)=0.950 vs DSA
 (within 3 pp); sparse best(0.013, **0.940**)=0.940 vs DSA 0.973 → 3.3 pp (within 5 pp, > 0).
 **GATE = GOOD** → AC-6 (single-variable bisection).
 
-## AC-6 bisection — reference-ceiling result (production-path arms pending, next round)
-The two culprits are named from the reference-ceiling single-variable controls below; the full
-production-path one-variable bisection (production-style cosine; head_agg / fp8-absorbed / bf16-reduce
-/ radix-topk / selector-width arms, each corroborated) is **pending**. Until then the sparse culprit
-is the strong, single-variable-supported **candidate**, not a closed production-path attribution.
-1. **Sparse: the raw-dot `scorer_norm="off"` lock.** Single-variable control: faithful raw-dot
-   sparse 0.013 vs faithful **cosine** sparse 0.940 (identical setup; ONLY the scorer normalization
-   differs). Cost ≈ **92.7 pp** sparse. Responsible change: Loop 11 table-free rewrite
-   (`01e3ff238`, deletes `TokenLabelTable`; `config.py` hard-locks `scorer_norm="off"`).
-2. **Dense: the current decode slot exclusion (H3).** Single-variable: production DS dense 0.620 vs
-   current-slot-included 0.950 (forced-all) / 0.970 (anchor b=1). Cost ≈ **33 pp** dense.
-   Mechanism: `_slot_written[layer_id, out_cache_loc] = False` before scoring, not restored before
-   the selected set is consumed.
+## AC-6 bisection — the scorer × current-slot 2×2 (measured, Round 5)
+The two culprits are **not independent**. Round 5 closed the single-variable bisection across the
+two reference→production variables that have clean config toggles (scorer normalization; current-slot
+inclusion). The new arm `ref_cosine_noinc` flips **exactly one** variable vs the faithful cosine
+ceiling — `reference_include_current` true→false (the production current-slot exclusion) — everything
+else (cosine scorer, `head_agg=max`, exact fp32, TF32-off) held fixed. Result: dense **0.940→0.625**
+(= production dense 0.620) and sparse **0.940→0.313**. Combined with the existing arms this gives the
+full 2×2:
 
-Both deltas are far above the GSM8K single-run significance bar (n=150 binomial stderr ≈ 4 pp), so
-they are unambiguous on a single run (per the significance convention).
+| scorer \ current-slot | EXCLUDED (production) | INCLUDED (faithful) |
+|---|---|---|
+| **raw-dot** | production 0.620 / **0.000** | ref_faithful 0.950 / **0.013** |
+| **cosine** | ref_cosine_noinc 0.625 / **0.313** | ref_cosine 0.940 / **0.940** |
+
+(each cell dense / sparse). Reading the sparse column:
+1. **Sparse recovery to ≈0.94 requires BOTH fixes.** Cosine alone with the production current-slot
+   exclusion reaches only **0.313**; current-slot inclusion alone under raw-dot reaches only **0.013**
+   (corroborated by the `ds_anchor` arms — forcing the recent slots back on the raw-dot path stays
+   0.000/0.007). Only cosine **and** current-slot inclusion together reach 0.940. The two regressions
+   **interact**; neither is individually sufficient for sparse.
+2. **Current-slot exclusion (H3) is a culprit in BOTH regimes**, not dense-only as the
+   reference-ceiling framing implied. Under cosine it costs dense 0.940→0.625 **and** sparse
+   0.940→0.313. The faithful cosine 0.940 sparse ceiling benefited from the (non-production)
+   current-slot inclusion; the production-path cosine ceiling (current excluded) is **0.313** sparse.
+3. **Scorer (raw-dot → cosine)** is the other variable: holding current-slot included it is worth
+   sparse 0.013→0.940; holding it excluded, 0.000→0.313. Responsible change: Loop 11 table-free
+   rewrite (`01e3ff238`, deletes `TokenLabelTable`; `config.py` hard-locks `scorer_norm="off"`).
+   Current-slot mechanism: `_slot_written[layer_id, out_cache_loc]=False` before scoring, not restored
+   before the selected set is consumed.
+
+All deltas are far above the GSM8K single-run significance bar (n=150 binomial stderr ≈ 4 pp).
+
+**Remaining (out of scope — "no fix"):** the production-NUMERIC legs (fp8-absorbed vs exact fp32,
+bf16 vs fp32 reduce, head_agg cross-TP semantics) are second-order and **untestable via config toggle**
+— the reference selector computes in exact fp32, so a production-numerics cosine would need a
+production-path cosine kernel (a code change to the selection path), which this diagnosis loop does not
+land. The radix-topk and selector-width legs are **retired** on real sparse rows: AC-2.3
+(`evidence/ac2_3_radix_width_equivalence.json`) proves the production blocked/radix algorithm ==
+`torch.topk` (4992/4992) and width [5120] == full (4992/4992) on captured GLM-5.1 score rows with
+median seq_len 4280 (2048 of ~4280 pruned).
 
 ## Why NOT H0 / H2 (and why the no-mask ablation is moot)
 - NOT H0 (algorithm doesn't transfer): cosine reaches ≈DSA in both regimes, so the

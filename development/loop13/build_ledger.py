@@ -85,6 +85,15 @@ ARMS = {
                        ds={"dense": [714, 714], "sparse": [2048, 5610]}, measured_sha=R1_SHA,
                        dense="ref_cosine_dense", sparse="ref_cosine_sparse",
                        note="faithful COSINE ceiling: materialized per-head signature, normalize after gather"),
+    "ref_cosine_noinc": dict(mode="ref_cosine_noinc", extra="--disable-radix-cache --disable-cuda-graph --enable-double-sparsity",
+                             ds=None, measured_sha=R1_SHA,
+                             dense="ref_cosine_noinc_dense", sparse="ref_cosine_noinc_sparse",
+                             note="AC-6 single-variable bisection arm (R5): cosine with reference_include_current=FALSE — "
+                                  "the ONE variable flipped vs ref_cosine (production current-slot exclusion). head_agg=max, "
+                                  "exact-fp32, TF32-off all unchanged. reference_cosine_select code unchanged since R1 fea920c06; "
+                                  "serve.sh ref_cosine_noinc mode added R5. RESULT: dense 0.940->0.625 (=production 0.620) AND "
+                                  "sparse 0.940->0.313 -> current-slot exclusion (H3) is a major culprit in BOTH regimes, not "
+                                  "dense-only. Sparse needs BOTH cosine scorer AND current-slot inclusion (see 2x2 in ROOT_CAUSE)."),
     "ds_forced_all": dict(mode="ds_forced_all", extra="--disable-radix-cache --disable-cuda-graph --enable-double-sparsity",
                           ds={"dense": [716, 716]}, dense="ds_forced_all_dense", sparse=None, measured_sha=DIAG0_SHA,
                           note="dense forced-all [0..seq-1] control (incl current); dense-only"),
@@ -162,9 +171,37 @@ lines += ["",
           "physical slots). Gate uses the measured batched DSA comparator (0.975/0.973).",
           "",
           "Gate (AC-5, evidence/gate_ac5.md): naive-DS=best(faithful raw-dot, cosine): dense 0.950 (2.5pp), "
-          "sparse 0.940 (3.3pp) -> GOOD. Verdict: dense=H3 current-slot; sparse=raw-dot scorer_norm=off lock "
-          "(reference-ceiling; production-path bisection pending)."]
+          "sparse 0.940 (3.3pp) -> GOOD. Verdict (AC-6 bisection, R5): the scorer x current-slot 2x2 is "
+          "measured — sparse 0.94 needs BOTH the cosine scorer AND current-slot inclusion (cosine+excl=0.313, "
+          "rawdot+incl=0.013, rawdot+excl=production 0.000). Current-slot exclusion (H3) is a culprit in BOTH "
+          "regimes (cosine dense 0.940->0.625, sparse 0.940->0.313 when flipped). Radix+width retired on real "
+          "sparse rows (AC-2.3). Untested numeric legs (fp8/bf16-reduce/head_agg) need a production-path cosine "
+          "kernel = code change, out of scope (no fix)."]
 open(os.path.join(EVID, "evidence_table.md"), "w").write("\n".join(lines) + "\n")
+
+# Single source of truth for provenance: patch run_meta.json's generator fields
+# from the SAME GEN_BLOB/GEN_HEAD stamped into the per-arm JSONs, so the per-arm
+# JSONs, the table header, and run_meta can never disagree (Codex R4: they did —
+# run_meta had a stale blob 1391f0e... while the arms had f8771c7f2...).
+RUN_META = os.path.join(EVID, "meta", "run_meta.json")
+if os.path.exists(RUN_META):
+    rm = json.load(open(RUN_META))
+    rm["git_sha_current"] = GEN_HEAD
+    rm["ledger_generator_blob_sha"] = GEN_BLOB
+    json.dump(rm, open(RUN_META, "w"), indent=2)
+
+# Consistency assertion: the generator blob recorded in every per-arm JSON, in the
+# table header, and in run_meta.json must be identical. Fail loud otherwise.
+table_hdr = open(os.path.join(EVID, "evidence_table.md")).read()
+assert GEN_BLOB[:12] in table_hdr, f"table header missing generator blob {GEN_BLOB[:12]}"
+for r in ledger:
+    arm_blob = json.load(open(os.path.join(ARMS_DIR, f"{r['arm']}.json")))["ledger_generated_from"]["generator_blob_sha"]
+    assert arm_blob == GEN_BLOB, f"{r['arm']}.json blob {arm_blob} != generator {GEN_BLOB}"
+if os.path.exists(RUN_META):
+    rm_blob = json.load(open(RUN_META))["ledger_generator_blob_sha"]
+    assert rm_blob == GEN_BLOB, f"run_meta.json blob {rm_blob} != generator {GEN_BLOB}"
+
 print(f"wrote {len(ledger)} per-arm JSONs to evidence/meta/arms/ and regenerated evidence_table.md")
+print(f"provenance consistent: generator blob {GEN_BLOB[:12]} in per-arm JSONs + table + run_meta.json")
 for r in ledger:
     print(f"  {r['arm']}: dense_b={r['scores']['dense_batched']} sparse_b={r['scores']['sparse_batched']}")
