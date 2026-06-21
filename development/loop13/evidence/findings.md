@@ -9,10 +9,12 @@ Git sha 180f6dd6d, mask sha256 5c89c516… . See `evidence_table.md` for the ful
 | DSA (native) batched | 0.975 | 0.973 |
 | DSA serial | 0.965 | 0.947 |
 | DSA-radix-off batched | 0.960 | 0.940 |
+| DSA-radix-off serial | 0.965 | 0.973 |
 | production DS batched | **0.620** | **0.000** |
-| production DS serial (dense) | 0.655 | — |
+| production DS serial | 0.655 | 0.013 |
 
 - Regression reproduced. `--disable-radix-cache` is output-neutral (DSA-radix-off ≈ DSA), so the radix *cache* is not the cause.
+- Serial ≈ batched on every arm (R21) → the regression is not batch-dependent; the full serial+batched table for all core arms is in `evidence_table.md` and `ROOT_CAUSE.md`.
 
 ## AC-3 — fp32 raw-dot reference selector (accuracy ceiling)
 The reference selector is performance-naive and algorithmically exact: it dequantizes the
