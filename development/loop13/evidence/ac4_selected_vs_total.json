@@ -1,0 +1,44 @@
+{
+  "production_ds": {
+    "dense": {
+      "selected_tokens": 334,
+      "total_tokens": 334,
+      "dense_fallback": 0,
+      "server_prompt_tokens": 327
+    },
+    "sparse": {
+      "selected_tokens": 2048,
+      "total_tokens": 3692,
+      "dense_fallback": 0,
+      "server_prompt_tokens": 3685
+    }
+  },
+  "ref_faithful": {
+    "dense": {
+      "selected_tokens": 334,
+      "total_tokens": 334,
+      "dense_fallback": 0,
+      "server_prompt_tokens": 327
+    },
+    "sparse": {
+      "selected_tokens": 2048,
+      "total_tokens": 3692,
+      "dense_fallback": 0,
+      "server_prompt_tokens": 3685
+    }
+  },
+  "ref_cosine": {
+    "dense": {
+      "selected_tokens": 334,
+      "total_tokens": 334,
+      "dense_fallback": 0,
+      "server_prompt_tokens": 327
+    },
+    "sparse": {
+      "selected_tokens": 2048,
+      "total_tokens": 3692,
+      "dense_fallback": 0,
+      "server_prompt_tokens": 3685
+    }
+  }
+}

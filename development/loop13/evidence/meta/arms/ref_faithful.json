@@ -2,8 +2,8 @@
   "arm": "ref_faithful",
   "measured_git_sha": "fea920c06",
   "ledger_generated_from": {
-    "head_sha_at_generation": "8a179067dab1770874abee7056abdddfebea67cd",
-    "generator_blob_sha": "5995699f342a0a212a3bec59ae80783e057239e0",
+    "head_sha_at_generation": "e67f1b5f33a66121fb726d91a73174a8d9cf6844",
+    "generator_blob_sha": "c7cf6c059e789f670914999bea758e49edb96ccd",
     "worktree": "dirty (+uncommitted evidence/generator)",
     "note": "generated BEFORE its own commit exists, so head_sha_at_generation is one commit behind the commit that contains this file; generator_blob_sha pins the source exactly"
   },
@@ -23,17 +23,17 @@
   "scores": {
     "dense_batched": 0.95,
     "sparse_batched": 0.013,
-    "dense_serial": null,
-    "sparse_serial": null
+    "dense_serial": 0.965,
+    "sparse_serial": 0.013
   },
   "ds_selected_vs_total_by_regime": {
     "dense": [
-      714,
-      714
+      334,
+      334
     ],
     "sparse": [
       2048,
-      5610
+      3692
     ]
   },
   "fields_not_instrumented": [

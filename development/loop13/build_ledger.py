@@ -190,19 +190,24 @@ ARMS = {
                 note="native DSA indexer (DS off) — accuracy target"),
     "dsa_noradix": dict(mode="dsa_noradix", extra="--disable-radix-cache", ds=None, measured_sha=BASE_SHA,
                         dense="dsa_noradix_batched_dense", sparse="dsa_noradix_batched_sparse",
+                        dense_serial="dsa_noradix_serial_dense", sparse_serial="dsa_noradix_serial_sparse",
                         note="DSA + radix-cache disabled — output-neutral control"),
+    # ds selected-vs-total for the core DS arms is filled from evidence/ac4_selected_vs_total.json (R21,
+    # artifact-backed probe of the live server's meta_info["double_sparsity"]) — not static literals.
     "production_ds": dict(mode="ds", extra="--disable-radix-cache --enable-double-sparsity", measured_sha=BASE_SHA,
-                          ds={"dense": [715, 716], "sparse": [2048, 5620]},
+                          ds=None,
                           dense="ds_batched_dense", sparse="ds_batched_sparse",
-                          dense_serial="ds_serial_dense",
+                          dense_serial="ds_serial_dense", sparse_serial="ds_serial_sparse",
                           note="table-free DS (scorer_norm=off,head_agg=max,bf16 reduce,radix,W=5120) — the regression"),
     "ref_faithful": dict(mode="ref_faithful", extra="--disable-radix-cache --disable-cuda-graph --enable-double-sparsity",
-                         ds={"dense": [714, 714], "sparse": [2048, 5610]}, measured_sha=R1_SHA,
+                         ds=None, measured_sha=R1_SHA,
                          dense="ref_faithful_dense", sparse="ref_faithful_sparse",
+                         dense_serial="ref_faithful_serial_dense", sparse_serial="ref_faithful_serial_sparse",
                          note="faithful raw-dot ceiling: exact fp32, TF32 off, current slot incl (dense selected==seq_len)"),
     "ref_cosine": dict(mode="ref_cosine", extra="--disable-radix-cache --disable-cuda-graph --enable-double-sparsity",
-                       ds={"dense": [714, 714], "sparse": [2048, 5610]}, measured_sha=R1_SHA,
+                       ds=None, measured_sha=R1_SHA,
                        dense="ref_cosine_dense", sparse="ref_cosine_sparse",
+                       dense_serial="ref_cosine_serial_dense", sparse_serial="ref_cosine_serial_sparse",
                        note="faithful COSINE ceiling: materialized per-head signature, normalize after gather"),
     "ref_cosine_noinc": dict(mode="ref_cosine_noinc", extra="--disable-radix-cache --disable-cuda-graph --enable-double-sparsity",
                              ds=None, measured_sha=R5_NOINC_SHA, measured_source=R5_NOINC_SOURCE,
@@ -234,6 +239,43 @@ ARMS = {
                           ds=None, dense="ds_anchor64_dense", sparse="ds_anchor64_sparse", measured_sha=HARNESS_SHA,
                           note="recency anchor budget=64 on production top-k"),
 }
+
+# AC-4 selected-vs-total: the core DS arms (production_ds, ref_faithful, ref_cosine) read DS selected/total
+# from evidence/ac4_selected_vs_total.json — the live server's meta_info["double_sparsity"], probed per arm
+# per regime (R21) — instead of static literals. Fail-closed on the DS-active invariants.
+SELECTED_VS_TOTAL_ARTIFACT = "evidence/ac4_selected_vs_total.json"
+SVT_CORE_ARMS = ("production_ds", "ref_faithful", "ref_cosine")
+
+
+def validate_selected_vs_total_artifact():
+    """Fail closed unless evidence/ac4_selected_vs_total.json has a valid DS-active record for every core DS
+    arm in BOTH regimes: dense selected==total>0, sparse 0<selected<total, dense_fallback==0. Returns
+    {arm: {"dense": [sel, tot], "sparse": [sel, tot]}} for the ARMS table."""
+    p = os.path.join(HERE, SELECTED_VS_TOTAL_ARTIFACT)
+    assert os.path.exists(p), f"{SELECTED_VS_TOTAL_ARTIFACT} missing — run ac4_selected_vs_total_probe.py"
+    d = json.load(open(p))
+    out = {}
+    for arm in SVT_CORE_ARMS:
+        assert arm in d, f"selected-vs-total missing arm {arm}"
+        rec = d[arm]
+        assert set(rec) == {"dense", "sparse"}, f"selected-vs-total {arm} regimes={sorted(rec)}, need dense+sparse"
+        per = {}
+        for reg in ("dense", "sparse"):
+            v = rec[reg]
+            sel, tot, fb = int(v["selected_tokens"]), int(v["total_tokens"]), int(v["dense_fallback"])
+            assert fb == 0, f"selected-vs-total {arm} {reg} dense_fallback={fb} != 0"
+            if reg == "dense":
+                assert sel == tot and sel > 0, f"selected-vs-total {arm} dense selected={sel} total={tot}, expected ==>0"
+            else:
+                assert 0 < sel < tot, f"selected-vs-total {arm} sparse selected={sel} total={tot}, expected 0<sel<tot"
+            per[reg] = [sel, tot]
+        out[arm] = per
+    return out
+
+
+_SVT = validate_selected_vs_total_artifact()
+for _arm in SVT_CORE_ARMS:
+    ARMS[_arm]["ds"] = _SVT[_arm]
 
 NOT_INSTRUMENTED = ["per_step_length_cap_garbage_counts for ds_anchor_* only — every PRIMARY served DS arm "
                     "is now instrumented: production_ds (evidence/ac4_garbage_counters.json, R15/R16: scored "
@@ -429,6 +471,20 @@ for arm, a in ARMS.items():
     json.dump(rec, open(os.path.join(ARMS_DIR, f"{arm}.json"), "w"), indent=2)
     ledger.append(rec)
 
+# AC-4 serial-cell guard: a core arm with a WIRED serial label must have a non-blank serial cell (R21) — a
+# wired label whose .out is missing/empty (score None) is a blank table cell. Fail loud rather than render an
+# incomplete AC-4 table. (production_ds sparse is the only DS-collapsed serial; a 0.000 score is still a
+# filled cell — score_from_out returns 0.0, not None.)
+SVT_SERIAL_CORE = ("dsa", "dsa_noradix", "production_ds", "ref_faithful", "ref_cosine")
+for r in ledger:
+    if r["arm"] in SVT_SERIAL_CORE:
+        a = ARMS[r["arm"]]
+        for cell in ("dense_serial", "sparse_serial"):
+            if a.get(cell) is not None:
+                assert r["scores"][cell] is not None, (
+                    f"AC-4 core arm {r['arm']} {cell} is BLANK (label {a[cell]!r} has no .out score); "
+                    f"run the serial cell before regenerating the table")
+
 # AC-6 corroboration guard: an arm tagged as an AC-6 bisection leg that records a GSM8K score MUST
 # point at a corroboration artifact that exists on disk (plan: each measured AC-6 delta is corroborated
 # by recall/selected-index/score-rank). Fail loud otherwise — a scores-only AC-6 arm is not AC-6 evidence.
@@ -558,6 +614,7 @@ if os.path.exists(RUN_META):
     rm["ledger_generator_blob_sha"] = GEN_BLOB
     rm["recall_oracle_corroboration"] = {"artifact": RECALL_ORACLE_ARTIFACT, **RECALL_ORACLE_SUMMARY}
     rm["materialized_k_captured_row_equality"] = {"artifact": MATERIALIZED_K_ARTIFACT, **MATERIALIZED_K_SUMMARY}
+    rm["selected_vs_total"] = {"artifact": SELECTED_VS_TOTAL_ARTIFACT, "core_arms": {a: _SVT[a] for a in SVT_CORE_ARMS}}
     json.dump(rm, open(RUN_META, "w"), indent=2)
 
 # Consistency assertion: the generator blob recorded in every per-arm JSON, in the

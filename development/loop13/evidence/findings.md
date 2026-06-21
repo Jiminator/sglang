@@ -168,6 +168,22 @@ produced records in BOTH regimes, 0 `span_out_of_range`/`exception` markers, ser
   the needle in the long-context regime. (`selected_contains_needle_rate == recall@2048` in both regimes —
   the AC-1 oracle invariant.)
 
+### AC-4 serial cells + artifact-backed selected-vs-total (Round 21)
+The per-arm evidence table (`evidence_table.md`) now has the strict SERIAL (THREADS=1) cells for all AC-4
+core arms alongside batched, measured one TP=8 server at a time (no PYTHONPATH, completion API, teardown to
+0 MiB between arms): dsa 0.965/0.947, dsa_noradix 0.965/0.973, production_ds 0.655/0.013, ref_faithful
+0.965/0.013, ref_cosine 0.965/0.947 (dense/sparse). **Serial ≈ batched** for every arm — the regression is
+not a batch-dependent artifact. Two serial corroborations of the verdict: (1) production_ds **dense** serial
+0.655 ≈ batched 0.620 (still collapsed) while the current-slot-INCLUDED reference arms get dense ~0.965 —
+i.e. the dense gap tracks current-slot exclusion (H3), not batching; (2) production_ds **sparse** stays
+collapsed (serial 0.013 ≈ batched 0.000) and ref_faithful sparse stays 0.013 (raw-dot scorer) while
+ref_cosine sparse recovers (0.947) — serial confirms sparse is scorer-driven, not batch-driven.
+Selected-vs-total is now **artifact-backed** (`evidence/ac4_selected_vs_total.json`, R21 probe of the live
+server's `meta_info["double_sparsity"]`): for production_ds / ref_faithful / ref_cosine, **dense
+selected==total (334/334)** and **sparse selected 2048 < total 3692** with **dense_fallback==0** — DS
+genuinely active, pruning in the sparse regime, keeping all tokens in dense. `build_ledger.py` fail-closes
+on the DS-active invariants and on any blank serial cell for the core arms.
+
 ## AC-2.2 (refinement) — recency-anchor sweep: dense vs sparse diverge
 Codex adversarial review (evidence/codex_review_h3.md) flagged that forced-all bypasses
 validity for the whole dense row and that sparse (real pruning) may have a coexisting H0.

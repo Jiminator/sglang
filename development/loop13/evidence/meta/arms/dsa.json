@@ -2,8 +2,8 @@
   "arm": "dsa",
   "measured_git_sha": "180f6dd6decb1577da8e40bf002f79805ece693d",
   "ledger_generated_from": {
-    "head_sha_at_generation": "8a179067dab1770874abee7056abdddfebea67cd",
-    "generator_blob_sha": "5995699f342a0a212a3bec59ae80783e057239e0",
+    "head_sha_at_generation": "e67f1b5f33a66121fb726d91a73174a8d9cf6844",
+    "generator_blob_sha": "c7cf6c059e789f670914999bea758e49edb96ccd",
     "worktree": "dirty (+uncommitted evidence/generator)",
     "note": "generated BEFORE its own commit exists, so head_sha_at_generation is one commit behind the commit that contains this file; generator_blob_sha pins the source exactly"
   },
