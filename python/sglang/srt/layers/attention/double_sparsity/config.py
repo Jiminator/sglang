@@ -30,6 +30,7 @@ _ALLOWED_FIELDS = {
     "recall_oracle",
     "selection_capture",
     "latent_capture",
+    "materialized_k_capture",
     "score_capture",
     "selector_width_buckets",
     "selector_width_overflow_policy",
@@ -154,6 +155,7 @@ class DoubleSparsityConfig:
     recall_oracle: bool = False
     selection_capture: bool = False
     latent_capture: bool = False
+    materialized_k_capture: bool = False
     score_capture: bool = False
     selector_width_buckets: List[int] = field(
         default_factory=lambda: list(_DEFAULT_SELECTOR_WIDTH_BUCKETS)
@@ -207,6 +209,11 @@ class DoubleSparsityConfig:
             raise ValueError(
                 f"Double Sparsity 'latent_capture' must be a boolean, "
                 f"got {self.latent_capture!r}."
+            )
+        if not isinstance(self.materialized_k_capture, bool):
+            raise ValueError(
+                f"Double Sparsity 'materialized_k_capture' must be a boolean, "
+                f"got {self.materialized_k_capture!r}."
             )
         if not isinstance(self.score_capture, bool):
             raise ValueError(
@@ -410,6 +417,9 @@ def parse_double_sparsity_config(payload: str) -> DoubleSparsityConfig:
         ),
         latent_capture=_coerce_bool(
             data.get("latent_capture", False), "latent_capture"
+        ),
+        materialized_k_capture=_coerce_bool(
+            data.get("materialized_k_capture", False), "materialized_k_capture"
         ),
         score_capture=_coerce_bool(data.get("score_capture", False), "score_capture"),
         selector_width_buckets=_coerce_width_buckets(

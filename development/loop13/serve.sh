@@ -152,6 +152,15 @@ case "$MODE" in
     DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "selector_impl": "reference_cosine", "reference_include_current": true, "forced_all_assert": true}' "$MASK")
     EXTRA=( --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
     ;;
+  ref_faithful_matk)
+    # AC-3.1 captured-row materialized-K: ref_faithful config (reference_rawdot, current slot included) +
+    # materialized_k_capture -> dump the absorbed scorer's inputs per (rank,layer,regime,step) so an offline
+    # reducer can re-run absorbed raw-dot vs materialized fp32 K_label (cosine numerator) and assert top-2048
+    # selected-index equality on REAL rows. EAGER. Capture dir via SGLANG_DS_MATK_CAPTURE_DIR.
+    [ -s "$MASK" ] || { echo "FATAL: mask $MASK missing"; exit 2; }
+    DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "off", "anchor_budget": 0, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0, "selector_impl": "reference_rawdot", "reference_include_current": true, "materialized_k_capture": true}' "$MASK")
+    EXTRA=( --disable-radix-cache --disable-cuda-graph --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
+    ;;
   ds_recall_oracle)
     # AC-2.4 NIAH recall-oracle: production DS config + config-borne recall_oracle:true (the flag reaches the
     # TP workers; env does not). EAGER (the oracle's host-side rank/recall record is illegal under graph
@@ -177,7 +186,7 @@ case "$MODE" in
     DS_CONFIG=$(printf '{"top_k": 2048, "page_size": 64, "channel_mask_path": "%s", "device_buffer_size": 4096, "scorer_norm": "off", "head_agg": "max", "anchor_mode": "recency", "anchor_budget": %s, "enable_lifted_budget_decode": false, "lifted_budget_top_k": 0}' "$MASK" "$AB")
     EXTRA=( --disable-radix-cache --enable-double-sparsity --double-sparsity-config "$DS_CONFIG" )
     ;;
-  *) echo "FATAL: mode must be 'dsa', 'dsa_noradix', 'ds', 'ds_capture', 'ds_reduce_fp32', 'ref', 'ref_faithful', 'ref_cosine', 'ref_cosine_noinc', 'ds_forced_all', 'ds_forced_all_assert', 'ds_garbage', 'ref_faithful_garbage', 'ref_cosine_garbage', 'ds_recall_oracle', or 'ds_anchor'"; exit 2 ;;
+  *) echo "FATAL: mode must be 'dsa', 'dsa_noradix', 'ds', 'ds_capture', 'ds_reduce_fp32', 'ref', 'ref_faithful', 'ref_cosine', 'ref_cosine_noinc', 'ds_forced_all', 'ds_forced_all_assert', 'ds_garbage', 'ref_faithful_garbage', 'ref_cosine_garbage', 'ref_faithful_matk', 'ds_recall_oracle', or 'ds_anchor'"; exit 2 ;;
 esac
 
 # *** NO PYTHONPATH *** — default editable install = dev clone (the guard enforced this).

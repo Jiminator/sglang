@@ -1,0 +1,25 @@
+{
+  "ac": "AC-3.1 captured-row materialized fp32 K_label selected-index equality @2048",
+  "source": "/sgl-workspace/sglang/development/loop13/evidence/.sglang_ds_matk (ref_faithful_matk eager run; reference_rawdot_select inputs)",
+  "source_dir_basename": ".sglang_ds_matk",
+  "method": "rebuild bs=1 over the captured live fp8 latent; absorbed_latent_score_logical_fp8 (raw) vs absorbed_latent_cosine_logical_fp8(normalize=False) (materialized per-head K_label numerator); select_topk_sequence_order @2048; assert selected-index set equality per row.",
+  "index_topk": 2048,
+  "total_rows": 192,
+  "regimes": {
+    "dense": {
+      "rows": 96,
+      "selected_index_equal_rows": 96,
+      "max_abs_score_diff": 2e-09,
+      "mismatches": []
+    },
+    "sparse": {
+      "rows": 96,
+      "selected_index_equal_rows": 96,
+      "max_abs_score_diff": 7e-09,
+      "mismatches": []
+    }
+  },
+  "all_selected_index_equal": true,
+  "verdict": "EQUAL \u2014 on every captured decode row (dense + sparse) the absorbed raw-dot reference and the materialized fp32 K_label score select the IDENTICAL top-2048 indices, so the served raw-dot ceiling is the materialized-K_label ceiling on real data (captured-row form of the exact-algebra identity).",
+  "supersedes": "evidence/ac3_1_materialized_k.json (synthetic CPU algebra proof)"
+}

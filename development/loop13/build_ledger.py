@@ -248,6 +248,35 @@ SAMPLE_IDS_ARTIFACT = "evidence/gsm8k_sample_ids.json"
 FORCED_ALL_ASSERT_ARTIFACT = "evidence/forced_all_assertions.json"
 # AC-2.4 NIAH recall-oracle@2048 corroboration (R18): per-regime recall@2048 for the production DS scorer.
 RECALL_ORACLE_ARTIFACT = "evidence/ac2_4_recall_oracle.json"
+# AC-3.1 captured-row materialized fp32 K_label selected-index equality (R20): absorbed raw-dot == materialized
+# K_label top-2048 on REAL captured decode rows (supersedes the synthetic ac3_1_materialized_k.json).
+MATERIALIZED_K_ARTIFACT = "evidence/ac3_1_materialized_k_selected_index_equality.json"
+
+
+def validate_materialized_k_artifact():
+    """Fail closed unless the AC-3.1 captured-row materialized-K equality artifact proves equality on real
+    rows in BOTH regimes. The reducer is itself fail-closed (writes only when every captured row's top-2048
+    sets match), but the ledger must independently reject an absent / partial / not-all-equal artifact.
+    Returns the per-regime summary."""
+    p = os.path.join(HERE, MATERIALIZED_K_ARTIFACT)
+    assert os.path.exists(p), f"{MATERIALIZED_K_ARTIFACT} missing — run ac3_1_materialized_k_equality.py"
+    d = json.load(open(p))
+    assert d.get("index_topk") == 2048, f"materialized-K index_topk={d.get('index_topk')!r}, expected 2048"
+    assert d.get("source_dir_basename") == ".sglang_ds_matk", (
+        f"materialized-K source_dir_basename={d.get('source_dir_basename')!r}, expected '.sglang_ds_matk'")
+    assert d.get("all_selected_index_equal") is True, "materialized-K all_selected_index_equal must be true"
+    regs = d.get("regimes", {})
+    assert set(regs) == {"dense", "sparse"}, f"materialized-K regimes={sorted(regs)}, expected exactly dense+sparse"
+    summary = {}
+    for reg in ("dense", "sparse"):
+        v = regs[reg]
+        rows = v.get("rows", 0)
+        eq = v.get("selected_index_equal_rows", -1)
+        assert rows > 0 and eq == rows, (
+            f"materialized-K {reg} selected_index_equal_rows={eq} != rows={rows} (or zero)")
+        summary[reg] = {"rows": rows, "selected_index_equal_rows": eq,
+                        "max_abs_score_diff": v.get("max_abs_score_diff")}
+    return summary
 
 
 def validate_recall_oracle_artifact():
@@ -518,6 +547,9 @@ open(os.path.join(EVID, "evidence_table.md"), "w").write("\n".join(lines) + "\n"
 # AC-2.4: load + validate the recall-oracle corroboration artifact (fail-closed: both regimes, non-zero
 # records) and record its summary at the top level, so the ledger cannot render AC-2.4 present when it isn't.
 RECALL_ORACLE_SUMMARY = validate_recall_oracle_artifact()
+# AC-3.1: load + validate the captured-row materialized-K equality artifact (fail-closed: both regimes, all
+# rows selected-index-equal) before recording it — the synthetic proof alone is not the captured-row claim.
+MATERIALIZED_K_SUMMARY = validate_materialized_k_artifact()
 
 RUN_META = os.path.join(EVID, "meta", "run_meta.json")
 if os.path.exists(RUN_META):
@@ -525,6 +557,7 @@ if os.path.exists(RUN_META):
     rm["git_sha_current"] = GEN_HEAD
     rm["ledger_generator_blob_sha"] = GEN_BLOB
     rm["recall_oracle_corroboration"] = {"artifact": RECALL_ORACLE_ARTIFACT, **RECALL_ORACLE_SUMMARY}
+    rm["materialized_k_captured_row_equality"] = {"artifact": MATERIALIZED_K_ARTIFACT, **MATERIALIZED_K_SUMMARY}
     json.dump(rm, open(RUN_META, "w"), indent=2)
 
 # Consistency assertion: the generator blob recorded in every per-arm JSON, in the

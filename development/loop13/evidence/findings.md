@@ -21,6 +21,19 @@ full-width `torch.topk` — **no** fp8-in-register dequant, **no** bf16 cross-TP
 **no** approximate radix top-k, **no** selector-width bucketing. Served via `selector_impl="reference_rawdot"`,
 eager. DS genuinely active on the sparse regime (selected 2048 < total, dense_fallback 0).
 
+### AC-3.1 — captured-row materialized fp32 `K_label` equality (Round 20)
+`evidence/ac3_1_materialized_k_selected_index_equality.json` (`ac3_1_materialized_k_equality.py`), from a
+guarded `ref_faithful_matk` eager run that dumps the served `reference_rawdot_select` inputs per
+(rank,layer,regime,step). On **96 dense + 96 sparse** captured decode rows, re-running the two served
+functions on each captured row — absorbed raw-dot (`absorbed_latent_score_logical_fp8`) vs the materialized
+per-head fp32 `K_label` numerator (`absorbed_latent_cosine_logical_fp8`, `normalize=False`) — and taking
+`select_topk_sequence_order(@2048)` of each yields the **IDENTICAL top-2048 selected-index set on every
+row** (96/96 both regimes; max abs score diff 2e-9 dense / 7e-9 sparse = fp32 round-off). So the absorbed
+raw-dot reference ceiling **is** the materialized fp32 `K_label` ceiling on REAL served data — the
+captured-row form of the exact-algebra identity (the synthetic CPU proof `ac3_1_materialized_k.json` is now
+superseded by this captured-row artifact). Fail-closed: the reducer writes only when every captured row's
+sets match in both regimes; the ledger independently re-asserts before recording `run_meta`.
+
 | arm | dense | sparse |
 |---|---|---|
 | naive-DS raw-dot (fp32 exact) batched | **0.620** | **0.000** |

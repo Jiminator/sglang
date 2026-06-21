@@ -2215,6 +2215,33 @@ class DeepseekV2AttentionMLA(
             if selector_impl == "reference_cosine"
             else reference_rawdot_select
         )
+        # AC-3.1 diagnostic (default-off): dump a self-contained minimal reconstruction of the absorbed
+        # scorer's inputs so an offline reducer can re-run absorbed raw-dot vs materialized fp32 K_label
+        # (cosine numerator) on REAL captured rows and assert top-2048 selected-index equality. Host-side
+        # copy only; the returned selection is unchanged whether or not this fires; eager-only (the host
+        # copies are illegal under CUDA-graph capture).
+        if getattr(selector.config, "materialized_k_capture", False) and not (
+            torch.cuda.is_available() and torch.cuda.is_current_stream_capturing()
+        ):
+            from sglang.srt.layers.attention.double_sparsity.materialized_k_capture import (
+                maybe_dump_materialized_k,
+            )
+
+            maybe_dump_materialized_k(
+                queries=queries,
+                latent_fp8=latent_fp8,
+                latent_scales=latent_scales,
+                w_sel=selector.absorbed_w_sel,
+                channel_selection=selector.channel_mask.channel_selection[layer_id],
+                channel_weights=selector.channel_mask.channel_weights[layer_id],
+                req_pool_indices=forward_batch.req_pool_indices,
+                req_to_token=req_to_token,
+                seq_lens=seq_lens,
+                max_top_k=selector.max_top_k,
+                written=slot_written[layer_id],
+                head_agg=getattr(selector.config, "head_agg", "max"),
+                layer_id=layer_id,
+            )
         return _select_fn(
             queries=queries,
             latent_fp8=latent_fp8,
