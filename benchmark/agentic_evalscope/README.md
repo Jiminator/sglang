@@ -13,7 +13,10 @@ tokenizer helper) and **evalscope** (pinned by commit in `sweep.sh`).
 
 ```bash
 cd benchmark/agentic_evalscope
-./sweep.sh
+# once per image: pre-install evalscope's deps without downgrading any
+# image pin (see evalscope-deps/README.md)
+evalscope-deps/scripts/install_evalscope_deps.sh
+PIP_NO_DEPS=1 ./sweep.sh
 ```
 
 One invocation does everything: installs the pinned evalscope, builds (or

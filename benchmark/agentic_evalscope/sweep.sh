@@ -17,10 +17,11 @@
 set -euo pipefail
 
 # Pin the evalscope client so sweep results stay comparable across days.
-# Tip: prefix with `PIP_NO_DEPS=1` (pip picks it up from the env) when you
-# don't want evalscope[all]'s dep tree (transformers, datasets, modelscope,
-# torch tooling, plotly, ...) to downgrade things the inference image has
-# pinned — requires the deps to already be present on the image.
+# On the inference image, ALWAYS prefix with `PIP_NO_DEPS=1` (pip picks it up
+# from the env): a plain evalscope[all] install downgrades pinned packages
+# (numpy, datasets, pillow, ...). The deps must then already be present — run
+#   evalscope-deps/scripts/install_evalscope_deps.sh
+# once per image (see evalscope-deps/README.md for the full rationale).
 EVALSCOPE_COMMIT=acd09b44384d53174768bb1063f675420f76fae9
 pip install "evalscope[all] @ git+https://github.com/modelscope/evalscope.git@${EVALSCOPE_COMMIT}"
 
