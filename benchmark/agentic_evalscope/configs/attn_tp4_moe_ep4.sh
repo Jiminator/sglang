@@ -4,6 +4,7 @@ set -euo pipefail
 
 : "${HOST:=localhost}"
 : "${PORT:=8002}"
+: "${MODEL_PATH:=nvidia/GLM-5.2-NVFP4}"
 
 # GLM-5.2-NVFP4 on 4 GPUs: attention TP4, MoE EP4. Spec 5/6, mem 0.87.
 # Only difference vs moe_tp4 is --ep-size 4.
@@ -18,7 +19,7 @@ set -euo pipefail
 # No PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True — it breaks CUDA-graph
 # capture on this image.
 exec python3 -m sglang.launch_server \
-    --model-path nvidia/GLM-5.2-NVFP4 \
+    --model-path "${MODEL_PATH}" \
     --tensor-parallel-size 4 \
     --ep-size 4 \
     --quantization modelopt_fp4 \

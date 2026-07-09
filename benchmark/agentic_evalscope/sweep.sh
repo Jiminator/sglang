@@ -27,7 +27,8 @@ pip install "evalscope[all] @ git+https://github.com/modelscope/evalscope.git@${
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATASET_JSON="${SCRIPT_DIR}/openhand-dataset.json"
-DATASET_MODEL=nvidia/GLM-5.2-NVFP4
+export MODEL_PATH="${MODEL_PATH:-nvidia/GLM-5.2-NVFP4}"
+DATASET_MODEL="${MODEL_PATH}"
 
 # Reuse a previously-built dataset to skip the multi-minute build loop.
 # Delete openhand-dataset.json (or set REBUILD_DATASET=1) to force a rebuild.
@@ -172,6 +173,7 @@ echo "Sweep outputs: ${SWEEP_DIR}"
 # Drop a marker file so the sweep directory self-identifies as an OpenHands run.
 cat > "${SWEEP_DIR}/DATASET.openhands" <<EOF
 dataset: openhands
+model: ${DATASET_MODEL}
 builder: build_openhands_padded_dataset.py
 pad_source: ${PAD_SOURCE}
 first_turn_length: 74160
