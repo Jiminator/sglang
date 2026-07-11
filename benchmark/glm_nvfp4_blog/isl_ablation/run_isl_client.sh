@@ -33,7 +33,10 @@ RUNGS=(80k 128k 256k 512k 1m)
 declare -A FIRST=( [80k]=74160 [128k]=122162 [256k]=250162 [512k]=506162 [1m]=994162 )
 declare -A CTX=(   [80k]=90000 [128k]=138000 [256k]=266000 [512k]=522000 [1m]=1010000 )
 
-# evalscope present?
+# Shared helpers, and guarantee datasets>=4.0 — the OpenHands build below needs
+# the `List` feature type. evalscope itself must already be installed.
+source "$DIR/../common.sh"
+ensure_datasets
 python3 -c "import evalscope.perf.plugin.datasets.swe_smith" 2>/dev/null \
     || { echo "evalscope missing — see ../evalscope-deps/README.md" >&2; exit 1; }
 

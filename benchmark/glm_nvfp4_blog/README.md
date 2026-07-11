@@ -60,6 +60,15 @@ that is what makes the levels composable.
 
 ## ISL ablation (GB300 only)
 
+One command on a bare 4xGB300 node — like the main figure, it sets up the
+client and the day-0 checkout, runs both ladders (day-0 first), and plots:
+
+```bash
+isl_ablation/run_all.sh          # -> isl_ablation/isl_ablation.png  (~4-6 h)
+```
+
+Or drive either ladder yourself (both resume rung-by-rung):
+
 ```bash
 cd isl_ablation
 ./run_isl_client.sh v0515        # 80K -> 1M context ladder at c=1, ~2-3 h
