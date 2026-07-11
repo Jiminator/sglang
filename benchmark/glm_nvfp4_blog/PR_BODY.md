@@ -20,6 +20,11 @@ b300/run_all.sh     # 8xB300 node   -> figure_b300.png  (TP=8 + TEP=8, all three
 
 On a bare machine (SGLang from this branch installed) the master script handles everything: installs the pinned evalscope on first use, creates the day-0 SGLang checkout (commit `22dce5720` from the public `glm-opt` branch, in a git worktree), builds the datasets, runs the six sweeps — day-0 first, then the v0.5.15 models — and renders the figure. Roughly 2–3 hours end to end.
 
+### Requirements
+
+- **Models** — `nvidia/GLM-5.2-NVFP4` and `nvidia/GLM-5.1-NVFP4`, ~470 GB of HF cache per model (≈1 TB for both). The scripts pass `--model-path nvidia/GLM-5.2-NVFP4`, so a bare run auto-downloads them from the Hub on first server boot — pre-stage them to avoid a long download mid-run. If your HF cache is on slow/network-backed storage (virtiofs, NFS), copy the snapshots to fast local disk and point `HF_HUB_CACHE` (or `HF_HOME`) at it; `--model-path` then resolves locally, with no script edits.
+- **Client + datasets — installed automatically on first run.** The master installs the commit-pinned evalscope (`evalscope-deps/` adds it without downgrading the image's packages; manual commands there if you prefer) and, when the image ships `datasets < 4.0`, pins `datasets>=4.0` — the OpenHands dataset declares the `List` feature type that older `datasets` can't read. No manual step, and the SGLang server itself never imports `datasets`.
+
 ### Expected output
 
 | GB300 | B300 |

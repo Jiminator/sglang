@@ -81,9 +81,14 @@ setting), scaling only the dataset first-turn budget and `--context-length`.
 
 ## Requirements and expectations
 
-- ~470 GB of HF cache per model. If your cache is on slow network storage,
-  copy the snapshot to local disk and point `--model-path` at it (keep
-  `--served-model-name nvidia/GLM-5.2-NVFP4`).
+- ~470 GB of HF cache per model — `nvidia/GLM-5.2-NVFP4` and
+  `nvidia/GLM-5.1-NVFP4` (≈1 TB for both); the scripts auto-download them via
+  `--model-path` on first boot, so pre-stage them to avoid a long mid-run
+  download. If your HF cache is on slow/network storage (virtiofs, NFS), copy
+  the snapshots to fast local disk and point `HF_HUB_CACHE` (or `HF_HOME`) at
+  it — `--model-path nvidia/GLM-5.2-NVFP4` then resolves locally, no script edits.
+- The client and `datasets>=4.0` are installed automatically on first run (the
+  OpenHands dataset needs the `List` feature type that older `datasets` lacks).
 - Day-0 sweeps are verified against `sgl-kernel 0.4.4`, `flashinfer 0.6.12`,
   `torch 2.11` (the day-0 tree predates newer kernel wheels).
 - On a fresh machine the very first sweep pays one-time JIT kernel compilation;
