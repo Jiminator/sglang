@@ -5,6 +5,11 @@ PORT="${PORT:-8002}"
 SERVER_PID=""
 DAY0_COMMIT=22dce572045c277ce46f1a287c4be1112b214368
 EVALSCOPE_PIN="evalscope[all] @ git+https://github.com/modelscope/evalscope.git@acd09b44384d53174768bb1063f675420f76fae9"
+# The OpenHands dataset (nebius/SWE-rebench-openhands-trajectories) declares the
+# `List` feature type, which the dataset build can only read with datasets>=4.0.
+# The release image ships datasets 3.6.0; evalscope's own modelscope dependency
+# already requires datasets>=4.0.0,<=4.8.4, so pin to that window's ceiling.
+DATASETS_PIN="datasets==4.8.4"
 
 sweep_already_done() {
     local dir=$1
@@ -15,7 +20,18 @@ sweep_already_done() {
     return 1
 }
 
+ensure_datasets() {
+    # `List` is only registered as a feature type from datasets 4.0 on; if it is
+    # missing the installed datasets is too old to read the OpenHands dataset.
+    if python3 -c "import sys, datasets.features.features as f; sys.exit(0 if 'List' in f._FEATURE_TYPES else 1)" 2>/dev/null; then
+        return 0
+    fi
+    echo "datasets too old for the OpenHands dataset (no 'List' feature type) — pinning $DATASETS_PIN"
+    pip install --no-deps "$DATASETS_PIN"
+}
+
 ensure_evalscope() {
+    ensure_datasets
     python3 -c "import evalscope.perf.plugin.datasets.swe_smith" 2>/dev/null && return 0
     echo "evalscope not found — installing the pinned client (one-time):"
     echo "  evalscope-deps/scripts/install_evalscope_deps.sh"
