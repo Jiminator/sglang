@@ -10,6 +10,10 @@ Reads results/<platform>/<curve>/<panel>/parallel_*/benchmark_summary.json and
 plots whatever exists. X = interactivity = 1000/TPOT(ms); Y = total throughput
 (prompt+completion tok/s, as evalscope reports) / n_gpus; one point per
 concurrency 1,2,4,8. The y-axis is truncated (break glyph, '0' at the origin).
+
+The built-in curves carry the figure's styling; any additional
+results/<platform>/<name>/ directory is auto-discovered and drawn with a
+fallback colour, so a new config appears just by adding its results.
 """
 from __future__ import annotations
 
@@ -37,6 +41,40 @@ PLATFORMS = {
     "gb300": ((("TP=4", "tp4"), ("TEP=4", "tep4")), 4, 10000),
     "b300": ((("TP=8", "tp8"), ("TEP=8", "tep8")), 8, 5000),
 }
+
+# Fallback colours for curve dirs not in CURVES, so an extra
+# results/<platform>/<name>/ directory still plots (kept distinct from the
+# registry colours above).
+FALLBACK_COLORS = ["#2E6E8E", "#4C8C4A", "#7E5AA2", "#B58900", "#5A5A5A"]
+
+
+def curve_style(name, k):
+    """(label, dir, color, linestyle, above) for a curve dir: the registry
+    entry when known, else a fallback so any extra results dir still plots."""
+    for c in CURVES:
+        if c[1] == name:
+            return c
+    return (name.replace("_", " "), name,
+            FALLBACK_COLORS[k % len(FALLBACK_COLORS)], "-", k % 2 == 0)
+
+
+def discover_curves(platforms):
+    """Curve dir names to plot: the registry order first, then any other dir
+    under results/<platform>/ that has data — so the figure adapts to new
+    configs without editing this file."""
+    known = [c[1] for c in CURVES]
+    extra = set()
+    for platform in platforms:
+        panels = PLATFORMS[platform][0]
+        base = BASE / "results" / platform
+        if not base.is_dir():
+            continue
+        for d in base.iterdir():
+            if (d.is_dir() and d.name not in known and any(
+                    any((d / pdir).glob("parallel_*/benchmark_summary.json"))
+                    for _, pdir in panels)):
+                extra.add(d.name)
+    return known + sorted(extra)
 
 
 def read_points(platform, curve_dir, panel_dir, n_gpus):
@@ -121,14 +159,15 @@ def render_row(axes_row, platform, curves):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("platform", choices=["gb300", "b300", "all"])
-    ap.add_argument("--curves", default="day0,glm52_v0515,glm51_v0515",
-                    help="comma-separated curve names to plot")
+    ap.add_argument("--curves", default=None,
+                    help="comma-separated curve dir names (default: the built-in "
+                         "curves plus any extra results/<platform>/<name>/ dirs)")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
-    wanted = args.curves.split(",")
-    curves = [c for c in CURVES if c[1] in wanted]
     platforms = ["gb300", "b300"] if args.platform == "all" else [args.platform]
+    names = args.curves.split(",") if args.curves else discover_curves(platforms)
+    curves = [curve_style(n, k) for k, n in enumerate(names)]
 
     nrows = len(platforms)
     fig, axes = plt.subplots(nrows, 2, figsize=(12.2, 4.7 * nrows), dpi=200,
