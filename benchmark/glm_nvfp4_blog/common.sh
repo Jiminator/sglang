@@ -57,6 +57,36 @@ ensure_day0_checkout() {
     fi
 }
 
+ensure_v0515_checkout() {
+    # Serving code for the v0.5.15 curves: the CURRENT TIP of the public
+    # release/v0.5.15 branch, re-fetched on every run — a post-release patch on
+    # the branch lands in the sweeps automatically, nothing is pinned to a
+    # commit. The worktree only swaps the Python layer (via PYTHONPATH);
+    # compiled kernels still come from the installed wheels.
+    if [ -z "${V0515_SGLANG:-}" ]; then
+        V0515_SGLANG="$(git rev-parse --show-toplevel)/../sglang-v0515"
+    fi
+    if git fetch https://github.com/sgl-project/sglang.git release/v0.5.15 2>/dev/null \
+        || git fetch origin release/v0.5.15; then
+        local tip
+        tip=$(git rev-parse FETCH_HEAD)
+        if [ ! -d "$V0515_SGLANG" ]; then
+            echo "creating release/v0.5.15 checkout at $V0515_SGLANG ($tip)"
+            git worktree add --detach "$V0515_SGLANG" "$tip"
+        elif [ "$(git -C "$V0515_SGLANG" rev-parse HEAD)" != "$tip" ]; then
+            echo "updating $V0515_SGLANG to the release/v0.5.15 tip ($tip)"
+            git -C "$V0515_SGLANG" checkout --detach "$tip"
+        fi
+    elif [ -d "$V0515_SGLANG" ]; then
+        echo "WARNING: cannot fetch release/v0.5.15 — reusing $V0515_SGLANG at" \
+             "$(git -C "$V0515_SGLANG" rev-parse --short HEAD)" >&2
+    else
+        echo "ERROR: cannot fetch release/v0.5.15 and no checkout at $V0515_SGLANG" >&2
+        exit 1
+    fi
+    V0515_SGLANG="$(cd "$V0515_SGLANG" && pwd)"
+}
+
 start_server() {
     local log=$1
     shift

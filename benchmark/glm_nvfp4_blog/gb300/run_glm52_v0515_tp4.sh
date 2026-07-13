@@ -7,6 +7,8 @@ source common.sh
 OUT=results/gb300/glm52_v0515
 sweep_already_done "$OUT/tp4" && exit 0
 ensure_evalscope
+ensure_v0515_checkout
+export PYTHONPATH="$V0515_SGLANG/python"
 
 export SGLANG_OPT_USE_TOPK_V2=1
 export SGLANG_ENABLE_MOE_DEFERRED_FINALIZE=1

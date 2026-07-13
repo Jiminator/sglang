@@ -40,6 +40,14 @@ ensure_datasets
 python3 -c "import evalscope.perf.plugin.datasets.swe_smith" 2>/dev/null \
     || { echo "evalscope missing — see ../evalscope-deps/README.md" >&2; exit 1; }
 
+# The v0.5.15 series serves the current tip of the public release/v0.5.15
+# branch (re-fetched each run, nothing pinned); the launched server inherits
+# PYTHONPATH. The day-0 series overrides it from DAY0_SGLANG in its own script.
+if [ "$SERIES" = v0515 ]; then
+    ensure_v0515_checkout
+    export PYTHONPATH="$V0515_SGLANG/python"
+fi
+
 # ---- Phase 1: build all per-rung datasets up front (CPU/network only) ----
 mkdir -p "$DIR/datasets"
 for tag in "${RUNGS[@]}"; do

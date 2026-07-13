@@ -1,9 +1,11 @@
 # GLM NVFP4 on SGLang — blog figure reproduction
 
 Everything needed to reproduce the figures from the GLM NVFP4 GB300/B300 blog
-post, using only **SGLang** (this branch, based on `release/v0.5.15`) and
+post, using only **SGLang** and
 **[evalscope](https://github.com/modelscope/evalscope)** (pinned by commit) as
-the benchmark client.
+the benchmark client. The v0.5.15 sweeps always serve the **current tip of the
+public `release/v0.5.15` branch** (re-fetched on every run), so post-release
+patches are picked up automatically — nothing is pinned to a commit.
 
 Workload: OpenHands multi-turn agentic replay — mean input ≈ 80k tokens/request,
 220 output tokens/turn, 13 turns/conversation, ~92% aggregate prefix-cache hit
@@ -47,9 +49,13 @@ that is what makes the levels composable.
 
 - Server flags live in the leaf scripts. The v0.5.15 sweeps run with
   `SGLANG_OPT_USE_TOPK_V2=1` and `SGLANG_ENABLE_MOE_DEFERRED_FINALIZE=1` (the
-  blog configuration). The day-0 sweeps launch the launch-day SGLang tree
-  (commit `22dce5720`, fetched from the public `glm-opt` branch into a git
-  worktree) with launch-day flags.
+  blog configuration), serving the current tip of the public `release/v0.5.15`
+  branch — each leaf re-fetches it into a git worktree (`../sglang-v0515`) and
+  points `PYTHONPATH` at it, so a `post1` patch on the branch lands in the
+  sweeps automatically (compiled kernels still come from the installed
+  wheels). The day-0 sweeps launch the launch-day SGLang tree (commit
+  `22dce5720`, fetched from the public `glm-opt` branch into a git worktree)
+  with launch-day flags — that curve is pinned on purpose.
 - `run_client.sh` builds the per-model dataset on first use (~10–20 min,
   cached under `datasets/`) and runs concurrency 1→8 in a single evalscope
   invocation (offset rotation keeps every step on fresh conversations).

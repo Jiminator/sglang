@@ -6,10 +6,11 @@ recreate with:
       --head Jiminator:glm-nvfp4-blog-repro --draft \
       --title "[DO NOT MERGE] Reproduction scripts for the GLM NVFP4 GB300/B300 blog figures" \
       --body-file <this file, without this comment block>
-Branch: Jiminator/sglang @ glm-nvfp4-blog-repro (single commit 2de921acd on release/v0.5.15 @ f63458b5b).
+Branch: Jiminator/sglang @ glm-nvfp4-blog-repro (based on release/v0.5.15; the
+scripts re-fetch the branch tip at run time, so the base needs no rebasing).
 -->
 
-**Do not merge** — this is a companion branch for the GLM NVFP4 GB300/B300 blog post so readers can reproduce its figures. Everything lives under `benchmark/glm_nvfp4_blog/`; no SGLang source is touched. The only dependencies are SGLang (this branch, based on `release/v0.5.15`) and [evalscope](https://github.com/modelscope/evalscope) pinned by commit as the benchmark client.
+**Do not merge** — this is a companion branch for the GLM NVFP4 GB300/B300 blog post so readers can reproduce its figures. Everything lives under `benchmark/glm_nvfp4_blog/`; no SGLang source is touched. The only dependencies are SGLang and [evalscope](https://github.com/modelscope/evalscope) pinned by commit as the benchmark client. The v0.5.15 sweeps always serve the **current tip of the public `release/v0.5.15` branch** (re-fetched on every run) — post-release patches are picked up automatically, nothing is pinned to a commit.
 
 ### One command per machine
 
@@ -46,7 +47,7 @@ gb300/run_all.sh                    all three curves + full figure
 └── gb300/run_glm51_v0515.sh  (…_tp4.sh, …_tep4.sh)
 ```
 
-`b300/` mirrors this at TP8/TEP8. Server flags are spelled out in the leaf scripts: v0.5.15 sweeps run with `SGLANG_OPT_USE_TOPK_V2=1` + `SGLANG_ENABLE_MOE_DEFERRED_FINALIZE=1` (the blog configuration); day-0 sweeps use launch-day flags (no `--bf16-gemm-backend`, `--cuda-graph-max-bs` spelling, no fused-top-k/deferred-finalize env vars) — that's the point of the curve. Plot any subset with `python3 plot_figure.py <gb300|b300|all> [--curves …]`.
+`b300/` mirrors this at TP8/TEP8. Server flags are spelled out in the leaf scripts: v0.5.15 sweeps run with `SGLANG_OPT_USE_TOPK_V2=1` + `SGLANG_ENABLE_MOE_DEFERRED_FINALIZE=1` (the blog configuration), serving the current `release/v0.5.15` tip from a git worktree (`../sglang-v0515`, re-fetched each run; compiled kernels come from the installed wheels); day-0 sweeps use launch-day flags (no `--bf16-gemm-backend`, `--cuda-graph-max-bs` spelling, no fused-top-k/deferred-finalize env vars) — that curve is pinned on purpose. Plot any subset with `python3 plot_figure.py <gb300|b300|all> [--curves …]`.
 
 ### ISL ablation (GB300)
 
