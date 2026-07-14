@@ -32,8 +32,8 @@ CONCS = (1, 2, 4, 8)
 
 CURVES = [
     ("GLM-5.2 day-0", "day0", "#9C948A", "--", False),
-    ("GLM-5.2 v0.5.15", "glm52_v0515", "#A43223", "-", True),
-    ("GLM-5.1 v0.5.15", "glm51_v0515", "#D45927", "-", False),
+    ("GLM-5.2 v0.5.15.post1", "glm52_v0515", "#A43223", "-", True),
+    ("GLM-5.1 v0.5.15.post1", "glm51_v0515", "#D45927", "-", False),
 ]
 
 # platform -> ((panel title, panel dir), ...), n_gpus, y-axis floor
