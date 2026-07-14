@@ -78,6 +78,13 @@ for tag in "${RUNGS[@]}"; do
     OUT="$DIR/results/$SERIES/$tag"
     SUMM="$OUT/isl_${tag}/parallel_1_number_4/benchmark_summary.json"
     [ -s "$SUMM" ] && { echo "rung $tag already done, skip"; continue; }
+    # An interrupted rung leaves a partial isl_<tag>/ behind — notably
+    # evalscope's benchmark_data.db, which it refuses to overwrite on retry.
+    # The rung always re-runs whole, so clear the partials (keep server.log).
+    if [ -d "$OUT/isl_${tag}" ]; then
+        echo "rung $tag: clearing partial results from an interrupted run"
+        rm -rf "$OUT/isl_${tag}"
+    fi
     mkdir -p "$OUT"
     echo "=== rung $tag: ctx=${CTX[$tag]} ==="
     CONTEXT_LEN="${CTX[$tag]}" PORT=$PORT setsid "$DIR/$SERVER" > "$OUT/server.log" 2>&1 &
