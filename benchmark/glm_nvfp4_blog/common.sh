@@ -17,6 +17,15 @@ sweep_already_done() {
         echo "results already present in $dir — skipping (delete the directory to re-run)"
         return 0
     fi
+    # An interrupted panel leaves partial parallel_* artifacts — notably
+    # evalscope's benchmark_data.db, which it refuses to overwrite ("The db
+    # file exists, delete it and start again!"). The ladder always re-runs as
+    # one evalscope invocation, so a partial panel can't be continued — clear
+    # it so the re-run starts clean.
+    if [ -d "$dir" ]; then
+        echo "clearing partial results in $dir from an interrupted run"
+        rm -rf "$dir"
+    fi
     return 1
 }
 
