@@ -9,6 +9,7 @@ import asyncio
 import json
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -74,11 +75,13 @@ def _tiny_profile(**overrides):
         input_per_turn_p50=30.0,
         input_per_turn_p95=90.0,
         input_per_turn_cap=400,
+        input_per_turn_max_target=400.0,
         input_per_turn_tolerance=0.50,
         final_context_mean=340.0,
         final_context_p50=300.0,
         final_context_p95=700.0,
         final_context_cap=1500,
+        final_context_max_target=1500.0,
         final_context_tolerance=0.35,
         output_len_per_turn=20,
         head_tokens=60,
@@ -165,7 +168,8 @@ class TestSessionPlanning(CustomTestCase):
 
     def test_input_authority_reports_but_does_not_gate_context(self):
         """In input-authoritative mode the context/ISL dimensions must be
-        reported (with their honest overshoot) and explicitly non-gated."""
+        reported with full records (target/comparison/tolerance/verdict) but
+        marked non-gated, so their honest overshoot never fails conformance."""
         profile = msgspec.structs.replace(
             PROFILES["agent-short"], authority=recovery_agent.AUTHORITY_INPUT
         )
@@ -173,9 +177,41 @@ class TestSessionPlanning(CustomTestCase):
         for dimension in ("final_context_mean", "request_weighted_isl_mean"):
             entry = realized["dimensions"][dimension]
             self.assertFalse(entry["gated"])
-            self.assertNotIn("within_tolerance", entry)
+            for field in ("target", "comparison", "tolerance", "within_tolerance"):
+                self.assertIn(field, entry)
         for dimension in ("input_per_turn_mean", "input_per_turn_p50"):
             self.assertTrue(realized["dimensions"][dimension]["gated"])
+        # The context dims overshoot (documented incompatibility), yet the
+        # gates stay green because they are not gated in this mode.
+        self.assertTrue(realized["gates_within_tolerance"])
+
+    def test_relaxed_operational_cap_fails_published_max_gate(self):
+        """The published maxima are one-sided gates against their own targets,
+        independent of the operational clamps: relaxing the input cap in
+        input-authoritative mode once let realized maxima reach ~3x the
+        published maximum while conformance stayed true (bug regression)."""
+        relaxed = msgspec.structs.replace(
+            PROFILES["agent-short"],
+            authority=recovery_agent.AUTHORITY_INPUT,
+            input_per_turn_cap=100000,
+        )
+        realized = self._canonical_realized(relaxed)
+        entry = realized["dimensions"]["input_per_turn_max"]
+        self.assertEqual(entry["comparison"], "upper_bound")
+        self.assertGreater(entry["realized"], entry["target"])
+        self.assertFalse(entry["within_tolerance"])
+        self.assertFalse(realized["gates_within_tolerance"])
+        self.assertFalse(realized["conformant_population"])
+
+    def test_context_max_gate_is_first_class(self):
+        """Context mode gates the published final-context maximum as an
+        upper bound; the built-in construction respects it."""
+        realized = self._canonical_realized(PROFILES["agent-short"])
+        entry = realized["dimensions"]["final_context_max"]
+        self.assertTrue(entry["gated"])
+        self.assertEqual(entry["comparison"], "upper_bound")
+        self.assertEqual(entry["tolerance"], 0.0)
+        self.assertTrue(entry["within_tolerance"])
 
     def test_input_authority_respects_caps(self):
         profile = msgspec.structs.replace(
@@ -227,9 +263,9 @@ class TestDatasetBuild(CustomTestCase):
         payload = self._build(num_sessions=4)
         metadata = payload["metadata"]
         self.assertTrue(metadata["synthetic"])
-        realized = metadata["realized"]
-        self.assertEqual(realized["sessions"], 4)
-        self.assertFalse(realized["conformant_population"])  # 4 < 64
+        planned = metadata["planned_stats"]
+        self.assertEqual(planned["sessions"], 4)
+        self.assertFalse(planned["conformant_population"])  # 4 < 64
 
     def test_stored_prompt_tokens_match_rendered_prompts(self):
         """The planned per-round prompt_tokens must track what the chat
@@ -330,6 +366,110 @@ class TestDatasetLoad(CustomTestCase):
         with self.assertRaisesRegex(ValueError, "Unknown recovery-agent profile"):
             self._dataset(profile_name="nope").load(self.tokenizer)
 
+    def test_decode_setting_change_forces_rebuild(self):
+        """Decode behavior settings alter the sizing path's decode->re-encode
+        results; toggling clean_up_tokenization_spaces at an unchanged path
+        once left the fingerprint identical (bug regression)."""
+        self._dataset().load(self.tokenizer)
+        first = json.loads(self.cache_file.read_text())
+        changed = _make_tokenizer()
+        changed.clean_up_tokenization_spaces = (
+            not self.tokenizer.clean_up_tokenization_spaces
+        )
+        self._dataset().load(changed)
+        rebuilt = json.loads(self.cache_file.read_text())
+        self.assertNotEqual(
+            first["metadata"]["tokenizer_fingerprint"],
+            rebuilt["metadata"]["tokenizer_fingerprint"],
+        )
+
+    def test_slow_tokenizer_asset_change_changes_fingerprint(self):
+        """Non-fast tokenizers must fingerprint their actual asset contents
+        (merges/SentencePiece/vocab files), not only get_vocab(). The
+        installed transformers aliases every builtin tokenizer to its fast
+        variant, so the slow branch is exercised with a minimal stand-in
+        exposing the slow-tokenizer surface."""
+
+        class _SlowStub:
+            vocab_files_names = {"merges_file": "merges.txt"}
+            chat_template = None
+            special_tokens_map = {}
+            init_kwargs = {}
+
+            def get_vocab(self):
+                return {"a": 0, "b": 1}
+
+            def get_added_vocab(self):
+                return {}
+
+        merges = Path(self.tmp_dir.name) / "merges.txt"
+        merges.write_text("a b\n")
+        stub = _SlowStub()
+        stub.init_kwargs = {"merges_file": str(merges)}
+        first = recovery_agent._tokenizer_fingerprint(stub)
+        merges.write_text("b a\n")  # same vocab, different merge rules
+        second = recovery_agent._tokenizer_fingerprint(stub)
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(first), 64)  # full SHA-256, not truncated
+
+    def test_prebuilt_authority_mismatch_rejected(self):
+        """--recovery-authority must stay authoritative for prebuilt files:
+        loading a context-built file under a requested input authority once
+        silently ran as context (bug regression). Both directions rejected."""
+        self._dataset().load(self.tokenizer)  # context-authoritative build
+        with self.assertRaisesRegex(ValueError, "authority"):
+            self._dataset(
+                authority=recovery_agent.AUTHORITY_INPUT,
+                dataset_path=str(self.cache_file),
+            ).load(self.tokenizer)
+        input_cache = Path(self.tmp_dir.name) / "input_cache.json"
+        with patch.object(
+            recovery_agent, "_cache_path", lambda metadata_key: input_cache
+        ):
+            self._dataset(authority=recovery_agent.AUTHORITY_INPUT).load(self.tokenizer)
+        with self.assertRaisesRegex(ValueError, "authority"):
+            self._dataset(dataset_path=str(input_cache)).load(self.tokenizer)
+
+    def test_prebuilt_old_generator_version_rejected(self):
+        self._dataset().load(self.tokenizer)
+        payload = json.loads(self.cache_file.read_text())
+        payload["metadata"]["generator_version"] = 1
+        stale = Path(self.tmp_dir.name) / "stale.json"
+        stale.write_text(json.dumps(payload))
+        with self.assertRaisesRegex(ValueError, "generator version"):
+            self._dataset(dataset_path=str(stale)).load(self.tokenizer)
+
+    def test_planned_and_built_stats_are_separate(self):
+        """Build metadata must carry planned (sampled arithmetic) and built
+        (actual encoded sizes) statistics separately; built sizes may
+        undershoot planned by the bounded pad deficit, never exceed them."""
+        payload = build_sessions(
+            self.tokenizer, profile=_tiny_profile(), seed=42, num_sessions=3
+        )
+        metadata = payload["metadata"]
+        self.assertIn("planned_stats", metadata)
+        self.assertIn("built_stats", metadata)
+        for planned, built in zip(
+            metadata["session_stats"], metadata["built_session_stats"]
+        ):
+            for planned_size, built_size in zip(
+                planned["turn_inputs"], built["turn_inputs"]
+            ):
+                self.assertLessEqual(built_size, planned_size)
+                self.assertGreaterEqual(
+                    built_size,
+                    planned_size - recovery_agent.PAD_SIZING_MAX_DEFICIT_TOKENS,
+                )
+
+    def test_small_slice_labels_deviations_as_sampling_error(self):
+        import io
+        from contextlib import redirect_stdout
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            self._dataset(num_sessions=2).load(self.tokenizer)
+        self.assertIn("sampling error", buffer.getvalue())
+
     def test_tokenizer_content_change_forces_rebuild(self):
         """The cache key must fingerprint tokenizer *content*: changing the
         chat template at an unchanged name_or_path once silently reused stale
@@ -363,7 +503,8 @@ class TestDatasetLoad(CustomTestCase):
             self._dataset(num_sessions=1, offset=2).load(self.tokenizer)
         printed = buffer.getvalue()
         payload = json.loads(printed[printed.index("{") : printed.rindex("}") + 1])
-        self.assertEqual(payload["selected_slice_realized_vs_target"]["sessions"], 1)
+        self.assertEqual(payload["selected_slice_planned_stats"]["sessions"], 1)
+        self.assertEqual(payload["selected_slice_built_stats"]["sessions"], 1)
 
     def test_prebuilt_profile_mismatch_rejected(self):
         """A prebuilt file's embedded profile is authoritative; loading it
@@ -375,6 +516,82 @@ class TestDatasetLoad(CustomTestCase):
         self.cache_file.write_text(json.dumps(payload))
         with self.assertRaisesRegex(ValueError, "other-profile"):
             self._dataset(dataset_path=str(self.cache_file)).load(self.tokenizer)
+
+
+class TestLiveConformance(CustomTestCase):
+    """Live conformance judges the server-defined context: only
+    usage.prompt_tokens determines the gates, never the planned sizes."""
+
+    def _report(self, profile, sessions):
+        server_prompt_lens, session_indices, round_indices, conv_results = (
+            [],
+            [],
+            [],
+            [],
+        )
+        for session_index, (usage_lens, success) in enumerate(sessions):
+            conv_results.append(
+                {
+                    "session_index": session_index,
+                    "planned_rounds": len(usage_lens),
+                    "completed_rounds": len(usage_lens) if success else 0,
+                    "success": success,
+                }
+            )
+            for round_index, prompt_len in enumerate(usage_lens):
+                server_prompt_lens.append(prompt_len)
+                session_indices.append(session_index)
+                round_indices.append(round_index)
+        return recovery_agent.live_conformance_report(
+            profile,
+            server_prompt_lens,
+            session_indices,
+            round_indices,
+            conv_results,
+        )
+
+    def test_server_numbers_win_over_planned_sizes(self):
+        """A profile whose planned context differs wildly from the observed
+        usage must be judged by the usage: gates pass exactly when the server
+        numbers (not the plan) are on target."""
+        profile = _tiny_profile(reference_population=2)
+        on_target = self._report(
+            profile,
+            [([200, 340], True), ([180, 300, 340], True)],
+        )
+        self.assertTrue(on_target["available"])
+        self.assertTrue(
+            on_target["dimensions"]["final_context_mean"]["within_tolerance"]
+        )
+        off_target = self._report(
+            profile,
+            [([2000, 3400], True), ([1800, 3000, 3400], True)],
+        )
+        self.assertFalse(
+            off_target["dimensions"]["final_context_mean"]["within_tolerance"]
+        )
+        self.assertFalse(off_target["conformant_population"])
+
+    def test_missing_usage_or_failed_session_blocks_conformance(self):
+        profile = _tiny_profile(reference_population=2)
+        report = self._report(
+            profile,
+            [([200, 340], True), ([180, None, 340], True)],
+        )
+        self.assertFalse(report["all_sessions_usable"])
+        self.assertFalse(report["conformant_population"])
+        failed = self._report(profile, [([200, 340], False)])
+        self.assertFalse(failed["available"])
+
+    def test_input_dimensions_never_judged_live(self):
+        profile = msgspec.structs.replace(
+            _tiny_profile(reference_population=1),
+            authority=recovery_agent.AUTHORITY_INPUT,
+        )
+        report = self._report(profile, [([200, 340], True)])
+        self.assertNotIn("input_per_turn_mean", report["dimensions"])
+        for dimension in report["live_gated_dimensions"]:
+            self.assertFalse(dimension.startswith("input_per_turn"))
 
 
 class TestMultiTurnReplay(CustomTestCase):
@@ -588,6 +805,179 @@ class TestStreamingReplayExtraction(CustomTestCase):
         self.assertEqual(output.generated_text, "THINKING final answer")
         self.assertEqual(output.assistant_replay_text, "final answer")
         self.assertEqual(output.server_prompt_len, 66)
+
+
+class TestBenchmarkLevelBehavior(CustomTestCase):
+    """End-to-end benchmark() runs against a faked request function: honest
+    persistence when everything fails, unit-bearing multi-turn output, and
+    the inline-thinking warning branches."""
+
+    def _run_benchmark(self, request_func, rows, dataset_name="recovery-agent"):
+        import io
+        from contextlib import redirect_stdout
+
+        result_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(result_dir.cleanup)
+        args = SimpleNamespace(
+            dataset_name=dataset_name,
+            disable_stream=False,
+            disable_ignore_eos=True,
+            plot_throughput=False,
+            recovery_profile="agent-short",
+            recovery_authority="context",
+            cache_report=False,
+            output_file=str(Path(result_dir.name) / "result.jsonl"),
+            output_details=False,
+            profile_steps=None,
+            mooncake_slowdown_factor=1.0,
+            mooncake_num_rounds=1,
+            warmup_requests=0,
+            flush_cache=False,
+            disable_tqdm=True,
+            seed=42,
+            backend="sglang-oai-chat",
+            tag=None,
+            request_rate=float("inf"),
+            max_concurrency=None,
+            sharegpt_output_len=None,
+            random_input_len=None,
+            random_output_len=None,
+            random_range_ratio=None,
+            num_prompts=2,
+        )
+        fake_server_info = SimpleNamespace(status_code=500, json=lambda: None)
+        buffer = io.StringIO()
+        with patch.object(serving, "args", args, create=True), patch.dict(
+            serving.ASYNC_REQUEST_FUNCS, {"sglang-oai-chat": request_func}
+        ), patch.object(
+            serving.requests, "get", lambda *a, **k: fake_server_info
+        ), redirect_stdout(
+            buffer
+        ):
+            result = asyncio.run(
+                serving.benchmark(
+                    backend="sglang-oai-chat",
+                    api_url="http://localhost/v1/chat/completions",
+                    base_url="http://localhost",
+                    model_id="m",
+                    tokenizer=_make_tokenizer(),
+                    input_requests=rows,
+                    request_rate=float("inf"),
+                    max_concurrency=None,
+                    disable_tqdm=True,
+                    lora_names=None,
+                    lora_request_distribution=None,
+                    lora_zipf_alpha=None,
+                    extra_request_body={},
+                    profile=False,
+                    warmup_requests=0,
+                )
+            )
+        return result, buffer.getvalue()
+
+    def _rows(self, num_sessions=2, rounds=2):
+        from sglang.benchmark.datasets.common import DatasetRow
+
+        return [
+            DatasetRow(
+                prompt=[f"q{r}" for r in range(rounds)],
+                prompt_len=10,
+                output_len=8,
+                routing_key=f"session-{i}",
+            )
+            for i in range(num_sessions)
+        ]
+
+    def test_all_failed_run_persists_honest_json(self):
+        """An all-failed run once crashed with IndexError on the empty e2e
+        percentile computation before anything was persisted (bug
+        regression). It must serialize zero-valued metrics, one failed
+        conversation record per planned session, retained errors, and never
+        attempt later rounds."""
+        calls = []
+
+        async def failing_request(request_func_input, pbar=None):
+            calls.append(request_func_input.session_index)
+            output = RequestFuncOutput.init_new(request_func_input)
+            output.success = False
+            output.error = "injected first-round failure"
+            return output
+
+        rows = self._rows(num_sessions=2, rounds=3)
+        result, printed = self._run_benchmark(failing_request, rows)
+        self.assertEqual(sorted(calls), [0, 1])  # one round per session only
+        self.assertEqual(result["completed"], 0)
+        self.assertEqual(result["completed_conversations"], 0)
+        self.assertEqual(result["total_conversations"], 2)
+        self.assertEqual(len(result["conversation_results"]), 2)
+        for conversation in result["conversation_results"]:
+            self.assertFalse(conversation["success"])
+            self.assertEqual(conversation["planned_rounds"], 3)
+            self.assertEqual(conversation["completed_rounds"], 0)
+        self.assertEqual(result["errors"], ["injected first-round failure"] * 2)
+        self.assertEqual(result["mean_e2e_latency_ms"], 0.0)
+        json.dumps(result)  # must be serializable end to end
+
+    def test_multi_turn_output_uses_session_and_turn_units(self):
+        async def ok_request(request_func_input, pbar=None):
+            output = RequestFuncOutput.init_new(request_func_input)
+            output.success = True
+            output.generated_text = "fine"
+            output.assistant_replay_text = "fine"
+            output.server_prompt_len = 50
+            output.output_len = 4
+            output.latency = 0.1
+            output.ttft = 0.05
+            return output
+
+        result, printed = self._run_benchmark(ok_request, self._rows())
+        self.assertIn("Session arrival rate (sessions/s):", printed)
+        self.assertIn("Turn throughput (turns/s):", printed)
+        self.assertNotIn("Traffic request rate:", printed)
+        self.assertNotIn("Request throughput (req/s):", printed)
+        self.assertIsNotNone(result["turn_throughput_turns_per_s"])
+        self.assertIsNotNone(result["session_throughput_sessions_per_s"])
+        self.assertEqual(
+            result["turn_throughput_turns_per_s"], result["request_throughput"]
+        )
+        self.assertIn("live_conformance", result)
+        self.assertIn("NOTE: recovery-agent replays assistant `content` only", printed)
+
+    def test_inline_thinking_in_replay_warns_once(self):
+        async def leaky_request(request_func_input, pbar=None):
+            output = RequestFuncOutput.init_new(request_func_input)
+            output.success = True
+            output.generated_text = "<think>secret</think> answer"
+            output.assistant_replay_text = "<think>secret</think> answer"
+            output.server_prompt_len = 50
+            output.output_len = 4
+            output.latency = 0.1
+            output.ttft = 0.05
+            return output
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            self._run_benchmark(leaky_request, self._rows(num_sessions=1))
+        inline = [w for w in caught if "Inline thinking markers" in str(w.message)]
+        self.assertEqual(len(inline), 1)
+
+    def test_clean_replay_does_not_warn(self):
+        async def clean_request(request_func_input, pbar=None):
+            output = RequestFuncOutput.init_new(request_func_input)
+            output.success = True
+            output.generated_text = "reasoned answer"
+            output.assistant_replay_text = "reasoned answer"
+            output.server_prompt_len = 50
+            output.output_len = 4
+            output.latency = 0.1
+            output.ttft = 0.05
+            return output
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            self._run_benchmark(clean_request, self._rows(num_sessions=1))
+        inline = [w for w in caught if "Inline thinking markers" in str(w.message)]
+        self.assertEqual(inline, [])
 
 
 class TestUsageBasedMetrics(CustomTestCase):

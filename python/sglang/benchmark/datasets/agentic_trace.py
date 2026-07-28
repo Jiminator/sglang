@@ -71,43 +71,47 @@ class AgenticTraceDataset(BaseDataset):
         if not conversations:
             raise ValueError(f"No 'conversations' found in {self.dataset_path}.")
 
-        offset = self.offset % len(conversations)
-        if offset:
-            conversations = conversations[offset:] + conversations[:offset]
+        if self.offset < 0:
+            raise ValueError(f"Dataset offset must be >= 0, got {self.offset}.")
 
         output_len = self.fixed_output_len or DEFAULT_AGENTIC_OUTPUT_LEN
 
-        filtered_dataset: List[DatasetRow] = []
+        # Sessions are consumed as the exact slice [offset, offset + N) of the
+        # usable conversations, never recycled: a run must replay exactly the
+        # requested number of fresh conversations or fail loudly, so sweeps
+        # that advance the offset keep cache-hit numbers honest.
+        usable: List[List] = []
         for conversation in conversations:
-            if self.num_requests > 0 and len(filtered_dataset) >= self.num_requests:
-                break
-
             prompt = [turn["messages"] for turn in conversation if turn.get("messages")]
             if self.max_turns:
                 prompt = prompt[: self.max_turns]
-            if not prompt:
-                continue
+            if prompt:
+                usable.append((prompt, int(conversation[0].get("prompt_tokens", 0))))
 
-            # Informational only: multi-turn replay ignores per-row prompt_len.
-            prompt_len = int(conversation[0].get("prompt_tokens", 0))
-
-            filtered_dataset.append(
-                DatasetRow(
-                    prompt=prompt,
-                    prompt_len=prompt_len,
-                    output_len=output_len,
-                )
-            )
-
-        if not filtered_dataset:
+        needed = self.offset + self.num_requests
+        if self.num_requests <= 0 or needed > len(usable):
             raise ValueError(
-                f"No usable conversations loaded from {self.dataset_path}."
+                f"Requested conversations [{self.offset}, {needed}) but "
+                f"{self.dataset_path} holds only {len(usable)} usable "
+                "conversations. Conversations are never recycled — lower "
+                "--num-prompts/--num-sessions or --dataset-offset, or provide "
+                "a larger trace file."
             )
+
+        filtered_dataset = [
+            DatasetRow(
+                prompt=prompt,
+                # Informational only: multi-turn replay ignores per-row prompt_len.
+                prompt_len=prompt_len,
+                output_len=output_len,
+            )
+            for prompt, prompt_len in usable[self.offset : needed]
+        ]
 
         num_turns = [len(row.prompt) for row in filtered_dataset]
         print(
             f"#Conversations: {len(filtered_dataset)} "
-            f"(offset={offset}, turns/conv min={min(num_turns)} "
+            f"(offset={self.offset}, turns/conv min={min(num_turns)} "
             f"max={max(num_turns)} avg={np.mean(num_turns):.1f})"
         )
         print(f"#Output tokens per turn: {output_len}")

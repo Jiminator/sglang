@@ -28,16 +28,16 @@ Every flag of the reference deployment appears exactly once, either carried
 
 | Reference flag | v0.5.16 placement | Status |
 |---|---|---|
-| `tensor-parallel-size: 4` | `--tp-size 4` | carried |
-| `data-parallel-size: 4` + `enable-dp-attention: true` | `--dp-size 4 --enable-dp-attention` | carried (DP-attention layout on the 4-GPU worker) |
-| `ep-size: 4` | `--ep-size 4` | carried |
+| `tensor-parallel-size: 4` | `--tp 4` | carried |
+| `data-parallel-size: 4` + `enable-dp-attention: true` | — | deviation: the validated v0.5.16 recipe runs plain TP4 without DP-attention; the reference's per-tray DP-attention layout is not enabled by the launch scripts |
+| `ep-size: 4` | — | deviation: expert parallelism follows the plain-TP4 layout above (v0.5.16 default `ep-size 1`); not emitted by the launch scripts |
 | `quantization: modelopt_fp4` | same | carried |
 | `kv-cache-dtype: fp8_e4m3` | same | carried |
 | `context-length: 262144` | `--context-length 262144` | carried |
 | `mem-fraction-static: 0.93` | same | carried |
 | `attention-backend: dsa` | `--attention-backend dsa` | carried |
 | `--dsa-prefill-backend trtllm` (worker CLI) | same flag in v0.5.16 | carried |
-| `moe-runner-backend: flashinfer_trtllm_routed` | same | carried, isolated deviation risk: the v0.5.16-verified GLM NVFP4 run uses `flashinfer_trtllm`; stage 2 tries the verified value first |
+| `moe-runner-backend: flashinfer_trtllm_routed` | — | deviation: the PD worker script leaves the MoE runner at the v0.5.16 default, which resolves to `flashinfer_trtllm` (the verified GLM NVFP4 value) on this hardware; the unified shakeout script's `doc-full` stage does exercise the reference value |
 | `chunked-prefill-size: 16384` | same | carried |
 | `max-prefill-tokens: 32768` | same | carried |
 | `max-running-requests: 32` | same | carried |
@@ -58,7 +58,8 @@ Every flag of the reference deployment appears exactly once, either carried
 
 | Reference flag | v0.5.16 placement | Status |
 |---|---|---|
-| `tensor-parallel-size: 4` + `data-parallel-size: 4` + `enable-dp-attention: true` | `--tp-size 4 --dp-size 4 --enable-dp-attention` | carried |
+| `tensor-parallel-size: 4` | `--tp 4` | carried |
+| `data-parallel-size: 4` + `enable-dp-attention: true` | — | deviation: plain TP4 on the decode workers as well; DP-attention is not enabled by the launch scripts |
 | `moe-a2a-backend: none` | same | carried |
 | `fp4-gemm-backend: flashinfer_cutlass` | same | carried |
 | `quantization: modelopt_fp4`, `kv-cache-dtype: fp8_e4m3` | same | carried |
@@ -96,6 +97,18 @@ Notes:
 
 - PD+DSA transfer is supported in v0.5.16; the NIXL restriction applies only
   to the DSA cache-layer-split feature, which these recipes do not use.
+- Outside the reference parity scope, the launch scripts also pass harness
+  and observability flags: `--model-path`, `--revision`, `--host`, `--port`,
+  `--disaggregation-bootstrap-port`, `--enable-metrics`,
+  `--enable-cache-report`, and the router topology flags
+  (`--pd-disaggregation`, `--policy`, `--prefill`, `--decode`), plus the
+  small-model script's reduced `--mem-fraction-static`, the unified script's
+  `--bf16-gemm-backend`/`--cuda-graph-max-bs`/`--max-prefill-tokens`/
+  `--chunked-prefill-size`/`--max-running-requests` shakeout settings, and
+  the staged speculative flags (`--speculative-algorithm`,
+  `--speculative-num-steps`, `--speculative-eagle-topk`,
+  `--speculative-num-draft-tokens`, `--speculative-attention-mode`) whose
+  reference values appear in the tables above.
 - Stages for the PD deployment (fault attribution): stage 1 = PD baseline
   (default attention, no speculation), stage 2 = +DSA, stage 3 = +EAGLE
   3-1-4, stage 4 = +HiCache on prefill.

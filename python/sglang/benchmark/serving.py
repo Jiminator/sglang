@@ -20,6 +20,7 @@ import json
 import math
 import os
 import random
+import re
 import shutil
 import sys
 import time
@@ -1313,12 +1314,14 @@ def calculate_metrics(
         p95_itl_ms=np.percentile(itls or 0, 95) * 1000,
         p99_itl_ms=np.percentile(itls or 0, 99) * 1000,
         max_itl_ms=np.max(itls or 0) * 1000,
-        mean_e2e_latency_ms=np.mean(e2e_latencies) * 1000,
-        median_e2e_latency_ms=np.median(e2e_latencies) * 1000,
-        std_e2e_latency_ms=np.std(e2e_latencies) * 1000,
-        p90_e2e_latency_ms=np.percentile(e2e_latencies, 90) * 1000,
-        p95_e2e_latency_ms=np.percentile(e2e_latencies, 95) * 1000,
-        p99_e2e_latency_ms=np.percentile(e2e_latencies, 99) * 1000,
+        # `or 0` keeps every aggregate defined when no request succeeded, so
+        # an all-failed run still serializes an honest (zero-valued) result.
+        mean_e2e_latency_ms=np.mean(e2e_latencies or 0) * 1000,
+        median_e2e_latency_ms=np.median(e2e_latencies or 0) * 1000,
+        std_e2e_latency_ms=np.std(e2e_latencies or 0) * 1000,
+        p90_e2e_latency_ms=np.percentile(e2e_latencies or 0, 90) * 1000,
+        p95_e2e_latency_ms=np.percentile(e2e_latencies or 0, 95) * 1000,
+        p99_e2e_latency_ms=np.percentile(e2e_latencies or 0, 99) * 1000,
         concurrency=np.sum(e2e_latencies) / dur_s,
         max_output_tokens_per_s=max_output_tokens_per_s,
         max_concurrent_requests=max_concurrent_requests,
@@ -1348,10 +1351,19 @@ def _normalize_round_messages(turn: Any) -> Optional[List[Dict[str, str]]]:
     return None
 
 
+# Inline-thinking spellings that indicate the server did NOT separate
+# reasoning into its own field (missing/misconfigured reasoning parser):
+# the content-only replay contract is then defeated because the thinking is
+# inside `content` itself.
+_INLINE_THINKING_RE = re.compile(r"</?think>|<\|/?think(?:ing)?\|>", re.IGNORECASE)
+
+
 def wrap_multi_turn_request_func(request_func: Callable, backend: str) -> Callable:
     assert (
         backend in MULTI_TURN_BACKENDS
     ), f"Multi-turn only supports chat backends: {MULTI_TURN_BACKENDS}, got {backend}"
+
+    inline_thinking_warned = [False]
 
     async def f(
         request_func_input: RequestFuncInput,
@@ -1399,6 +1411,18 @@ def wrap_multi_turn_request_func(request_func: Callable, backend: str) -> Callab
                     "content-only replay"
                 )
                 break
+            if not inline_thinking_warned[0] and _INLINE_THINKING_RE.search(
+                output.assistant_replay_text
+            ):
+                inline_thinking_warned[0] = True
+                warnings.warn(
+                    "Inline thinking markers found in assistant content: the "
+                    "server appears to serve reasoning inside `content` "
+                    "(no/misconfigured --reasoning-parser). The replayed "
+                    "history therefore resends thinking, defeating the "
+                    "content-only replay contract.",
+                    stacklevel=2,
+                )
             prev_messages.append(
                 {"role": "assistant", "content": output.assistant_replay_text}
             )
@@ -1447,6 +1471,15 @@ async def benchmark(
     )
     if is_multi_turn:
         request_func = wrap_multi_turn_request_func(request_func, backend=backend)
+        if args.dataset_name == "recovery-agent":
+            # Parser capability cannot be probed from the client; the run
+            # detects and warns if inline thinking shows up in replies.
+            print(
+                "NOTE: recovery-agent replays assistant `content` only; the "
+                "server must separate thinking via a reasoning parser (e.g. "
+                "--reasoning-parser glm45). Inline thinking markers in "
+                "replies will raise a warning."
+            )
 
     # Limit concurrency
     # From https://github.com/vllm-project/vllm/pull/9390
@@ -1713,9 +1746,16 @@ async def benchmark(
 
     print("\n{s:{c}^{n}}".format(s=" Serving Benchmark Result ", n=50, c="="))
     print("{:<40} {:<10}".format("Backend:", backend))
+    # For multi-turn runs the traffic rate is session arrivals per second and
+    # every completed request is one conversation turn.
+    rate_label = (
+        "Session arrival rate (sessions/s):"
+        if is_multi_turn
+        else "Traffic request rate:"
+    )
     print(
         "{:<40} {:<10}".format(
-            "Traffic request rate:", "trace" if use_trace_timestamps else request_rate
+            rate_label, "trace" if use_trace_timestamps else request_rate
         )
     )
     print(
@@ -1744,8 +1784,8 @@ async def benchmark(
         if missing_usage:
             warnings.warn(
                 f"{missing_usage} successful rounds returned no usage.prompt_tokens; "
-                "multi-turn input and cache-hit metrics fall back to client-side "
-                "estimates and are marked incomplete in the result JSON.",
+                "those rounds are excluded from multi-turn input and cache-hit "
+                "accounting and the result JSON is marked incomplete.",
                 stacklevel=2,
             )
     print("{:<40} {:<10.2f}".format("Benchmark duration (s):", benchmark_duration))
@@ -1766,11 +1806,10 @@ async def benchmark(
                 metrics.total_output_retokenized,
             )
         )
-    print(
-        "{:<40} {:<10.2f}".format(
-            "Request throughput (req/s):", metrics.request_throughput
-        )
+    throughput_label = (
+        "Turn throughput (turns/s):" if is_multi_turn else "Request throughput (req/s):"
     )
+    print("{:<40} {:<10.2f}".format(throughput_label, metrics.request_throughput))
     print(
         "{:<40} {:<10.2f}".format(
             "Input token throughput (tok/s):", metrics.input_throughput
@@ -1887,6 +1926,29 @@ async def benchmark(
     resp = requests.get(base_url + "/server_info", headers=get_auth_headers())
     server_info = resp.json() if resp.status_code == 200 else None
 
+    # The immutable final-context definition is the server-reported prompt
+    # length; judge the live workload shape from usage, never from plans.
+    live_conformance = None
+    if is_multi_turn and args.dataset_name == "recovery-agent":
+        import msgspec
+
+        from sglang.benchmark.datasets.recovery_agent import (
+            PROFILES,
+            live_conformance_report,
+        )
+
+        live_profile = msgspec.structs.replace(
+            PROFILES[args.recovery_profile], authority=args.recovery_authority
+        )
+        live_conformance = live_conformance_report(
+            live_profile,
+            server_prompt_lens=[o.server_prompt_len for o in outputs],
+            session_indices=[o.session_index for o in outputs],
+            round_indices=[o.round_index for o in outputs],
+            conversation_results=conversation_results,
+        )
+        print(json.dumps({"live_conformance": live_conformance}, indent=2))
+
     if (
         metrics.median_ttft_ms is not None
         and metrics.mean_itl_ms is not None
@@ -1911,17 +1973,36 @@ async def benchmark(
             "total_conversations": total_conversations,
             "completed_conversations": completed_conversations,
             "conversation_results": conversation_results,
+            # Unit-bearing multi-turn rates (None for single-turn runs); the
+            # legacy request_rate/request_throughput fields below are aliases
+            # counted in turns for multi-turn runs.
+            "session_arrival_rate_sessions_per_s": (
+                (None if use_trace_timestamps else request_rate)
+                if is_multi_turn
+                else None
+            ),
+            "session_throughput_sessions_per_s": (
+                (completed_conversations or 0) / benchmark_duration
+                if is_multi_turn
+                else None
+            ),
+            "turn_throughput_turns_per_s": (
+                metrics.request_throughput if is_multi_turn else None
+            ),
             # Per-round prompt accounting: effective (server-preferred) and
             # raw server-reported lengths, in flattened output order.
             "effective_prompt_lens": [o.effective_prompt_len() for o in outputs],
             "server_prompt_lens": [o.server_prompt_len for o in outputs],
             "session_indices": [o.session_index for o in outputs],
             "round_indices": [o.round_index for o in outputs],
-            # False when any successful round lacked server usage — input and
-            # cache-hit numbers then partly rest on client-side estimates.
+            # Per-round errors (empty string when the round succeeded).
+            "errors": [o.error for o in outputs],
+            # False when any successful round lacked server usage — such
+            # rounds are excluded from input and cache-hit accounting.
             "input_metrics_complete": all(
                 o.server_prompt_len is not None for o in outputs if o.success
             ),
+            "live_conformance": live_conformance,
             "total_input_tokens": metrics.total_input,
             "total_input_text_tokens": metrics.total_input_text,
             "total_input_vision_tokens": metrics.total_input_vision,

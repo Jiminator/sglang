@@ -42,7 +42,7 @@ import numpy as np
 
 from sglang.benchmark.datasets.common import BaseDataset, DatasetRow
 
-GENERATOR_VERSION = 2
+GENERATOR_VERSION = 3
 
 # z-score of the 95th percentile of the standard normal; lognormal fits below
 # derive sigma from the (p50, p95) pair.
@@ -85,6 +85,7 @@ GATED_DIMENSIONS = {
         "final_context_mean",
         "final_context_p50",
         "final_context_p95",
+        "final_context_max",
         "request_weighted_isl_mean",
     ),
     AUTHORITY_INPUT: (
@@ -94,8 +95,13 @@ GATED_DIMENSIONS = {
         "input_per_turn_mean",
         "input_per_turn_p50",
         "input_per_turn_p95",
+        "input_per_turn_max",
     ),
 }
+
+# Maxima are one-sided upper bounds against the published maxima; the other
+# dimensions are two-sided sample statistics with per-dimension tolerances.
+UPPER_BOUND_DIMENSIONS = ("input_per_turn_max", "final_context_max")
 
 
 class SessionProfile(msgspec.Struct, frozen=True):
@@ -125,13 +131,15 @@ class SessionProfile(msgspec.Struct, frozen=True):
     input_per_turn_mean: float
     input_per_turn_p50: float
     input_per_turn_p95: float
-    input_per_turn_cap: int  # published per-turn new-input maximum
+    input_per_turn_cap: int  # operational clamp for sampled inputs
+    input_per_turn_max_target: float  # published per-turn new-input maximum
     input_per_turn_tolerance: float
     # Final-context targets (gated in context-authoritative mode).
     final_context_mean: float
     final_context_p50: float
     final_context_p95: float
-    final_context_cap: int  # published final-context maximum
+    final_context_cap: int  # operational clamp for sampled contexts
+    final_context_max_target: float  # published final-context maximum
     final_context_tolerance: float
     output_len_per_turn: int  # fixed planned per-turn completion budget
     head_tokens: int  # fixed shared system + tool-schema-shaped head
@@ -150,6 +158,9 @@ class SessionProfile(msgspec.Struct, frozen=True):
         return GATED_DIMENSIONS[self.authority]
 
     def dimension_tolerance(self, dimension: str) -> float:
+        # Published maxima are hard upper bounds, not sample statistics.
+        if dimension in UPPER_BOUND_DIMENSIONS:
+            return 0.0
         if dimension.startswith("turns_"):
             return self.turns_tolerance
         if dimension.startswith("input_per_turn_"):
@@ -161,6 +172,8 @@ class SessionProfile(msgspec.Struct, frozen=True):
     def dimension_target(self, dimension: str) -> float:
         if dimension == "request_weighted_isl_mean":
             return float(self.request_weighted_isl_target)
+        if dimension in UPPER_BOUND_DIMENSIONS:
+            return float(getattr(self, f"{dimension}_target"))
         return float(getattr(self, dimension))
 
 
@@ -181,11 +194,13 @@ PROFILES: Dict[str, SessionProfile] = {
         input_per_turn_p50=265.0,
         input_per_turn_p95=1700.0,
         input_per_turn_cap=17000,
+        input_per_turn_max_target=17000.0,
         input_per_turn_tolerance=0.15,
         final_context_mean=27800.0,
         final_context_p50=24800.0,
         final_context_p95=53800.0,
         final_context_cap=92000,
+        final_context_max_target=92000.0,
         final_context_tolerance=0.15,
         output_len_per_turn=190,
         head_tokens=3000,
@@ -207,11 +222,13 @@ PROFILES: Dict[str, SessionProfile] = {
         input_per_turn_p50=340.0,
         input_per_turn_p95=2600.0,
         input_per_turn_cap=31000,
+        input_per_turn_max_target=31000.0,
         input_per_turn_tolerance=0.15,
         final_context_mean=14800.0,
         final_context_p50=13000.0,
         final_context_p95=31300.0,
         final_context_cap=101000,
+        final_context_max_target=101000.0,
         final_context_tolerance=0.15,
         output_len_per_turn=185,
         head_tokens=3000,
@@ -236,11 +253,13 @@ PROFILES: Dict[str, SessionProfile] = {
         input_per_turn_p50=60.0,
         input_per_turn_p95=200.0,
         input_per_turn_cap=1000,
+        input_per_turn_max_target=1000.0,
         input_per_turn_tolerance=0.50,
         final_context_mean=980.0,
         final_context_p50=800.0,
         final_context_p95=2000.0,
         final_context_cap=4000,
+        final_context_max_target=4000.0,
         final_context_tolerance=0.30,
         output_len_per_turn=32,
         head_tokens=200,
@@ -518,7 +537,7 @@ def _measure_template_overheads(tokenizer) -> Tuple[int, int]:
     adds on top (one assistant reply plus one user message). Tokenizers
     without a chat template cost nothing.
     """
-    if getattr(tokenizer, "chat_template", None) is None:
+    if tokenizer.chat_template is None:
         return 0, 0
     base = [
         {"role": "system", "content": "s"},
@@ -553,11 +572,14 @@ def _measure_template_overheads(tokenizer) -> Tuple[int, int]:
     return initial_overhead, round_overhead
 
 
-def _sized_text(target_bare_tokens: int, rng: np.random.RandomState, tokenizer) -> str:
+def _sized_text(
+    target_bare_tokens: int, rng: np.random.RandomState, tokenizer
+) -> Tuple[str, int]:
     """Deterministic text encoding to at most ``target_bare_tokens`` bare
-    tokens, short by at most ``PAD_SIZING_MAX_DEFICIT_TOKENS``."""
+    tokens, short by at most ``PAD_SIZING_MAX_DEFICIT_TOKENS``. Returns the
+    text and its actual encoded length."""
     if target_bare_tokens <= 0:
-        return ""
+        return "", 0
     n_chars = int(target_bare_tokens * 1.7) + 8
     idx = rng.randint(0, len(_PAD_ALPHABET), size=n_chars)
     text = "".join(_PAD_ALPHABET[idx].tolist())
@@ -570,7 +592,7 @@ def _sized_text(target_bare_tokens: int, rng: np.random.RandomState, tokenizer) 
         trimmed, realized = _truncate_to_bare_tokens(
             candidate, target_bare_tokens, tokenizer
         )
-    return trimmed
+    return trimmed, realized
 
 
 def _truncate_to_bare_tokens(
@@ -601,30 +623,65 @@ def _session_routing_key(seed: int, session_index: int) -> str:
     return f"session-{digest[:16]}"
 
 
+# Tokenizer attributes that change encode/decode/render behavior for the
+# sizing and template-measurement paths, hashed into the fingerprint.
+_TOKENIZER_BEHAVIOR_ATTRS = (
+    "clean_up_tokenization_spaces",
+    "clean_up_tokenization_spaces_for_bpe_even_though_it_will_corrupt_output",
+    "split_special_tokens",
+    "add_prefix_space",
+    "do_lower_case",
+    "add_bos_token",
+    "add_eos_token",
+)
+
+
 def _tokenizer_fingerprint(tokenizer) -> str:
-    """Digest of the tokenizer *content* that shapes generated text: the
-    serialized backend tokenizer (vocabulary, merges, normalizer, special
-    tokens), the chat template, the special-token map, and the added
-    vocabulary. A change to any of these at an unchanged ``name_or_path``
-    must invalidate cached builds and their overhead measurements.
+    """Full-SHA-256 digest of one canonical serialization of everything about
+    the tokenizer that shapes generated text or measured overheads: the
+    serialized fast-backend state (vocabulary, merges, normalizer,
+    pre-tokenizer, special tokens) or the slow tokenizer's asset files, the
+    chat template, special/added-token maps, the tokenizer class, and every
+    encode/decode/render behavior setting used by the sizing paths. A change
+    to any of these at an unchanged ``name_or_path`` must invalidate cached
+    builds and their overhead measurements.
     """
     from transformers import PreTrainedTokenizerFast
 
-    hasher = hashlib.sha256()
+    envelope: Dict[str, Any] = {
+        "class": type(tokenizer).__name__,
+        "chat_template": tokenizer.chat_template,
+        "special_tokens_map": {
+            k: str(v) for k, v in sorted(tokenizer.special_tokens_map.items())
+        },
+        "added_vocab": dict(sorted(tokenizer.get_added_vocab().items())),
+        "init_kwargs": {
+            k: v
+            for k, v in sorted(tokenizer.init_kwargs.items())
+            if isinstance(v, (str, int, float, bool, type(None)))
+        },
+        # These attributes legitimately exist only on some tokenizer classes;
+        # absent ones hash as None.
+        "behavior": {
+            attr: getattr(tokenizer, attr, None) for attr in _TOKENIZER_BEHAVIOR_ATTRS
+        },
+    }
     if isinstance(tokenizer, PreTrainedTokenizerFast):
-        hasher.update(tokenizer.backend_tokenizer.to_str().encode("utf-8"))
+        envelope["backend"] = tokenizer.backend_tokenizer.to_str()
     else:
-        hasher.update(json.dumps(tokenizer.get_vocab(), sort_keys=True).encode("utf-8"))
-    hasher.update(str(tokenizer.chat_template).encode("utf-8"))
-    hasher.update(
-        json.dumps(tokenizer.special_tokens_map, sort_keys=True, default=str).encode(
-            "utf-8"
-        )
-    )
-    hasher.update(
-        json.dumps(tokenizer.get_added_vocab(), sort_keys=True).encode("utf-8")
-    )
-    return hasher.hexdigest()[:16]
+        # Slow tokenizers: hash the actual asset contents (vocabulary,
+        # merges / SentencePiece model, ...) referenced by the instance, plus
+        # the realized vocabulary as a fallback.
+        assets = {}
+        for asset_name in sorted(tokenizer.vocab_files_names):
+            path = tokenizer.init_kwargs.get(asset_name)
+            if isinstance(path, str) and os.path.isfile(path):
+                with open(path, "rb") as f:
+                    assets[asset_name] = hashlib.sha256(f.read()).hexdigest()
+        envelope["assets"] = assets
+        envelope["vocab"] = dict(sorted(tokenizer.get_vocab().items()))
+    canonical = json.dumps(envelope, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def build_sessions(
@@ -641,32 +698,49 @@ def build_sessions(
     build — growing a cache never changes existing sessions.
     """
     initial_overhead, round_overhead = _measure_template_overheads(tokenizer)
-    head_text = _sized_text(profile.head_tokens, np.random.RandomState(seed), tokenizer)
+    head_text, built_head = _sized_text(
+        profile.head_tokens, np.random.RandomState(seed), tokenizer
+    )
 
     conversations: List[List[Dict[str, Any]]] = []
     plans: List[SessionPlan] = []
+    built_plans: List[SessionPlan] = []
     for session_index in range(num_sessions):
         rng = np.random.RandomState(seed + session_index)
         plan = _plan_session(profile, rng, initial_overhead, round_overhead)
         plans.append(plan)
 
         turns: List[Dict[str, Any]] = []
-        prompt_tokens = profile.head_tokens + initial_overhead
+        built_inputs: List[int] = []
+        prompt_tokens = built_head + initial_overhead
         for turn_index, turn_input in enumerate(plan.turn_inputs):
-            content = _sized_text(turn_input, rng, tokenizer)
+            content, built_input = _sized_text(turn_input, rng, tokenizer)
+            built_inputs.append(built_input)
             if turn_index == 0:
                 messages = [
                     {"role": "system", "content": head_text},
                     {"role": "user", "content": content},
                 ]
-                prompt_tokens += turn_input
+                prompt_tokens += built_input
             else:
                 messages = [{"role": "user", "content": content}]
                 prompt_tokens += (
-                    turn_input + profile.output_len_per_turn + round_overhead
+                    built_input + profile.output_len_per_turn + round_overhead
                 )
             turns.append({"messages": messages, "prompt_tokens": prompt_tokens})
         conversations.append(turns)
+        # The same arithmetic over the *actual encoded* text sizes: what the
+        # built dataset physically contains (pad sizing may undershoot each
+        # planned size by a bounded deficit).
+        built_plans.append(
+            SessionPlan(
+                turn_count=plan.turn_count,
+                final_context=prompt_tokens,
+                input_budget=sum(built_inputs),
+                turn_inputs=built_inputs,
+                repaired=plan.repaired,
+            )
+        )
 
     metadata = {
         "dataset": "recovery-agent",
@@ -677,12 +751,28 @@ def build_sessions(
         "tokenizer_fingerprint": _tokenizer_fingerprint(tokenizer),
         "initial_overhead": initial_overhead,
         "round_overhead": round_overhead,
+        "built_head_tokens": built_head,
         "num_sessions": num_sessions,
         "synthetic": True,  # distribution-matched synthetic, not a trace replay
-        # Per-session plan arithmetic, retained so any slice of the build can
-        # report its own realized statistics.
+        # Per-session arithmetic, retained so any slice of the build can
+        # report its own statistics: the sampled plan and the actual encoded
+        # ("built") sizes.
         "session_stats": [msgspec.to_builtins(p) for p in plans],
-        "realized": _realized_stats(plans, profile, initial_overhead, round_overhead),
+        "built_session_stats": [msgspec.to_builtins(p) for p in built_plans],
+        # planned_stats gates the calibrated sampling arithmetic; built_stats
+        # reports what the encoded text realizes. Neither claims the
+        # server-defined (usage-reported) context — that is the separate live
+        # conformance report emitted after a benchmark run.
+        "planned_stats": _realized_stats(
+            plans, profile, initial_overhead, round_overhead
+        ),
+        "built_stats": _realized_stats(
+            built_plans,
+            profile,
+            initial_overhead,
+            round_overhead,
+            head_tokens=built_head,
+        ),
     }
     return {"metadata": metadata, "conversations": conversations}
 
@@ -692,21 +782,28 @@ def _realized_stats(
     profile: SessionProfile,
     initial_overhead: int,
     round_overhead: int,
+    head_tokens: int = None,
 ) -> Dict[str, Any]:
-    """Planned-arithmetic statistics of a population vs its retained targets.
+    """Arithmetic statistics of a population vs its retained targets.
 
-    Every retained published dimension is reported; only the dimensions the
+    Works over sampled plans (planned statistics) or actual encoded sizes
+    (built statistics; pass the built head via ``head_tokens``). Every
+    retained published dimension is reported; only the dimensions the
     profile's generation authority produces exactly are *gated* (checked
     against their per-dimension tolerance). ``conformant_population`` is true
     only when the population reaches the calibration reference size AND every
-    gated dimension is within tolerance.
+    gated dimension is within tolerance. These are client-side statistics —
+    the server-defined (usage-reported) context is judged separately by
+    :func:`live_conformance_report`.
     """
+    if head_tokens is None:
+        head_tokens = profile.head_tokens
     turns = np.array([p.turn_count for p in plans])
     contexts = np.array([p.final_context for p in plans])
     deltas = np.array([d for p in plans for d in p.turn_inputs])
     request_prompt_lens = []
     for p in plans:
-        prompt = profile.head_tokens + initial_overhead
+        prompt = head_tokens + initial_overhead
         for turn_index, turn_input in enumerate(p.turn_inputs):
             if turn_index == 0:
                 prompt += turn_input
@@ -722,28 +819,14 @@ def _realized_stats(
         "input_per_turn_mean": float(deltas.mean()),
         "input_per_turn_p50": float(np.percentile(deltas, 50)),
         "input_per_turn_p95": float(np.percentile(deltas, 95)),
+        "input_per_turn_max": float(deltas.max()),
         "final_context_mean": float(contexts.mean()),
         "final_context_p50": float(np.percentile(contexts, 50)),
         "final_context_p95": float(np.percentile(contexts, 95)),
+        "final_context_max": float(contexts.max()),
         "request_weighted_isl_mean": float(isl.mean()),
     }
-    gated = set(profile.gated_dimensions())
-    dimensions = {}
-    for dimension, realized in realized_values.items():
-        target = profile.dimension_target(dimension)
-        deviation = (realized - target) / target
-        entry = {
-            "target": target,
-            "realized": round(realized, 1),
-            "deviation_frac": round(deviation, 4),
-            "gated": dimension in gated,
-        }
-        if dimension in gated:
-            entry["within_tolerance"] = abs(deviation) <= profile.dimension_tolerance(
-                dimension
-            )
-        dimensions[dimension] = entry
-
+    dimensions = _dimension_records(profile, realized_values)
     population_ok = len(plans) >= profile.reference_population
     gates_ok = all(
         dimensions[d]["within_tolerance"] for d in profile.gated_dimensions()
@@ -752,14 +835,128 @@ def _realized_stats(
         "sessions": len(plans),
         "authority": profile.authority,
         "dimensions": dimensions,
-        "input_per_turn_max": float(deltas.max()),
-        "final_context_max": float(contexts.max()),
         "repaired_sessions": sum(1 for p in plans if p.repaired),
         "gates_within_tolerance": gates_ok,
         # Conformance is a population property AND a gate property; small
         # builds report sampling deviation without claiming conformance.
         "conformant_population": population_ok and gates_ok,
     }
+
+
+def live_conformance_report(
+    profile: SessionProfile,
+    server_prompt_lens: List,
+    session_indices: List,
+    round_indices: List,
+    conversation_results: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Judge the *server-defined* workload shape from ``usage.prompt_tokens``.
+
+    The immutable final-context definition is the server-reported prompt
+    length of a session's last request; this report groups the benchmark's
+    per-round usage by session and evaluates the observable dimensions
+    (turns, final context, request-weighted ISL) against the profile gates.
+    Per-turn input is not directly server-observable and is never judged
+    here. Sessions that failed or have any round without usage are excluded;
+    if any session is excluded, live conformance is unavailable rather than
+    silently partial.
+    """
+    planned = {
+        c["session_index"]: c
+        for c in conversation_results
+        if c["session_index"] is not None
+    }
+    per_session: Dict[int, Dict[int, int]] = {}
+    for prompt_len, session, round_index in zip(
+        server_prompt_lens, session_indices, round_indices
+    ):
+        if session is None:
+            continue
+        per_session.setdefault(session, {})[round_index] = prompt_len
+
+    turns, finals, isl = [], [], []
+    complete = True
+    for session, conversation in planned.items():
+        rounds = per_session.get(session, {})
+        usable = (
+            conversation["success"]
+            and len(rounds) == conversation["planned_rounds"]
+            and all(rounds.get(i) is not None for i in range(len(rounds)))
+        )
+        if not usable:
+            complete = False
+            continue
+        ordered = [rounds[i] for i in range(len(rounds))]
+        turns.append(len(ordered))
+        finals.append(ordered[-1])
+        isl.extend(ordered)
+
+    if not turns:
+        return {
+            "available": False,
+            "reason": "no session with complete server usage",
+        }
+
+    turns_arr = np.array(turns)
+    finals_arr = np.array(finals)
+    isl_arr = np.array(isl)
+    realized_values = {
+        "turns_mean": float(turns_arr.mean()),
+        "turns_p50": float(np.percentile(turns_arr, 50)),
+        "turns_p95": float(np.percentile(turns_arr, 95)),
+        "final_context_mean": float(finals_arr.mean()),
+        "final_context_p50": float(np.percentile(finals_arr, 50)),
+        "final_context_p95": float(np.percentile(finals_arr, 95)),
+        "final_context_max": float(finals_arr.max()),
+        "request_weighted_isl_mean": float(isl_arr.mean()),
+    }
+    records = _dimension_records(profile, realized_values)
+    live_gated = [d for d in profile.gated_dimensions() if d in records]
+    gates_ok = all(records[d]["within_tolerance"] for d in live_gated)
+    population_ok = len(turns) >= profile.reference_population
+    return {
+        "available": True,
+        "authority": profile.authority,
+        "sessions_observed": len(turns),
+        "all_sessions_usable": complete,
+        "dimensions": records,
+        "live_gated_dimensions": live_gated,
+        "gates_within_tolerance": gates_ok and complete,
+        # Small live runs report deviations as sampling error, exactly like
+        # small builds; conformance additionally needs every session usable.
+        "conformant_population": population_ok and gates_ok and complete,
+    }
+
+
+def _dimension_records(
+    profile: SessionProfile, realized_values: Dict[str, float]
+) -> Dict[str, Dict[str, Any]]:
+    """One structured record per retained dimension: target, comparison,
+    tolerance, realized value, deviation, gating, and tolerance verdict.
+    Non-gated dimensions carry the same fields (informational verdict); the
+    published maxima are one-sided upper bounds with zero tolerance."""
+    gated = set(profile.gated_dimensions())
+    records = {}
+    for dimension, realized in realized_values.items():
+        target = profile.dimension_target(dimension)
+        tolerance = profile.dimension_tolerance(dimension)
+        deviation = (realized - target) / target
+        if dimension in UPPER_BOUND_DIMENSIONS:
+            comparison = "upper_bound"
+            within = realized <= target
+        else:
+            comparison = "two_sided"
+            within = abs(deviation) <= tolerance
+        records[dimension] = {
+            "target": target,
+            "comparison": comparison,
+            "tolerance": tolerance,
+            "realized": round(realized, 1),
+            "deviation_frac": round(deviation, 4),
+            "gated": dimension in gated,
+            "within_tolerance": within,
+        }
+    return records
 
 
 # Metadata fields that must match for a cached build to be reused.
@@ -851,19 +1048,51 @@ class RecoveryAgentDataset(BaseDataset):
 
         if self.dataset_path:
             payload = _load_payload_file(Path(self.dataset_path))
-            # The file's embedded metadata is authoritative for how it was
-            # built: mismatched CLI selections would silently change replay
-            # behavior (output budget) or mislabel results.
+            # A prebuilt file is only accepted when it was built by this
+            # generator schema for exactly the requested profile AND
+            # authority: silently running a context-built file under a
+            # requested input authority (or vice versa) would defeat the
+            # authority switch, and old schemas carry incompatible stats.
             file_meta = payload["metadata"]
+            if file_meta.get("dataset") != "recovery-agent":
+                raise ValueError(
+                    f"{self.dataset_path} is not a recovery-agent build "
+                    f"(dataset={file_meta.get('dataset')!r})."
+                )
+            if file_meta.get("generator_version") != GENERATOR_VERSION:
+                raise ValueError(
+                    f"{self.dataset_path} was built by generator version "
+                    f"{file_meta.get('generator_version')!r}; this code is "
+                    f"version {GENERATOR_VERSION}. Rebuild the file."
+                )
             file_profile = file_meta.get("profile") or {}
-            if file_profile.get("name", profile.name) != profile.name:
+            if file_profile.get("name") != profile.name:
                 raise ValueError(
                     f"{self.dataset_path} was built with profile "
-                    f"{file_profile['name']!r}; rerun with --recovery-profile "
-                    f"{file_profile['name']} (got {profile.name!r})."
+                    f"{file_profile.get('name')!r}; rerun with "
+                    f"--recovery-profile {file_profile.get('name')} "
+                    f"(got {profile.name!r})."
                 )
-            if file_profile:
-                profile = msgspec.convert(file_profile, SessionProfile)
+            if file_profile.get("authority") != profile.authority:
+                raise ValueError(
+                    f"{self.dataset_path} was built {file_profile.get('authority')}-"
+                    f"authoritative but --recovery-authority requested "
+                    f"{profile.authority!r}; rerun with --recovery-authority "
+                    f"{file_profile.get('authority')} or rebuild the file."
+                )
+            try:
+                embedded = msgspec.convert(file_profile, SessionProfile)
+            except msgspec.ValidationError as error:
+                raise ValueError(
+                    f"{self.dataset_path} embeds an incompatible profile "
+                    f"schema: {error}. Rebuild the file."
+                ) from error
+            if embedded != profile:
+                raise ValueError(
+                    f"{self.dataset_path} embeds profile constants that differ "
+                    "from this build's profile definition; rebuild the file "
+                    "or use the matching code revision."
+                )
             routing_seed = file_meta.get("seed", self.seed)
         else:
             payload = self._load_or_build(tokenizer, profile, needed)
@@ -893,34 +1122,51 @@ class RecoveryAgentDataset(BaseDataset):
             )
 
         # Report the statistics of the *selected slice*, not the whole cached
-        # build; the per-session plan arithmetic is retained in the metadata.
+        # build; per-session planned and built arithmetic is retained in the
+        # metadata.
         metadata = payload["metadata"]
-        session_stats = metadata.get("session_stats")
-        if session_stats:
+
+        def slice_stats(key, head_tokens=None):
+            stats = metadata.get(key)
+            if not stats:
+                return {}
             plans = [
-                msgspec.convert(stats, SessionPlan)
-                for stats in session_stats[self.offset : needed]
+                msgspec.convert(entry, SessionPlan)
+                for entry in stats[self.offset : needed]
             ]
-            realized = _realized_stats(
+            return _realized_stats(
                 plans,
                 profile,
                 metadata.get("initial_overhead", 0),
                 metadata.get("round_overhead", 0),
+                head_tokens=head_tokens,
             )
-        else:
-            realized = metadata.get("realized") or {}
+
+        planned = slice_stats("session_stats")
+        built = slice_stats(
+            "built_session_stats", head_tokens=metadata.get("built_head_tokens")
+        )
         print(
             f"recovery-agent profile={profile.name} "
             f"authority={profile.authority} sessions={len(rows)} "
             f"(offset={self.offset}, synthetic distribution-matched data)"
         )
-        if realized:
-            print(json.dumps({"selected_slice_realized_vs_target": realized}, indent=2))
-        if not realized.get("conformant_population", False):
+        if planned:
             print(
-                "NOTE: this slice does not establish calibration conformance "
-                f"(reference population {profile.reference_population}; "
-                "gated dimensions must all be within tolerance)."
+                json.dumps(
+                    {
+                        "selected_slice_planned_stats": planned,
+                        "selected_slice_built_stats": built,
+                    },
+                    indent=2,
+                )
+            )
+        if not planned.get("conformant_population", False):
+            print(
+                "NOTE: this slice does not establish calibration conformance; "
+                "deviations above are sampling error at this population size "
+                f"(reference population {profile.reference_population}; all "
+                "gated dimensions must also be within tolerance)."
             )
         return rows
 

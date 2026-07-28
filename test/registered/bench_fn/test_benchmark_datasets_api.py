@@ -626,7 +626,7 @@ class TestBenchmarkDatasetsAPI(unittest.TestCase):
         args = make_args(
             dataset_name="agentic-trace",
             dataset_path=dataset_path,
-            num_prompts=10,
+            num_prompts=2,
         )
         dataset = AgenticTraceDataset.from_args(args)
         rows = dataset.load(self.tokenizer)
@@ -648,18 +648,39 @@ class TestBenchmarkDatasetsAPI(unittest.TestCase):
         args = make_args(
             dataset_name="agentic-trace",
             dataset_path=dataset_path,
-            num_prompts=10,
+            num_prompts=1,
             sharegpt_output_len=64,
             dataset_offset=1,
             agentic_max_turns=1,
         )
         dataset = AgenticTraceDataset.from_args(args)
         rows = dataset.load(self.tokenizer)
-        self.assertEqual(len(rows), 2)
-        # offset=1 rotates the second (single-turn) conversation to the front.
+        # Exact slice [1, 2): only the second (single-turn) conversation.
+        self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].prompt_len, 50)
         self.assertTrue(all(len(row.prompt) == 1 for row in rows))
         self.assertTrue(all(row.output_len == 64 for row in rows))
+
+    def test_agentic_trace_over_consumption_is_hard_error(self):
+        """--num-sessions guarantees exactly N fresh conversations: the loader
+        once rotated with modulo and silently returned fewer rows, so sweep
+        steps could recycle sessions (bug regression)."""
+        dataset_path = self._write_agentic_trace_json()  # 2 usable conversations
+        args = make_args(
+            dataset_name="agentic-trace",
+            dataset_path=dataset_path,
+            num_prompts=3,
+        )
+        with self.assertRaisesRegex(ValueError, "never recycled"):
+            AgenticTraceDataset.from_args(args).load(self.tokenizer)
+        args = make_args(
+            dataset_name="agentic-trace",
+            dataset_path=dataset_path,
+            num_prompts=2,
+            dataset_offset=1,
+        )
+        with self.assertRaisesRegex(ValueError, "never recycled"):
+            AgenticTraceDataset.from_args(args).load(self.tokenizer)
 
     def test_agentic_trace_invalid_input_raises(self):
         args = make_args(

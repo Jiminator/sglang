@@ -25,6 +25,7 @@ args=(
   --max-running-requests 16
   --cuda-graph-max-bs 16
   --reasoning-parser glm45
+  --enable-metrics --enable-cache-report
   --host 0.0.0.0 --port "$PORT"
 )
 
