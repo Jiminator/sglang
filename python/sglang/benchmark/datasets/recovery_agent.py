@@ -134,6 +134,27 @@ PROFILES: Dict[str, SessionProfile] = {
         request_weighted_isl_tolerance=0.10,
         reference_population=2048,
     ),
+    # Tiny sessions for topology/smoke tests with small models: same
+    # generator, sizes that fit a 32k-context model in seconds. Not derived
+    # from any measured workload.
+    "smoke": SessionProfile(
+        name="smoke",
+        turns_p50=4.0,
+        turns_p95=8.0,
+        turns_cap=16,
+        input_per_turn_p50=60.0,
+        input_per_turn_p95=200.0,
+        input_per_turn_cap=1000,
+        final_context_p50=800.0,
+        final_context_p95=2000.0,
+        final_context_cap=4000,
+        output_len_per_turn=32,
+        head_tokens=200,
+        turns_context_correlation=0.5,
+        request_weighted_isl_target=808,
+        request_weighted_isl_tolerance=0.25,
+        reference_population=64,
+    ),
 }
 
 DEFAULT_PROFILE = "agent-short"

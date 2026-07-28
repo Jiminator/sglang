@@ -2415,10 +2415,11 @@ def cli_main():
         "--recovery-profile",
         type=str,
         default="agent-short",
-        choices=["agent-short", "agent-long"],
+        choices=["agent-short", "agent-long", "smoke"],
         help="Workload shape profile for the recovery-agent dataset: "
-        "'agent-short' (shallower sessions, ~14.8k mean prompt) or "
-        "'agent-long' (deep sessions, ~20.9k mean prompt).",
+        "'agent-short' (shallower sessions, ~14.8k mean prompt), "
+        "'agent-long' (deep sessions, ~20.9k mean prompt), or 'smoke' "
+        "(tiny sessions for topology tests with small models).",
     )
     parser.add_argument(
         "--agentic-max-turns",
