@@ -159,13 +159,18 @@ class SessionPlan(msgspec.Struct):
 def _plan_session(
     profile: SessionProfile,
     rng: np.random.RandomState,
-    template_overhead: int,
+    initial_overhead: int,
+    round_overhead: int,
 ) -> SessionPlan:
     """Sample one session's (turns, context, per-turn inputs) plan.
 
     The per-turn inputs sum exactly to the input budget implied by the
     sampled final context; infeasible draws are redrawn a bounded number of
     times and then repaired deterministically.
+
+    ``initial_overhead`` is the chat-template cost of rendering the opening
+    system+user pair; ``round_overhead`` is the cost each later round adds
+    (one assistant reply plus one user message wrapper).
     """
     turns_mu, turns_sigma = _lognormal_params(profile.turns_p50, profile.turns_p95)
     ctx_mu, ctx_sigma = _lognormal_params(
@@ -173,7 +178,7 @@ def _plan_session(
     )
     rho = profile.turns_context_correlation
     osl = profile.output_len_per_turn
-    per_turn_fixed = MIN_TURN_INPUT_TOKENS + osl + template_overhead
+    per_extra_turn = MIN_TURN_INPUT_TOKENS + osl + round_overhead
 
     repaired = False
     turn_count = 0
@@ -196,7 +201,9 @@ def _plan_session(
                 profile.final_context_cap,
             )
         )
-        budget = _input_budget(profile, turn_count, final_context, template_overhead)
+        budget = _input_budget(
+            profile, turn_count, final_context, initial_overhead, round_overhead
+        )
         if budget >= turn_count * MIN_TURN_INPUT_TOKENS:
             break
     else:
@@ -206,15 +213,25 @@ def _plan_session(
         repaired = True
         turn_count = max(
             1,
-            (final_context - profile.head_tokens + osl) // per_turn_fixed,
+            (
+                final_context
+                - profile.head_tokens
+                - initial_overhead
+                - MIN_TURN_INPUT_TOKENS
+                + per_extra_turn
+            )
+            // per_extra_turn,
         )
-        budget = _input_budget(profile, turn_count, final_context, template_overhead)
+        budget = _input_budget(
+            profile, turn_count, final_context, initial_overhead, round_overhead
+        )
         if budget < turn_count * MIN_TURN_INPUT_TOKENS:
             # Even one turn does not fit: grow the context to the floor.
             final_context = (
                 profile.head_tokens
-                + turn_count * (MIN_TURN_INPUT_TOKENS + template_overhead)
-                + (turn_count - 1) * osl
+                + initial_overhead
+                + turn_count * MIN_TURN_INPUT_TOKENS
+                + (turn_count - 1) * (osl + round_overhead)
             )
             budget = turn_count * MIN_TURN_INPUT_TOKENS
 
@@ -226,9 +243,9 @@ def _plan_session(
         budget = max_budget
         final_context = (
             profile.head_tokens
+            + initial_overhead
             + budget
-            + (turn_count - 1) * osl
-            + turn_count * template_overhead
+            + (turn_count - 1) * (osl + round_overhead)
         )
 
     turn_inputs = _allocate_turn_inputs(profile, rng, turn_count, budget)
@@ -251,13 +268,14 @@ def _input_budget(
     profile: SessionProfile,
     turn_count: int,
     final_context: int,
-    template_overhead: int,
+    initial_overhead: int,
+    round_overhead: int,
 ) -> int:
     return (
         final_context
         - profile.head_tokens
-        - (turn_count - 1) * profile.output_len_per_turn
-        - turn_count * template_overhead
+        - initial_overhead
+        - (turn_count - 1) * (profile.output_len_per_turn + round_overhead)
     )
 
 
@@ -308,15 +326,16 @@ def _allocate_turn_inputs(
     return [int(s) for s in sizes]
 
 
-def _measure_template_overhead(tokenizer) -> int:
-    """Per-turn chat-template token overhead, measured on this tokenizer.
+def _measure_template_overheads(tokenizer) -> Tuple[int, int]:
+    """Chat-template token overheads, measured on this tokenizer.
 
-    Rendering grows by (user content + assistant content + a constant wrapper
-    cost) per turn; this measures that constant. Tokenizers without a chat
-    template cost nothing per turn.
+    Returns ``(initial_overhead, round_overhead)``: the wrapper cost of
+    rendering the opening system+user pair, and the cost each later round
+    adds on top (one assistant reply plus one user message). Tokenizers
+    without a chat template cost nothing.
     """
     if getattr(tokenizer, "chat_template", None) is None:
-        return 0
+        return 0, 0
     base = [
         {"role": "system", "content": "s"},
         {"role": "user", "content": "u"},
@@ -336,12 +355,18 @@ def _measure_template_overhead(tokenizer) -> int:
             )
         )
 
-    added_content = sum(
-        len(tokenizer.encode(m["content"], add_special_tokens=False))
-        for m in extended[len(base) :]
+    def bare_len(messages):
+        return sum(
+            len(tokenizer.encode(m["content"], add_special_tokens=False))
+            for m in messages
+        )
+
+    initial_overhead = max(0, rendered_len(base) - bare_len(base))
+    round_overhead = max(
+        0,
+        rendered_len(extended) - rendered_len(base) - bare_len(extended[len(base) :]),
     )
-    per_two_messages = rendered_len(extended) - rendered_len(base) - added_content
-    return max(0, per_two_messages // 2)
+    return initial_overhead, round_overhead
 
 
 def _sized_text(target_bare_tokens: int, rng: np.random.RandomState, tokenizer) -> str:
@@ -405,18 +430,18 @@ def build_sessions(
     stream, so any prefix of a larger build is byte-identical to a smaller
     build — growing a cache never changes existing sessions.
     """
-    template_overhead = _measure_template_overhead(tokenizer)
+    initial_overhead, round_overhead = _measure_template_overheads(tokenizer)
     head_text = _sized_text(profile.head_tokens, np.random.RandomState(seed), tokenizer)
 
     conversations: List[List[Dict[str, Any]]] = []
     plans: List[SessionPlan] = []
     for session_index in range(num_sessions):
         rng = np.random.RandomState(seed + session_index)
-        plan = _plan_session(profile, rng, template_overhead)
+        plan = _plan_session(profile, rng, initial_overhead, round_overhead)
         plans.append(plan)
 
         turns: List[Dict[str, Any]] = []
-        prompt_tokens = profile.head_tokens + template_overhead
+        prompt_tokens = profile.head_tokens + initial_overhead
         for turn_index, turn_input in enumerate(plan.turn_inputs):
             content = _sized_text(turn_input, rng, tokenizer)
             if turn_index == 0:
@@ -428,7 +453,7 @@ def build_sessions(
             else:
                 messages = [{"role": "user", "content": content}]
                 prompt_tokens += (
-                    turn_input + profile.output_len_per_turn + template_overhead
+                    turn_input + profile.output_len_per_turn + round_overhead
                 )
             turns.append({"messages": messages, "prompt_tokens": prompt_tokens})
         conversations.append(turns)
@@ -439,10 +464,18 @@ def build_sessions(
         "profile": msgspec.to_builtins(profile),
         "seed": seed,
         "tokenizer_path": tokenizer.name_or_path,
-        "template_overhead": template_overhead,
+        "initial_overhead": initial_overhead,
+        "round_overhead": round_overhead,
         "num_sessions": num_sessions,
         "synthetic": True,  # distribution-matched synthetic, not a trace replay
-        "realized": _realized_stats(plans, profile, template_overhead),
+        # The per-turn input marginal is budget-derived: session budgets come
+        # from the (authoritative) final-context marginal, and rescaling the
+        # iid draws to those budgets shifts the realized input quantiles below
+        # the published per-turn summaries. The published summaries are
+        # mutually inconsistent (mean turns x mean input + replies exceeds the
+        # mean final context), so the context wins by design; realized input
+        # quantiles are reported here rather than asserted.
+        "realized": _realized_stats(plans, profile, initial_overhead, round_overhead),
     }
     return {"metadata": metadata, "conversations": conversations}
 
@@ -450,7 +483,8 @@ def build_sessions(
 def _realized_stats(
     plans: List[SessionPlan],
     profile: SessionProfile,
-    template_overhead: int,
+    initial_overhead: int,
+    round_overhead: int,
 ) -> Dict[str, Any]:
     """Planned-arithmetic statistics of a built population vs its targets."""
     turns = np.array([p.turn_count for p in plans])
@@ -458,12 +492,12 @@ def _realized_stats(
     deltas = np.array([d for p in plans for d in p.turn_inputs])
     request_prompt_lens = []
     for p in plans:
-        prompt = profile.head_tokens + template_overhead
+        prompt = profile.head_tokens + initial_overhead
         for turn_index, turn_input in enumerate(p.turn_inputs):
             if turn_index == 0:
                 prompt += turn_input
             else:
-                prompt += turn_input + profile.output_len_per_turn + template_overhead
+                prompt += turn_input + profile.output_len_per_turn + round_overhead
             request_prompt_lens.append(prompt)
     isl = np.array(request_prompt_lens)
 
@@ -567,9 +601,24 @@ class RecoveryAgentDataset(BaseDataset):
             )
         profile = PROFILES[self.profile_name]
         needed = self.offset + self.num_sessions
+        routing_seed = self.seed
 
         if self.dataset_path:
             payload = _load_payload_file(Path(self.dataset_path))
+            # The file's embedded metadata is authoritative for how it was
+            # built: mismatched CLI selections would silently change replay
+            # behavior (output budget) or mislabel results.
+            file_meta = payload["metadata"]
+            file_profile = file_meta.get("profile") or {}
+            if file_profile.get("name", profile.name) != profile.name:
+                raise ValueError(
+                    f"{self.dataset_path} was built with profile "
+                    f"{file_profile['name']!r}; rerun with --recovery-profile "
+                    f"{file_profile['name']} (got {profile.name!r})."
+                )
+            if file_profile:
+                profile = msgspec.convert(file_profile, SessionProfile)
+            routing_seed = file_meta.get("seed", self.seed)
         else:
             payload = self._load_or_build(tokenizer, profile, needed)
 
@@ -592,7 +641,7 @@ class RecoveryAgentDataset(BaseDataset):
                     prompt_len=int(conversation[0].get("prompt_tokens", 0)),
                     output_len=profile.output_len_per_turn,
                     routing_key=_session_routing_key(
-                        self.seed, self.offset + session_index
+                        routing_seed, self.offset + session_index
                     ),
                 )
             )

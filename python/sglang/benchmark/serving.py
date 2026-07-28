@@ -275,7 +275,9 @@ def _extract_cache_from_sglext(data, output):
 def aggregate_cache_report(outputs: List["RequestFuncOutput"]) -> Dict[str, Any]:
     """Sum cache-report counters over successful outputs; the prompt-token
     denominator uses ``effective_prompt_len`` so multi-turn rounds count their
-    real (server-reported) prompt sizes."""
+    real (server-reported) prompt sizes. Multi-turn rounds without server
+    usage are excluded outright: their client-side fallback is the stale
+    first-round length, which would corrupt the hit-rate denominator."""
     total_prompt_tokens = 0
     total_cached = 0
     total_device = total_host = total_storage = 0
@@ -283,6 +285,8 @@ def aggregate_cache_report(outputs: List["RequestFuncOutput"]) -> Dict[str, Any]
     has_details = False
     for o in outputs:
         if not o.success:
+            continue
+        if o.session_index is not None and o.server_prompt_len is None:
             continue
         total_prompt_tokens += o.effective_prompt_len()
         total_cached += o.cached_tokens
@@ -499,17 +503,19 @@ async def async_request_openai_chat_completions(
         if "ignore_eos" not in request_func_input.extra_request_body:
             payload["ignore_eos"] = not args.disable_ignore_eos
 
-        # Ask for a final usage chunk so server-reported prompt/completion
-        # token counts are available on the streaming path.
-        if (
-            not args.disable_stream
-            and "stream_options" not in request_func_input.extra_request_body
-        ):
-            payload["stream_options"] = {"include_usage": True}
-
         # Merge in extra parameters (tools, temperature, top_p, etc.)
         # These will override defaults if present
         payload.update(request_func_input.extra_request_body)
+
+        # Ask for a final usage chunk so server-reported prompt/completion
+        # token counts are available on the streaming path. Merge rather than
+        # replace: a caller-provided stream_options keeps its other keys, and
+        # an explicit include_usage (either value) wins.
+        if not args.disable_stream:
+            payload["stream_options"] = {
+                "include_usage": True,
+                **(payload.get("stream_options") or {}),
+            }
 
         # hack to accommodate different LoRA conventions between SGLang and vLLM.
         if request_func_input.lora_name:
@@ -1171,9 +1177,12 @@ def calculate_metrics(
                 total_input_vision += input_requests[i].vision_prompt_len
             else:
                 # Multi-turn runs flatten per-round outputs, so there is no
-                # 1:1 mapping to input_requests; account from the outputs
-                # (server-reported prompt tokens when available).
-                round_input = outputs[i].effective_prompt_len()
+                # 1:1 mapping to input_requests; account from server-reported
+                # prompt tokens. A round without usage contributes nothing —
+                # the client-side fallback is the stale first-round length,
+                # which would badly undercount grown prompts — and the run is
+                # flagged incomplete in the result JSON.
+                round_input = outputs[i].server_prompt_len or 0
                 total_input += round_input
                 total_input_text += round_input
             if output_len > 1:
@@ -1378,11 +1387,21 @@ def wrap_multi_turn_request_func(request_func: Callable, backend: str) -> Callab
                 break
 
             # Replay `content` only; `generated_text` may include reasoning,
-            # which live agent clients do not resend.
-            replay = output.assistant_replay_text
-            if replay is None:
-                replay = output.generated_text
-            prev_messages.append({"role": "assistant", "content": replay})
+            # which live agent clients do not resend. A successful round
+            # without replay text means the request function does not honor
+            # the replay contract — falling back to `generated_text` would
+            # silently resend reasoning, so abort instead.
+            if output.assistant_replay_text is None:
+                output.success = False
+                output.error = (
+                    "multi-turn round returned no assistant_replay_text; "
+                    "the backend request function does not support "
+                    "content-only replay"
+                )
+                break
+            prev_messages.append(
+                {"role": "assistant", "content": output.assistant_replay_text}
+            )
 
         return outputs
 
@@ -1474,16 +1493,26 @@ async def benchmark(
     else:
         lora_name = None
 
+    # Warmup must not pre-populate state the measured run will then find warm:
+    # multi-turn warmup replays only the first round of the first conversation
+    # under a dedicated routing key, so no measured session's unique prefix or
+    # worker placement is primed. (The shared head does get one warm pass —
+    # use --flush-cache for cold-cache measurements.)
+    warmup_prompt = test_request.prompt
+    if is_multi_turn:
+        warmup_prompt = test_request.prompt[:1]
+
     # Create the test input once
     test_input = RequestFuncInput(
         model=model_id,
-        prompt=test_request.prompt,
+        prompt=warmup_prompt,
         api_url=api_url,
         prompt_len=test_request.prompt_len,
         output_len=min(test_request.output_len, 32),
         lora_name=lora_name,
         image_data=test_request.image_data,
         extra_request_body=extra_request_body,
+        routing_key="warmup" if test_request.routing_key else None,
     )
 
     # Run warmup requests
@@ -2272,18 +2301,20 @@ def _validate_parsed_session_args(
                 f"({', '.join(sorted(MULTI_TURN_DATASETS))}); got --dataset-name "
                 f"{args.dataset_name}"
             )
-        if args.num_sessions <= 0:
-            parser.error(f"--num-sessions must be > 0, got {args.num_sessions}")
         # Downstream code counts conversations via num_prompts.
         args.num_prompts = args.num_sessions
-    if args.dataset_name == "recovery-agent" and args.backend not in (
-        MULTI_TURN_BACKENDS
-    ):
-        parser.error(
-            f"--dataset-name recovery-agent requires a multi-turn chat backend "
-            f"({', '.join(sorted(MULTI_TURN_BACKENDS))}); got --backend "
-            f"{args.backend}"
-        )
+    if args.dataset_name in MULTI_TURN_DATASETS:
+        if args.backend not in MULTI_TURN_BACKENDS:
+            parser.error(
+                f"--dataset-name {args.dataset_name} requires a multi-turn chat "
+                f"backend ({', '.join(sorted(MULTI_TURN_BACKENDS))}); got "
+                f"--backend {args.backend}"
+            )
+        if args.num_prompts <= 0:
+            parser.error(
+                f"The session count must be > 0, got {args.num_prompts} "
+                "(--num-sessions/--num-prompts)"
+            )
 
 
 def _validate_parsed_gsp_args(

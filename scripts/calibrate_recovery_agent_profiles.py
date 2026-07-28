@@ -23,7 +23,8 @@ from sglang.benchmark.datasets.recovery_agent import (
     _plan_session,
 )
 
-NOMINAL_TEMPLATE_OVERHEAD = 8
+NOMINAL_INITIAL_OVERHEAD = 8
+NOMINAL_ROUND_OVERHEAD = 8
 
 
 def request_weighted_isl_mean(
@@ -32,14 +33,16 @@ def request_weighted_isl_mean(
     prompt_lens = []
     for session_index in range(num_sessions):
         rng = np.random.RandomState(seed + session_index)
-        plan = _plan_session(profile, rng, NOMINAL_TEMPLATE_OVERHEAD)
-        prompt = profile.head_tokens + NOMINAL_TEMPLATE_OVERHEAD
+        plan = _plan_session(
+            profile, rng, NOMINAL_INITIAL_OVERHEAD, NOMINAL_ROUND_OVERHEAD
+        )
+        prompt = profile.head_tokens + NOMINAL_INITIAL_OVERHEAD
         for turn_index, turn_input in enumerate(plan.turn_inputs):
             if turn_index == 0:
                 prompt += turn_input
             else:
                 prompt += (
-                    turn_input + profile.output_len_per_turn + NOMINAL_TEMPLATE_OVERHEAD
+                    turn_input + profile.output_len_per_turn + NOMINAL_ROUND_OVERHEAD
                 )
             prompt_lens.append(prompt)
     return float(np.mean(prompt_lens))

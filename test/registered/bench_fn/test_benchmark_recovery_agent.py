@@ -88,7 +88,7 @@ class TestSessionPlanning(CustomTestCase):
         for profile in PROFILES.values():
             for i in range(300):
                 rng = np.random.RandomState(10_000 + i)
-                plan = _plan_session(profile, rng, 8)
+                plan = _plan_session(profile, rng, 8, 8)
                 self.assertEqual(sum(plan.turn_inputs), plan.input_budget)
                 self.assertGreaterEqual(min(plan.turn_inputs), MIN_TURN_INPUT_TOKENS)
                 self.assertLessEqual(max(plan.turn_inputs), profile.input_per_turn_cap)
@@ -111,7 +111,7 @@ class TestSessionPlanning(CustomTestCase):
             prompt_lens = []
             for i in range(profile.reference_population):
                 rng = np.random.RandomState(42 + i)
-                plan = _plan_session(profile, rng, 8)
+                plan = _plan_session(profile, rng, 8, 8)
                 prompt = profile.head_tokens + 8
                 for turn_index, turn_input in enumerate(plan.turn_inputs):
                     if turn_index == 0:
@@ -170,6 +170,38 @@ class TestDatasetBuild(CustomTestCase):
         realized = metadata["realized"]
         self.assertEqual(realized["sessions"], 4)
         self.assertFalse(realized["conformant_population"])  # 4 < 64
+
+    def test_stored_prompt_tokens_match_rendered_prompts(self):
+        """The planned per-round prompt_tokens must track what the chat
+        template actually renders — the overhead model once undercounted by
+        charging half the per-round wrapper cost, skewing every final-context
+        plan (bug regression)."""
+        payload = self._build(num_sessions=2)
+        for conversation in payload["conversations"]:
+            messages = []
+            for turn_index, turn in enumerate(conversation):
+                messages.extend(turn["messages"])
+                rendered = len(
+                    self.tokenizer.apply_chat_template(
+                        messages,
+                        tokenize=True,
+                        add_generation_prompt=True,
+                        return_dict=False,
+                    )
+                )
+                # The plan charges the *planned* output length for earlier
+                # rounds; rendering with empty assistant slots differs by
+                # exactly those planned outputs.
+                planned_outputs = turn_index * self.profile.output_len_per_turn
+                planned = turn["prompt_tokens"] - planned_outputs
+                # Pad sizing may undershoot each sized text by a bounded
+                # deficit (head + issue + one delta per later round).
+                max_deficit = (
+                    2 + turn_index
+                ) * recovery_agent.PAD_SIZING_MAX_DEFICIT_TOKENS
+                self.assertLessEqual(rendered, planned)
+                self.assertGreaterEqual(rendered, planned - max_deficit)
+                messages.append({"role": "assistant", "content": ""})
 
 
 class TestDatasetLoad(CustomTestCase):
@@ -238,6 +270,17 @@ class TestDatasetLoad(CustomTestCase):
         with self.assertRaisesRegex(ValueError, "Unknown recovery-agent profile"):
             self._dataset(profile_name="nope").load(self.tokenizer)
 
+    def test_prebuilt_profile_mismatch_rejected(self):
+        """A prebuilt file's embedded profile is authoritative; loading it
+        under a different CLI profile would silently change the per-turn
+        output budget and mislabel results (bug regression)."""
+        self._dataset().load(self.tokenizer)  # writes the cache
+        payload = json.loads(self.cache_file.read_text())
+        payload["metadata"]["profile"]["name"] = "other-profile"
+        self.cache_file.write_text(json.dumps(payload))
+        with self.assertRaisesRegex(ValueError, "other-profile"):
+            self._dataset(dataset_path=str(self.cache_file)).load(self.tokenizer)
+
 
 class TestMultiTurnReplay(CustomTestCase):
     """The wrapper replays content only, aborts failed sessions, and stamps
@@ -281,6 +324,23 @@ class TestMultiTurnReplay(CustomTestCase):
         self.assertEqual([o.session_index for o in outputs], [3, 3])
         self.assertEqual([o.round_index for o in outputs], [0, 1])
 
+    def test_missing_replay_text_aborts_session(self):
+        """A successful round without assistant_replay_text must abort, not
+        fall back to generated_text — the fallback would silently resend
+        reasoning into the next round's prefix."""
+
+        async def fake_request(request_func_input, pbar=None):
+            output = RequestFuncOutput.init_new(request_func_input)
+            output.success = True
+            output.generated_text = "THOUGHTS reply"
+            output.assistant_replay_text = None
+            return output
+
+        outputs = asyncio.run(self._wrap(fake_request)(self._input(["a", "b"])))
+        self.assertEqual(len(outputs), 1)
+        self.assertFalse(outputs[0].success)
+        self.assertIn("assistant_replay_text", outputs[0].error)
+
     def test_failed_round_aborts_session(self):
         calls = []
 
@@ -316,12 +376,15 @@ class TestStreamingReplayExtraction(CustomTestCase):
             except StopIteration:
                 raise StopAsyncIteration
 
-    def _fake_session(self, chunks):
+    def _fake_session(self, chunks=None, json_body=None):
         outer = self
 
         class _FakeResponse:
             status = 200
-            content = outer._FakeContent(chunks)
+            content = outer._FakeContent(chunks or [])
+
+            async def json(self):
+                return json_body
 
             async def __aenter__(self):
                 return self
@@ -387,6 +450,50 @@ class TestStreamingReplayExtraction(CustomTestCase):
         self.assertEqual(output.server_prompt_len, 77)
         self.assertEqual(output.output_len, 5)
 
+    def test_non_streaming_separates_reasoning_from_replay(self):
+        body = {
+            "choices": [
+                {
+                    "message": {
+                        "reasoning_content": "THINKING ",
+                        "content": "final answer",
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 66, "completion_tokens": 4},
+        }
+        request_func_input = RequestFuncInput(
+            model="m",
+            prompt=[{"role": "user", "content": "q"}],
+            api_url="http://localhost/v1/chat/completions",
+            prompt_len=10,
+            output_len=8,
+            lora_name=None,
+            image_data=None,
+            extra_request_body={},
+        )
+        with patch.object(
+            serving,
+            "_create_bench_client_session",
+            lambda: self._fake_session(json_body=body),
+        ), patch.object(
+            serving,
+            "args",
+            SimpleNamespace(
+                disable_stream=True,
+                disable_ignore_eos=True,
+                dataset_name="recovery-agent",
+            ),
+            create=True,
+        ):
+            output = asyncio.run(
+                serving.async_request_openai_chat_completions(request_func_input)
+            )
+        self.assertTrue(output.success)
+        self.assertEqual(output.generated_text, "THINKING final answer")
+        self.assertEqual(output.assistant_replay_text, "final answer")
+        self.assertEqual(output.server_prompt_len, 66)
+
 
 class TestUsageBasedMetrics(CustomTestCase):
     def _output(self, prompt_len, server_prompt_len, cached, success=True):
@@ -412,6 +519,35 @@ class TestUsageBasedMetrics(CustomTestCase):
         self.assertEqual(report["total_prompt_tokens"], 110)
         self.assertEqual(report["total_cached"], 55)
         self.assertAlmostEqual(report["hit_rate"], 50.0)
+
+    def test_multi_turn_round_without_usage_is_excluded(self):
+        """A multi-turn round with no server usage must not fall back to the
+        stale first-round prompt length: doing so undercounts grown prompts
+        and inflates the cache-hit rate (bug regression). Such rounds are
+        excluded from both cache aggregation and total-input accounting."""
+        with_usage = self._output(prompt_len=10, server_prompt_len=5000, cached=4000)
+        with_usage.session_index = 0
+        without_usage = self._output(prompt_len=10, server_prompt_len=None, cached=4000)
+        without_usage.session_index = 0
+        report = aggregate_cache_report([with_usage, without_usage])
+        self.assertEqual(report["total_prompt_tokens"], 5000)
+        self.assertEqual(report["total_cached"], 4000)
+
+        tokenizer = _make_tokenizer()
+        with patch.object(
+            serving,
+            "args",
+            SimpleNamespace(dataset_name="recovery-agent", plot_throughput=False),
+            create=True,
+        ):
+            metrics, _ = calculate_metrics(
+                input_requests=None,
+                outputs=[with_usage, without_usage],
+                dur_s=2.0,
+                tokenizer=tokenizer,
+                backend="sglang-oai-chat",
+            )
+        self.assertEqual(metrics.total_input, 5000)
 
     def test_multi_turn_total_input_from_outputs(self):
         tokenizer = _make_tokenizer()
