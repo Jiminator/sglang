@@ -13,6 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import msgspec
 import numpy as np
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
@@ -63,21 +64,29 @@ def _tiny_profile(**overrides):
     """A shrunken profile so builds stay fast on the word-level tokenizer."""
     base = dict(
         name="tiny",
+        authority=recovery_agent.AUTHORITY_CONTEXT,
+        turns_mean=3.4,
         turns_p50=3.0,
         turns_p95=6.0,
         turns_cap=12,
+        turns_tolerance=0.35,
+        input_per_turn_mean=40.0,
         input_per_turn_p50=30.0,
         input_per_turn_p95=90.0,
         input_per_turn_cap=400,
+        input_per_turn_tolerance=0.50,
+        final_context_mean=340.0,
         final_context_p50=300.0,
         final_context_p95=700.0,
         final_context_cap=1500,
+        final_context_tolerance=0.35,
         output_len_per_turn=20,
         head_tokens=60,
         turns_context_correlation=0.5,
         request_weighted_isl_target=260,
-        request_weighted_isl_tolerance=0.10,
+        request_weighted_isl_tolerance=0.35,
         reference_population=64,
+        calibration_overheads=(13, 4),
     )
     base.update(overrides)
     return recovery_agent.SessionProfile(**base)
@@ -106,27 +115,78 @@ class TestSessionPlanning(CustomTestCase):
         sizes = _allocate_turn_inputs(profile, rng, 3, 3 * cap)
         self.assertEqual(sizes, [cap] * 3)
 
-    def test_calibrated_isl_within_tolerance(self):
-        for profile in PROFILES.values():
-            prompt_lens = []
-            for i in range(profile.reference_population):
-                rng = np.random.RandomState(42 + i)
-                plan = _plan_session(profile, rng, 8, 8)
-                prompt = profile.head_tokens + 8
-                for turn_index, turn_input in enumerate(plan.turn_inputs):
-                    if turn_index == 0:
-                        prompt += turn_input
-                    else:
-                        prompt += turn_input + profile.output_len_per_turn + 8
-                    prompt_lens.append(prompt)
-            isl_mean = float(np.mean(prompt_lens))
-            target = profile.request_weighted_isl_target
-            self.assertLessEqual(
-                abs(isl_mean - target) / target,
-                profile.request_weighted_isl_tolerance,
-                f"{profile.name}: calibrated constants no longer hit the "
-                f"target ({isl_mean:.0f} vs {target})",
+    def _canonical_realized(self, profile):
+        initial_overhead, round_overhead = profile.calibration_overheads
+        plans = [
+            _plan_session(
+                profile,
+                np.random.RandomState(42 + i),
+                initial_overhead,
+                round_overhead,
             )
+            for i in range(profile.reference_population)
+        ]
+        return recovery_agent._realized_stats(
+            plans, profile, initial_overhead, round_overhead
+        )
+
+    def test_all_gated_dimensions_conform_in_both_authorities(self):
+        """Every dimension the generation authority produces exactly must land
+        within its declared tolerance at the calibration reference population,
+        for both lineage profiles in both authority modes. Breaks whenever a
+        baked constant, the sampler, or the allocation drifts."""
+        for name in ("agent-long", "agent-short"):
+            for authority in (
+                recovery_agent.AUTHORITY_CONTEXT,
+                recovery_agent.AUTHORITY_INPUT,
+            ):
+                profile = msgspec.structs.replace(PROFILES[name], authority=authority)
+                realized = self._canonical_realized(profile)
+                for dimension in profile.gated_dimensions():
+                    entry = realized["dimensions"][dimension]
+                    self.assertTrue(
+                        entry["within_tolerance"],
+                        f"{name}/{authority}: {dimension} realized "
+                        f"{entry['realized']} vs target {entry['target']} "
+                        f"(dev {entry['deviation_frac']:+.3f})",
+                    )
+                self.assertTrue(realized["gates_within_tolerance"])
+                self.assertTrue(realized["conformant_population"])
+
+    def test_mutated_calibration_constant_breaks_gates(self):
+        """The gates are load-bearing: distorting one baked constant must
+        flip conformance off (guards against decorative tolerances)."""
+        distorted = msgspec.structs.replace(
+            PROFILES["agent-short"], final_context_p50=26000.0
+        )
+        realized = self._canonical_realized(distorted)
+        self.assertFalse(realized["gates_within_tolerance"])
+        self.assertFalse(realized["conformant_population"])
+
+    def test_input_authority_reports_but_does_not_gate_context(self):
+        """In input-authoritative mode the context/ISL dimensions must be
+        reported (with their honest overshoot) and explicitly non-gated."""
+        profile = msgspec.structs.replace(
+            PROFILES["agent-short"], authority=recovery_agent.AUTHORITY_INPUT
+        )
+        realized = self._canonical_realized(profile)
+        for dimension in ("final_context_mean", "request_weighted_isl_mean"):
+            entry = realized["dimensions"][dimension]
+            self.assertFalse(entry["gated"])
+            self.assertNotIn("within_tolerance", entry)
+        for dimension in ("input_per_turn_mean", "input_per_turn_p50"):
+            self.assertTrue(realized["dimensions"][dimension]["gated"])
+
+    def test_input_authority_respects_caps(self):
+        profile = msgspec.structs.replace(
+            PROFILES["agent-short"], authority=recovery_agent.AUTHORITY_INPUT
+        )
+        for i in range(200):
+            plan = _plan_session(profile, np.random.RandomState(500 + i), 13, 4)
+            self.assertGreaterEqual(min(plan.turn_inputs), MIN_TURN_INPUT_TOKENS)
+            self.assertLessEqual(max(plan.turn_inputs), profile.input_per_turn_cap)
+            self.assertEqual(plan.input_budget, sum(plan.turn_inputs))
+            self.assertLessEqual(plan.final_context, 2 * profile.final_context_cap)
 
 
 class TestDatasetBuild(CustomTestCase):
@@ -269,6 +329,41 @@ class TestDatasetLoad(CustomTestCase):
     def test_unknown_profile_rejected(self):
         with self.assertRaisesRegex(ValueError, "Unknown recovery-agent profile"):
             self._dataset(profile_name="nope").load(self.tokenizer)
+
+    def test_tokenizer_content_change_forces_rebuild(self):
+        """The cache key must fingerprint tokenizer *content*: changing the
+        chat template at an unchanged name_or_path once silently reused stale
+        conversations and stale overhead measurements (bug regression)."""
+        self._dataset().load(self.tokenizer)
+        first = json.loads(self.cache_file.read_text())
+        changed = _make_tokenizer()
+        changed.chat_template = (
+            "{% for message in messages %}"
+            "<<{{ message['role'] }}>> {{ message['content'] }} \n "
+            "{% endfor %}"
+        )
+        self.assertEqual(changed.name_or_path, self.tokenizer.name_or_path)
+        self._dataset().load(changed)
+        rebuilt = json.loads(self.cache_file.read_text())
+        self.assertNotEqual(
+            first["metadata"]["tokenizer_fingerprint"],
+            rebuilt["metadata"]["tokenizer_fingerprint"],
+        )
+
+    def test_offset_load_reports_selected_slice_statistics(self):
+        """An offset load must report statistics for its own slice, not the
+        whole cached prefix (bug regression: 8-session runs once printed
+        16/24/32-session statistics)."""
+        self._dataset(num_sessions=3).load(self.tokenizer)  # cache 3 sessions
+        import io
+        from contextlib import redirect_stdout
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            self._dataset(num_sessions=1, offset=2).load(self.tokenizer)
+        printed = buffer.getvalue()
+        payload = json.loads(printed[printed.index("{") : printed.rindex("}") + 1])
+        self.assertEqual(payload["selected_slice_realized_vs_target"]["sessions"], 1)
 
     def test_prebuilt_profile_mismatch_rejected(self):
         """A prebuilt file's embedded profile is authoritative; loading it

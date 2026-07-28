@@ -2048,6 +2048,8 @@ def run_benchmark(args_: argparse.Namespace):
 
     if not hasattr(args, "num_sessions"):
         args.num_sessions = None
+    if not hasattr(args, "recovery_authority"):
+        args.recovery_authority = "context"
 
     if not hasattr(args, "output_details"):
         args.output_details = False
@@ -2420,6 +2422,17 @@ def cli_main():
         "'agent-short' (shallower sessions, ~14.8k mean prompt), "
         "'agent-long' (deep sessions, ~20.9k mean prompt), or 'smoke' "
         "(tiny sessions for topology tests with small models).",
+    )
+    parser.add_argument(
+        "--recovery-authority",
+        type=str,
+        default="context",
+        choices=["context", "input"],
+        help="Which marginal the recovery-agent generator produces exactly "
+        "(the reference workload's published per-turn-input and final-context "
+        "summaries are mutually incompatible): 'context' gates final context "
+        "and request-weighted prompt size; 'input' gates the per-turn input "
+        "marginal and derives the context.",
     )
     parser.add_argument(
         "--agentic-max-turns",

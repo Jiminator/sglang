@@ -42,7 +42,7 @@ import numpy as np
 
 from sglang.benchmark.datasets.common import BaseDataset, DatasetRow
 
-GENERATOR_VERSION = 1
+GENERATOR_VERSION = 2
 
 # z-score of the 95th percentile of the standard normal; lognormal fits below
 # derive sigma from the (p50, p95) pair.
@@ -63,6 +63,41 @@ MAX_FEASIBILITY_REDRAWS = 8
 _PAD_ALPHABET = np.array(list(string.ascii_letters + string.digits + " .,;:?!\n"))
 
 
+# Which statistical dimension the generator treats as exact.
+#
+# The published per-turn-input and final-context summaries of the measured
+# lineages are arithmetically incompatible (mean turns x mean input plus
+# replies exceeds the mean final context by ~30%), so a generator can honor
+# one of them, not both. Per explicit user decision (recorded in the loop's
+# plan-evolution log): context is authoritative by default, and an
+# input-authoritative mode is provided so the authority can be flipped with
+# one switch (``--recovery-authority input``).
+AUTHORITY_CONTEXT = "context"
+AUTHORITY_INPUT = "input"
+
+# Realized-vs-target statistics keys, grouped by which generation authority
+# gates them. The non-gated dimensions are always reported, never asserted.
+GATED_DIMENSIONS = {
+    AUTHORITY_CONTEXT: (
+        "turns_mean",
+        "turns_p50",
+        "turns_p95",
+        "final_context_mean",
+        "final_context_p50",
+        "final_context_p95",
+        "request_weighted_isl_mean",
+    ),
+    AUTHORITY_INPUT: (
+        "turns_mean",
+        "turns_p50",
+        "turns_p95",
+        "input_per_turn_mean",
+        "input_per_turn_p50",
+        "input_per_turn_p95",
+    ),
+}
+
+
 class SessionProfile(msgspec.Struct, frozen=True):
     """Statistical shape of one workload lineage.
 
@@ -70,90 +105,150 @@ class SessionProfile(msgspec.Struct, frozen=True):
     rendered prompt of a session's last request: fixed head, all per-turn user
     input, the assistant replies of every turn but the last, and chat-template
     overhead.
+
+    Every published summary the profile retains is stored as an explicit
+    target with a per-dimension relative tolerance; ``authority`` selects
+    which dimension set is generated exactly (and therefore gated) versus
+    derived (and therefore reported only). The calibration constants are
+    valid for the recorded reference chat-template overheads.
     """
 
     name: str
+    authority: str  # AUTHORITY_CONTEXT or AUTHORITY_INPUT
+    # Turn-count targets (always gated).
+    turns_mean: float
     turns_p50: float
     turns_p95: float
     turns_cap: int  # p95-derived cap (2x p95), keeps the sampled tail finite
+    turns_tolerance: float
+    # Per-turn new-input targets (gated in input-authoritative mode).
+    input_per_turn_mean: float
     input_per_turn_p50: float
     input_per_turn_p95: float
     input_per_turn_cap: int  # published per-turn new-input maximum
+    input_per_turn_tolerance: float
+    # Final-context targets (gated in context-authoritative mode).
+    final_context_mean: float
     final_context_p50: float
     final_context_p95: float
     final_context_cap: int  # published final-context maximum
+    final_context_tolerance: float
     output_len_per_turn: int  # fixed planned per-turn completion budget
     head_tokens: int  # fixed shared system + tool-schema-shaped head
-    # Gaussian-copula correlation between turn count and final context,
-    # calibrated once on the reference population so the request-weighted
-    # mean prompt size lands on target.
+    # Gaussian-copula correlation between turn count and final context
+    # (context mode only), calibrated once on the reference population so the
+    # request-weighted mean prompt size lands on target.
     turns_context_correlation: float
     request_weighted_isl_target: int
     request_weighted_isl_tolerance: float
     reference_population: int  # population size the calibration ran at
+    # Chat-template overheads (initial, per-round) the calibration used;
+    # measured on the GLM-5.2 tokenizer. Conformance tests replay these.
+    calibration_overheads: Tuple[int, int]
+
+    def gated_dimensions(self) -> Tuple[str, ...]:
+        return GATED_DIMENSIONS[self.authority]
+
+    def dimension_tolerance(self, dimension: str) -> float:
+        if dimension.startswith("turns_"):
+            return self.turns_tolerance
+        if dimension.startswith("input_per_turn_"):
+            return self.input_per_turn_tolerance
+        if dimension.startswith("final_context_"):
+            return self.final_context_tolerance
+        return self.request_weighted_isl_tolerance
+
+    def dimension_target(self, dimension: str) -> float:
+        if dimension == "request_weighted_isl_mean":
+            return float(self.request_weighted_isl_target)
+        return float(getattr(self, dimension))
 
 
-# The two lineages, fitted to their published (p50, p95) summaries. The
-# correlation constants come from scripts/calibrate_recovery_agent_profiles.py
-# runs at the reference population sizes; rerun it if any other constant here
-# changes.
+# The two lineages, fitted to their published summaries. The correlation
+# constants come from scripts/calibrate_recovery_agent_profiles.py runs at
+# the reference population sizes with the recorded calibration overheads;
+# rerun it if any other constant here changes.
 PROFILES: Dict[str, SessionProfile] = {
     "agent-long": SessionProfile(
         name="agent-long",
+        authority=AUTHORITY_CONTEXT,
+        turns_mean=47.0,
         turns_p50=41.0,
         turns_p95=96.0,
         turns_cap=192,
+        turns_tolerance=0.15,
+        input_per_turn_mean=514.0,
         input_per_turn_p50=265.0,
         input_per_turn_p95=1700.0,
         input_per_turn_cap=17000,
+        input_per_turn_tolerance=0.15,
+        final_context_mean=27800.0,
         final_context_p50=24800.0,
         final_context_p95=53800.0,
         final_context_cap=92000,
+        final_context_tolerance=0.15,
         output_len_per_turn=190,
         head_tokens=3000,
         turns_context_correlation=0.30,
         request_weighted_isl_target=20900,
         request_weighted_isl_tolerance=0.10,
         reference_population=512,
+        calibration_overheads=(13, 4),
     ),
     "agent-short": SessionProfile(
         name="agent-short",
+        authority=AUTHORITY_CONTEXT,
+        turns_mean=16.0,
         turns_p50=10.0,
         turns_p95=50.0,
         turns_cap=100,
+        turns_tolerance=0.15,
+        input_per_turn_mean=730.0,
         input_per_turn_p50=340.0,
         input_per_turn_p95=2600.0,
         input_per_turn_cap=31000,
+        input_per_turn_tolerance=0.15,
+        final_context_mean=14800.0,
         final_context_p50=13000.0,
         final_context_p95=31300.0,
         final_context_cap=101000,
+        final_context_tolerance=0.15,
         output_len_per_turn=185,
         head_tokens=3000,
         turns_context_correlation=0.65,
         request_weighted_isl_target=14800,
         request_weighted_isl_tolerance=0.10,
         reference_population=2048,
+        calibration_overheads=(13, 4),
     ),
     # Tiny sessions for topology/smoke tests with small models: same
     # generator, sizes that fit a 32k-context model in seconds. Not derived
-    # from any measured workload.
+    # from any measured workload; wide tolerances, gates informational.
     "smoke": SessionProfile(
         name="smoke",
+        authority=AUTHORITY_CONTEXT,
+        turns_mean=4.6,
         turns_p50=4.0,
         turns_p95=8.0,
         turns_cap=16,
+        turns_tolerance=0.30,
+        input_per_turn_mean=100.0,
         input_per_turn_p50=60.0,
         input_per_turn_p95=200.0,
         input_per_turn_cap=1000,
+        input_per_turn_tolerance=0.50,
+        final_context_mean=980.0,
         final_context_p50=800.0,
         final_context_p95=2000.0,
         final_context_cap=4000,
+        final_context_tolerance=0.30,
         output_len_per_turn=32,
         head_tokens=200,
         turns_context_correlation=0.5,
         request_weighted_isl_target=808,
-        request_weighted_isl_tolerance=0.25,
+        request_weighted_isl_tolerance=0.30,
         reference_population=64,
+        calibration_overheads=(13, 4),
     ),
 }
 
@@ -185,14 +280,18 @@ def _plan_session(
 ) -> SessionPlan:
     """Sample one session's (turns, context, per-turn inputs) plan.
 
-    The per-turn inputs sum exactly to the input budget implied by the
-    sampled final context; infeasible draws are redrawn a bounded number of
-    times and then repaired deterministically.
+    Context-authoritative profiles sample the final context exactly and
+    allocate per-turn inputs to its implied budget; input-authoritative
+    profiles sample per-turn inputs exactly and derive the final context.
 
     ``initial_overhead`` is the chat-template cost of rendering the opening
     system+user pair; ``round_overhead`` is the cost each later round adds
     (one assistant reply plus one user message wrapper).
     """
+    if profile.authority == AUTHORITY_INPUT:
+        return _plan_session_input_authoritative(
+            profile, rng, initial_overhead, round_overhead
+        )
     turns_mu, turns_sigma = _lognormal_params(profile.turns_p50, profile.turns_p95)
     ctx_mu, ctx_sigma = _lognormal_params(
         profile.final_context_p50, profile.final_context_p95
@@ -280,6 +379,70 @@ def _plan_session(
         turn_count=turn_count,
         final_context=final_context,
         input_budget=budget,
+        turn_inputs=turn_inputs,
+        repaired=repaired,
+    )
+
+
+def _plan_session_input_authoritative(
+    profile: SessionProfile,
+    rng: np.random.RandomState,
+    initial_overhead: int,
+    round_overhead: int,
+) -> SessionPlan:
+    """Sample per-turn inputs directly from the fitted marginal and derive
+    the final context (input-authoritative mode).
+
+    The input marginal is exact up to the published floor/cap clamps; the
+    final context is whatever the sampled inputs imply and is reported, not
+    gated. A derived context beyond twice the published maximum is redrawn a
+    bounded number of times, then trailing turns are dropped (a repair).
+    """
+    turns_mu, turns_sigma = _lognormal_params(profile.turns_p50, profile.turns_p95)
+    d_mu, d_sigma = _lognormal_params(
+        profile.input_per_turn_p50, profile.input_per_turn_p95
+    )
+    osl = profile.output_len_per_turn
+    context_safety_cap = 2 * profile.final_context_cap
+
+    def derived_context(inputs: List[int]) -> int:
+        return (
+            profile.head_tokens
+            + initial_overhead
+            + sum(inputs)
+            + (len(inputs) - 1) * (osl + round_overhead)
+        )
+
+    turn_count = int(
+        np.clip(
+            round(math.exp(turns_mu + turns_sigma * rng.standard_normal())),
+            1,
+            profile.turns_cap,
+        )
+    )
+    repaired = False
+    turn_inputs: List[int] = []
+    for _ in range(MAX_FEASIBILITY_REDRAWS):
+        raw = np.exp(d_mu + d_sigma * rng.standard_normal(turn_count))
+        turn_inputs = [
+            int(np.clip(round(d), MIN_TURN_INPUT_TOKENS, profile.input_per_turn_cap))
+            for d in raw
+        ]
+        if derived_context(turn_inputs) <= context_safety_cap:
+            break
+    else:
+        repaired = True
+        while (
+            len(turn_inputs) > 1 and derived_context(turn_inputs) > context_safety_cap
+        ):
+            turn_inputs = turn_inputs[:-1]
+        turn_count = len(turn_inputs)
+
+    turn_inputs = [turn_inputs[0]] + sorted(turn_inputs[1:], reverse=True)
+    return SessionPlan(
+        turn_count=turn_count,
+        final_context=derived_context(turn_inputs),
+        input_budget=sum(turn_inputs),
         turn_inputs=turn_inputs,
         repaired=repaired,
     )
@@ -438,6 +601,32 @@ def _session_routing_key(seed: int, session_index: int) -> str:
     return f"session-{digest[:16]}"
 
 
+def _tokenizer_fingerprint(tokenizer) -> str:
+    """Digest of the tokenizer *content* that shapes generated text: the
+    serialized backend tokenizer (vocabulary, merges, normalizer, special
+    tokens), the chat template, the special-token map, and the added
+    vocabulary. A change to any of these at an unchanged ``name_or_path``
+    must invalidate cached builds and their overhead measurements.
+    """
+    from transformers import PreTrainedTokenizerFast
+
+    hasher = hashlib.sha256()
+    if isinstance(tokenizer, PreTrainedTokenizerFast):
+        hasher.update(tokenizer.backend_tokenizer.to_str().encode("utf-8"))
+    else:
+        hasher.update(json.dumps(tokenizer.get_vocab(), sort_keys=True).encode("utf-8"))
+    hasher.update(str(tokenizer.chat_template).encode("utf-8"))
+    hasher.update(
+        json.dumps(tokenizer.special_tokens_map, sort_keys=True, default=str).encode(
+            "utf-8"
+        )
+    )
+    hasher.update(
+        json.dumps(tokenizer.get_added_vocab(), sort_keys=True).encode("utf-8")
+    )
+    return hasher.hexdigest()[:16]
+
+
 def build_sessions(
     tokenizer,
     *,
@@ -485,17 +674,14 @@ def build_sessions(
         "profile": msgspec.to_builtins(profile),
         "seed": seed,
         "tokenizer_path": tokenizer.name_or_path,
+        "tokenizer_fingerprint": _tokenizer_fingerprint(tokenizer),
         "initial_overhead": initial_overhead,
         "round_overhead": round_overhead,
         "num_sessions": num_sessions,
         "synthetic": True,  # distribution-matched synthetic, not a trace replay
-        # The per-turn input marginal is budget-derived: session budgets come
-        # from the (authoritative) final-context marginal, and rescaling the
-        # iid draws to those budgets shifts the realized input quantiles below
-        # the published per-turn summaries. The published summaries are
-        # mutually inconsistent (mean turns x mean input + replies exceeds the
-        # mean final context), so the context wins by design; realized input
-        # quantiles are reported here rather than asserted.
+        # Per-session plan arithmetic, retained so any slice of the build can
+        # report its own realized statistics.
+        "session_stats": [msgspec.to_builtins(p) for p in plans],
         "realized": _realized_stats(plans, profile, initial_overhead, round_overhead),
     }
     return {"metadata": metadata, "conversations": conversations}
@@ -507,7 +693,14 @@ def _realized_stats(
     initial_overhead: int,
     round_overhead: int,
 ) -> Dict[str, Any]:
-    """Planned-arithmetic statistics of a built population vs its targets."""
+    """Planned-arithmetic statistics of a population vs its retained targets.
+
+    Every retained published dimension is reported; only the dimensions the
+    profile's generation authority produces exactly are *gated* (checked
+    against their per-dimension tolerance). ``conformant_population`` is true
+    only when the population reaches the calibration reference size AND every
+    gated dimension is within tolerance.
+    """
     turns = np.array([p.turn_count for p in plans])
     contexts = np.array([p.final_context for p in plans])
     deltas = np.array([d for p in plans for d in p.turn_inputs])
@@ -522,28 +715,50 @@ def _realized_stats(
             request_prompt_lens.append(prompt)
     isl = np.array(request_prompt_lens)
 
-    def summary(values: np.ndarray) -> Dict[str, float]:
-        return {
-            "mean": round(float(values.mean()), 1),
-            "p50": float(np.percentile(values, 50)),
-            "p95": float(np.percentile(values, 95)),
-            "max": float(values.max()),
+    realized_values = {
+        "turns_mean": float(turns.mean()),
+        "turns_p50": float(np.percentile(turns, 50)),
+        "turns_p95": float(np.percentile(turns, 95)),
+        "input_per_turn_mean": float(deltas.mean()),
+        "input_per_turn_p50": float(np.percentile(deltas, 50)),
+        "input_per_turn_p95": float(np.percentile(deltas, 95)),
+        "final_context_mean": float(contexts.mean()),
+        "final_context_p50": float(np.percentile(contexts, 50)),
+        "final_context_p95": float(np.percentile(contexts, 95)),
+        "request_weighted_isl_mean": float(isl.mean()),
+    }
+    gated = set(profile.gated_dimensions())
+    dimensions = {}
+    for dimension, realized in realized_values.items():
+        target = profile.dimension_target(dimension)
+        deviation = (realized - target) / target
+        entry = {
+            "target": target,
+            "realized": round(realized, 1),
+            "deviation_frac": round(deviation, 4),
+            "gated": dimension in gated,
         }
+        if dimension in gated:
+            entry["within_tolerance"] = abs(deviation) <= profile.dimension_tolerance(
+                dimension
+            )
+        dimensions[dimension] = entry
 
-    isl_mean = float(isl.mean())
-    target = profile.request_weighted_isl_target
+    population_ok = len(plans) >= profile.reference_population
+    gates_ok = all(
+        dimensions[d]["within_tolerance"] for d in profile.gated_dimensions()
+    )
     return {
         "sessions": len(plans),
-        "turns_per_session": summary(turns),
-        "input_per_turn": summary(deltas),
-        "final_context": summary(contexts),
-        "request_weighted_isl_mean": round(isl_mean, 1),
-        "request_weighted_isl_target": target,
-        "isl_deviation_frac": round((isl_mean - target) / target, 4),
+        "authority": profile.authority,
+        "dimensions": dimensions,
+        "input_per_turn_max": float(deltas.max()),
+        "final_context_max": float(contexts.max()),
         "repaired_sessions": sum(1 for p in plans if p.repaired),
-        # Conformance is a population property; small builds only report
-        # their sampling deviation.
-        "conformant_population": len(plans) >= profile.reference_population,
+        "gates_within_tolerance": gates_ok,
+        # Conformance is a population property AND a gate property; small
+        # builds report sampling deviation without claiming conformance.
+        "conformant_population": population_ok and gates_ok,
     }
 
 
@@ -554,6 +769,7 @@ _CACHE_COMPAT_FIELDS = (
     "profile",
     "seed",
     "tokenizer_path",
+    "tokenizer_fingerprint",
 )
 
 
@@ -603,6 +819,7 @@ class RecoveryAgentDataset(BaseDataset):
     num_sessions: int
     offset: int
     dataset_path: str
+    authority: str = AUTHORITY_CONTEXT
 
     @classmethod
     def from_args(cls, args: Namespace) -> "RecoveryAgentDataset":
@@ -612,6 +829,7 @@ class RecoveryAgentDataset(BaseDataset):
             num_sessions=args.num_prompts,
             offset=args.dataset_offset,
             dataset_path=args.dataset_path,
+            authority=args.recovery_authority,
         )
 
     def load(self, tokenizer: Any, model_id=None) -> List[DatasetRow]:
@@ -620,7 +838,14 @@ class RecoveryAgentDataset(BaseDataset):
                 f"Unknown recovery-agent profile {self.profile_name!r}; "
                 f"choose from {sorted(PROFILES)}"
             )
-        profile = PROFILES[self.profile_name]
+        if self.authority not in (AUTHORITY_CONTEXT, AUTHORITY_INPUT):
+            raise ValueError(
+                f"Unknown recovery-agent authority {self.authority!r}; "
+                f"choose 'context' or 'input'"
+            )
+        profile = msgspec.structs.replace(
+            PROFILES[self.profile_name], authority=self.authority
+        )
         needed = self.offset + self.num_sessions
         routing_seed = self.seed
 
@@ -667,18 +892,35 @@ class RecoveryAgentDataset(BaseDataset):
                 )
             )
 
-        realized = payload["metadata"].get("realized") or {}
+        # Report the statistics of the *selected slice*, not the whole cached
+        # build; the per-session plan arithmetic is retained in the metadata.
+        metadata = payload["metadata"]
+        session_stats = metadata.get("session_stats")
+        if session_stats:
+            plans = [
+                msgspec.convert(stats, SessionPlan)
+                for stats in session_stats[self.offset : needed]
+            ]
+            realized = _realized_stats(
+                plans,
+                profile,
+                metadata.get("initial_overhead", 0),
+                metadata.get("round_overhead", 0),
+            )
+        else:
+            realized = metadata.get("realized") or {}
         print(
-            f"recovery-agent profile={profile.name} sessions={len(rows)} "
+            f"recovery-agent profile={profile.name} "
+            f"authority={profile.authority} sessions={len(rows)} "
             f"(offset={self.offset}, synthetic distribution-matched data)"
         )
         if realized:
-            print(json.dumps({"realized_vs_target": realized}, indent=2))
+            print(json.dumps({"selected_slice_realized_vs_target": realized}, indent=2))
         if not realized.get("conformant_population", False):
             print(
-                "NOTE: population below the profile's reference size "
-                f"({profile.reference_population}); deviations above are "
-                "sampling error, not calibration conformance."
+                "NOTE: this slice does not establish calibration conformance "
+                f"(reference population {profile.reference_population}; "
+                "gated dimensions must all be within tolerance)."
             )
         return rows
 
@@ -691,6 +933,7 @@ class RecoveryAgentDataset(BaseDataset):
             "profile": msgspec.to_builtins(profile),
             "seed": self.seed,
             "tokenizer_path": tokenizer.name_or_path,
+            "tokenizer_fingerprint": _tokenizer_fingerprint(tokenizer),
         }
         path = _cache_path(metadata_key)
         if path.is_file():

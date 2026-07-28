@@ -1,89 +1,112 @@
-"""Calibrate the recovery-agent profiles' turns/context correlation.
+"""Verify (and help recalibrate) the recovery-agent profile constants.
 
-For each profile, sweeps the Gaussian-copula correlation between turn count
-and final context and reports the value whose request-weighted mean prompt
-size (over the profile's reference population) lands closest to the target.
-The chosen constants are baked into ``PROFILES`` in
+For each profile and each generation authority, replays the canonical
+reference population with the profile's recorded calibration overheads (or
+overheads measured from a real tokenizer via ``--tokenizer``) and reports
+every retained target dimension: realized value, deviation, and — for the
+dimensions the authority gates — whether it is within the profile's declared
+tolerance. Exits nonzero if any baked gated dimension fails, so this script
+doubles as a calibration gate.
+
+The baked constants live in ``PROFILES`` in
 ``python/sglang/benchmark/datasets/recovery_agent.py``; rerun this script and
-update them whenever any other profile constant changes.
-
-The sweep uses the same planning arithmetic as the dataset builder (no
-tokenizer needed — prompt sizes are planned bare-token arithmetic with a
-nominal per-turn template overhead).
+update them whenever any constant or the reference overheads change.
 """
 
 import argparse
+import sys
 
 import msgspec
 import numpy as np
 
 from sglang.benchmark.datasets.recovery_agent import (
+    AUTHORITY_CONTEXT,
+    AUTHORITY_INPUT,
     PROFILES,
     SessionProfile,
+    _measure_template_overheads,
     _plan_session,
+    _realized_stats,
 )
 
-NOMINAL_INITIAL_OVERHEAD = 8
-NOMINAL_ROUND_OVERHEAD = 8
 
-
-def request_weighted_isl_mean(
-    profile: SessionProfile, seed: int, num_sessions: int
-) -> float:
-    prompt_lens = []
-    for session_index in range(num_sessions):
-        rng = np.random.RandomState(seed + session_index)
-        plan = _plan_session(
-            profile, rng, NOMINAL_INITIAL_OVERHEAD, NOMINAL_ROUND_OVERHEAD
+def evaluate(
+    profile: SessionProfile,
+    seed: int,
+    initial_overhead: int,
+    round_overhead: int,
+) -> dict:
+    plans = [
+        _plan_session(
+            profile,
+            np.random.RandomState(seed + i),
+            initial_overhead,
+            round_overhead,
         )
-        prompt = profile.head_tokens + NOMINAL_INITIAL_OVERHEAD
-        for turn_index, turn_input in enumerate(plan.turn_inputs):
-            if turn_index == 0:
-                prompt += turn_input
-            else:
-                prompt += (
-                    turn_input + profile.output_len_per_turn + NOMINAL_ROUND_OVERHEAD
-                )
-            prompt_lens.append(prompt)
-    return float(np.mean(prompt_lens))
+        for i in range(profile.reference_population)
+    ]
+    return _realized_stats(plans, profile, initial_overhead, round_overhead)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--tokenizer",
+        type=str,
+        default="",
+        help="Tokenizer path to measure real chat-template overheads from; "
+        "default uses each profile's recorded calibration overheads.",
+    )
     args = parser.parse_args()
 
-    for name, profile in PROFILES.items():
-        target = profile.request_weighted_isl_target
-        # Any correlation whose deviation is within tolerance is admissible;
-        # the baked value may trade a little deviation for structural realism
-        # (deeper sessions must trend toward bigger contexts, so only
-        # non-negative correlations are considered).
-        baked_isl = request_weighted_isl_mean(
-            profile, seed=args.seed, num_sessions=profile.reference_population
+    measured_overheads = None
+    if args.tokenizer:
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.tokenizer, trust_remote_code=True
         )
-        baked_dev = abs(baked_isl - target) / target
-        status = "OK" if baked_dev <= profile.request_weighted_isl_tolerance else "OUT"
-        print(
-            f"{name}: baked rho={profile.turns_context_correlation:+.2f} "
-            f"isl_mean={baked_isl:,.0f} target={target:,} "
-            f"deviation={baked_dev:.1%} [{status}]"
-        )
-        for rho in np.arange(0.0, 0.96, 0.05):
-            candidate = msgspec.structs.replace(
-                profile, turns_context_correlation=round(float(rho), 2)
-            )
-            isl = request_weighted_isl_mean(
-                candidate, seed=args.seed, num_sessions=profile.reference_population
-            )
-            deviation = abs(isl - target) / target
-            marker = (
-                "ok " if deviation <= profile.request_weighted_isl_tolerance else "out"
-            )
+        measured_overheads = _measure_template_overheads(tokenizer)
+        print(f"measured overheads from {args.tokenizer}: {measured_overheads}")
+
+    all_ok = True
+    for name, baked in PROFILES.items():
+        overheads = measured_overheads or baked.calibration_overheads
+        if measured_overheads and tuple(measured_overheads) != tuple(
+            baked.calibration_overheads
+        ):
             print(
-                f"  sweep rho={rho:+.2f} isl_mean={isl:,.0f} "
-                f"deviation={deviation:.1%} [{marker}]"
+                f"WARNING: {name} was calibrated at overheads "
+                f"{tuple(baked.calibration_overheads)}, measuring at "
+                f"{tuple(measured_overheads)}."
             )
+        for authority in (AUTHORITY_CONTEXT, AUTHORITY_INPUT):
+            profile = msgspec.structs.replace(baked, authority=authority)
+            realized = evaluate(profile, args.seed, *overheads)
+            status = "OK" if realized["gates_within_tolerance"] else "FAIL"
+            print(
+                f"\n{name} [{authority}-authoritative] "
+                f"population={realized['sessions']} "
+                f"repairs={realized['repaired_sessions']} gates={status}"
+            )
+            for dimension, entry in realized["dimensions"].items():
+                if entry["gated"]:
+                    marker = "ok " if entry["within_tolerance"] else "FAIL"
+                    marker = f"GATE {marker}"
+                else:
+                    marker = "reported"
+                print(
+                    f"  {dimension:28s} target={entry['target']:>9.1f} "
+                    f"realized={entry['realized']:>9.1f} "
+                    f"dev={entry['deviation_frac']:+.3f} [{marker}]"
+                )
+            all_ok &= realized["gates_within_tolerance"]
+
+    if not all_ok:
+        print("\nCalibration gates FAILED for at least one profile/authority.")
+        sys.exit(1)
+    print("\nAll calibration gates passed.")
 
 
 if __name__ == "__main__":
