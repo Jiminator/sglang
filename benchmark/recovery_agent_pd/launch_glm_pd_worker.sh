@@ -32,6 +32,7 @@ args=(
   --disaggregation-mode "$ROLE"
   --disaggregation-transfer-backend nixl # v0.5.16 defaults to mooncake
   --reasoning-parser glm45
+  --enable-metrics --enable-cache-report
   --host 0.0.0.0 --port "$PORT"
 )
 
