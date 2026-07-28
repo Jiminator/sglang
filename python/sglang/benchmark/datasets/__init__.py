@@ -13,11 +13,13 @@ from sglang.benchmark.datasets.mmmu import MMMUDataset
 from sglang.benchmark.datasets.mooncake import MooncakeDataset
 from sglang.benchmark.datasets.openai_dataset import OpenAIDataset
 from sglang.benchmark.datasets.random import RandomDataset
+from sglang.benchmark.datasets.recovery_agent import RecoveryAgentDataset
 from sglang.benchmark.datasets.sharegpt import ShareGPTDataset
 from sglang.benchmark.datasets.speed_bench import SpeedBenchDataset
 
 DATASET_MAPPING: Dict[str, Type[BaseDataset]] = {
     "agentic-trace": AgenticTraceDataset,
+    "recovery-agent": RecoveryAgentDataset,
     "autobench": AutoBenchmarkDataset,
     "sharegpt": ShareGPTDataset,
     "custom": CustomDataset,

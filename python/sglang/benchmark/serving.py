@@ -92,6 +92,9 @@ class RequestFuncInput:
     extra_request_body: Dict[str, Any]
     timestamp: Optional[float] = None
     routing_key: Optional[str] = None
+    # Conversation index for multi-turn runs; copied onto every per-round
+    # output so flattened results keep their session identity.
+    session_index: Optional[int] = None
 
 
 @dataclass
@@ -112,6 +115,22 @@ class RequestFuncOutput:
     spec_cap_length: float = 0.0
     spec_block_accept_length: float = 0.0
     spec_cap_lens_histogram: List[int] = field(default_factory=list)
+    # Server-reported ``usage.prompt_tokens``, when present.
+    server_prompt_len: Optional[int] = None
+    # Assistant text safe to replay as conversation history: ``content`` only,
+    # never ``reasoning_content``/``reasoning`` (matching what live agent
+    # clients resend on the wire). ``generated_text`` keeps reasoning+content
+    # for output-token metrics.
+    assistant_replay_text: Optional[str] = None
+    # Conversation coordinates, set by the multi-turn wrapper.
+    session_index: Optional[int] = None
+    round_index: Optional[int] = None
+
+    def effective_prompt_len(self) -> int:
+        """Server-reported prompt tokens, else the client-side length."""
+        if self.server_prompt_len is not None:
+            return self.server_prompt_len
+        return self.prompt_len
 
     @staticmethod
     def init_new(request_func_input: RequestFuncInput):
@@ -251,6 +270,43 @@ def _extract_cache_from_sglext(data, output):
             + (details.get("storage") or 0)
         )
         output.cached_tokens_details = details
+
+
+def aggregate_cache_report(outputs: List["RequestFuncOutput"]) -> Dict[str, Any]:
+    """Sum cache-report counters over successful outputs; the prompt-token
+    denominator uses ``effective_prompt_len`` so multi-turn rounds count their
+    real (server-reported) prompt sizes."""
+    total_prompt_tokens = 0
+    total_cached = 0
+    total_device = total_host = total_storage = 0
+    storage_backend_name = None
+    has_details = False
+    for o in outputs:
+        if not o.success:
+            continue
+        total_prompt_tokens += o.effective_prompt_len()
+        total_cached += o.cached_tokens
+        if o.cached_tokens_details:
+            has_details = True
+            total_device += o.cached_tokens_details.get("device") or 0
+            total_host += o.cached_tokens_details.get("host") or 0
+            s = o.cached_tokens_details.get("storage") or 0
+            if s:
+                total_storage += s
+                storage_backend_name = o.cached_tokens_details.get("storage_backend")
+    hit_rate = (
+        total_cached / total_prompt_tokens * 100 if total_prompt_tokens > 0 else 0.0
+    )
+    return {
+        "total_prompt_tokens": total_prompt_tokens,
+        "total_cached": total_cached,
+        "total_device": total_device,
+        "total_host": total_host,
+        "total_storage": total_storage,
+        "storage_backend_name": storage_backend_name,
+        "has_details": has_details,
+        "hit_rate": hit_rate,
+    }
 
 
 # set ignore_eos True by default
@@ -443,6 +499,14 @@ async def async_request_openai_chat_completions(
         if "ignore_eos" not in request_func_input.extra_request_body:
             payload["ignore_eos"] = not args.disable_ignore_eos
 
+        # Ask for a final usage chunk so server-reported prompt/completion
+        # token counts are available on the streaming path.
+        if (
+            not args.disable_stream
+            and "stream_options" not in request_func_input.extra_request_body
+        ):
+            payload["stream_options"] = {"include_usage": True}
+
         # Merge in extra parameters (tools, temperature, top_p, etc.)
         # These will override defaults if present
         payload.update(request_func_input.extra_request_body)
@@ -459,6 +523,7 @@ async def async_request_openai_chat_completions(
         output = RequestFuncOutput.init_new(request_func_input)
 
         generated_text = ""
+        replay_text = ""
         output_len = request_func_input.output_len
         ttft = 0.0
         st = time.perf_counter()
@@ -474,14 +539,16 @@ async def async_request_openai_chat_completions(
                         response_json = await response.json()
                         message = response_json["choices"][0]["message"]
                         output.generated_text = _combine_openai_chat_content(message)
+                        output.assistant_replay_text = message.get("content") or ""
                         output.success = True
                         output.latency = time.perf_counter() - st
                         output.ttft = (
                             output.latency
                         )  # For non-streaming, TTFT = total latency
-                        output.output_len = response_json.get("usage", {}).get(
-                            "completion_tokens", output_len
-                        )
+                        usage = response_json.get("usage") or {}
+                        output.output_len = usage.get("completion_tokens", output_len)
+                        if usage.get("prompt_tokens") is not None:
+                            output.server_prompt_len = usage["prompt_tokens"]
                         _meta_info = response_json["choices"][0].get("meta_info") or {}
                         output.spec_accept_length = (
                             _meta_info.get("spec_accept_length", 0.0) or 0.0
@@ -512,9 +579,10 @@ async def async_request_openai_chat_completions(
                                 data = json.loads(chunk)
                                 # Check for usage info in final chunks. OpenAI-compatible
                                 # servers may emit usage-only chunks with choices=[].
-                                output_len = (data.get("usage") or {}).get(
-                                    "completion_tokens", output_len
-                                )
+                                usage = data.get("usage") or {}
+                                output_len = usage.get("completion_tokens", output_len)
+                                if usage.get("prompt_tokens") is not None:
+                                    output.server_prompt_len = usage["prompt_tokens"]
 
                                 if getattr(args, "cache_report", False):
                                     _extract_cache_from_sglext(data, output)
@@ -527,6 +595,9 @@ async def async_request_openai_chat_completions(
                                 # `reasoning_content`; count them like content.
                                 delta = choices[0].get("delta") or {}
                                 content = _combine_openai_chat_content(delta)
+                                # Replay history carries `content` only, never
+                                # reasoning — matching live agent wire behavior.
+                                replay_text += delta.get("content") or ""
 
                                 if content:
                                     timestamp = time.perf_counter()
@@ -546,6 +617,7 @@ async def async_request_openai_chat_completions(
                                     generated_text += content
 
                         output.generated_text = generated_text
+                        output.assistant_replay_text = replay_text
                         output.success = True
                         output.latency = latency
                         output.output_len = output_len
@@ -1097,6 +1169,13 @@ def calculate_metrics(
                 total_input += input_requests[i].prompt_len
                 total_input_text += input_requests[i].text_prompt_len
                 total_input_vision += input_requests[i].vision_prompt_len
+            else:
+                # Multi-turn runs flatten per-round outputs, so there is no
+                # 1:1 mapping to input_requests; account from the outputs
+                # (server-reported prompt tokens when available).
+                round_input = outputs[i].effective_prompt_len()
+                total_input += round_input
+                total_input_text += round_input
             if output_len > 1:
                 tpots.append((outputs[i].latency - outputs[i].ttft) / (output_len - 1))
             if use_retokenized_itl:
@@ -1289,11 +1368,21 @@ def wrap_multi_turn_request_func(request_func: Callable, backend: str) -> Callab
             output = await request_func(
                 inner_input, pbar=pbar if round_index == len(prompts) - 1 else None
             )
+            output.session_index = request_func_input.session_index
+            output.round_index = round_index
             outputs.append(output)
 
-            prev_messages.append(
-                {"role": "assistant", "content": output.generated_text}
-            )
+            # A failed round poisons the rest of the conversation (there is
+            # no real assistant reply to build on) — abort the session.
+            if not output.success:
+                break
+
+            # Replay `content` only; `generated_text` may include reasoning,
+            # which live agent clients do not resend.
+            replay = output.assistant_replay_text
+            if replay is None:
+                replay = output.generated_text
+            prev_messages.append({"role": "assistant", "content": replay})
 
         return outputs
 
@@ -1477,6 +1566,7 @@ async def benchmark(
         lora_probs = None
 
     pbar = None if disable_tqdm else tqdm(total=pbar_total)
+    session_counter = 0
     async for request in request_generator:
         if lora_names is not None and len(lora_names) != 0:
             if lora_request_distribution == "uniform":
@@ -1508,7 +1598,9 @@ async def benchmark(
             extra_request_body=merged_extra_body,
             timestamp=request.timestamp,
             routing_key=request.routing_key,
+            session_index=session_counter if is_multi_turn else None,
         )
+        session_counter += 1
 
         tasks.append(
             asyncio.create_task(
@@ -1516,7 +1608,25 @@ async def benchmark(
             )
         )
     outputs: List[RequestFuncOutput] = await asyncio.gather(*tasks)
+    total_conversations = None
+    completed_conversations = None
+    conversation_results = None
     if is_multi_turn:
+        # Each task returns one conversation (a list of per-round outputs).
+        # A conversation succeeds only when every planned round succeeded —
+        # the wrapper aborts after the first failed round.
+        total_conversations = len(outputs)
+        planned_rounds = [len(r.prompt) for r in input_requests]
+        conversation_results = [
+            {
+                "session_index": conv[0].session_index if conv else None,
+                "planned_rounds": planned,
+                "completed_rounds": sum(1 for o in conv if o.success),
+                "success": len(conv) == planned and all(o.success for o in conv),
+            }
+            for conv, planned in zip(outputs, planned_rounds)
+        ]
+        completed_conversations = sum(1 for c in conversation_results if c["success"])
         outputs = [x for output in outputs for x in output]
 
     # Stop profiler (only if profile_steps was not provided, as it auto-stops)
@@ -1586,6 +1696,29 @@ async def benchmark(
         )
     )
     print("{:<40} {:<10}".format("Successful requests:", metrics.completed))
+    if is_multi_turn:
+        # Multi-turn: each request above is one conversation round (turn);
+        # the traffic request rate is session arrivals per second.
+        print(
+            "{:<40} {:<10}".format("Successful conversations:", completed_conversations)
+        )
+        print("{:<40} {:<10}".format("Total conversations:", total_conversations))
+        print(
+            "{:<40} {:<10.2f}".format(
+                "Session throughput (sessions/s):",
+                (completed_conversations or 0) / benchmark_duration,
+            )
+        )
+        missing_usage = sum(
+            1 for o in outputs if o.success and o.server_prompt_len is None
+        )
+        if missing_usage:
+            warnings.warn(
+                f"{missing_usage} successful rounds returned no usage.prompt_tokens; "
+                "multi-turn input and cache-hit metrics fall back to client-side "
+                "estimates and are marked incomplete in the result JSON.",
+                stacklevel=2,
+            )
     print("{:<40} {:<10.2f}".format("Benchmark duration (s):", benchmark_duration))
     print("{:<40} {:<10}".format("Total input tokens:", metrics.total_input))
     print("{:<40} {:<10}".format("Total input text tokens:", metrics.total_input_text))
@@ -1683,29 +1816,15 @@ async def benchmark(
         print("{:<40} {:<10.2f}".format("P99 ITL (ms):", metrics.p99_itl_ms))
         print("{:<40} {:<10.2f}".format("Max ITL (ms):", metrics.max_itl_ms))
     if args.cache_report:
-        total_prompt_tokens = 0
-        total_cached = 0
-        total_device = total_host = total_storage = 0
-        storage_backend_name = None
-        has_details = False
-        for o in outputs:
-            if not o.success:
-                continue
-            total_prompt_tokens += o.prompt_len
-            total_cached += o.cached_tokens
-            if o.cached_tokens_details:
-                has_details = True
-                total_device += o.cached_tokens_details.get("device") or 0
-                total_host += o.cached_tokens_details.get("host") or 0
-                s = o.cached_tokens_details.get("storage") or 0
-                if s:
-                    total_storage += s
-                    storage_backend_name = o.cached_tokens_details.get(
-                        "storage_backend"
-                    )
-        hit_rate = (
-            total_cached / total_prompt_tokens * 100 if total_prompt_tokens > 0 else 0.0
-        )
+        cache_agg = aggregate_cache_report(outputs)
+        total_prompt_tokens = cache_agg["total_prompt_tokens"]
+        total_cached = cache_agg["total_cached"]
+        total_device = cache_agg["total_device"]
+        total_host = cache_agg["total_host"]
+        total_storage = cache_agg["total_storage"]
+        storage_backend_name = cache_agg["storage_backend_name"]
+        has_details = cache_agg["has_details"]
+        hit_rate = cache_agg["hit_rate"]
 
         print("{s:{c}^{n}}".format(s="Cache Hit Details", n=50, c="-"))
         print("{:<40} {:<10}".format("Total prompt tokens:", total_prompt_tokens))
@@ -1760,6 +1879,20 @@ async def benchmark(
             # Results
             "duration": benchmark_duration,
             "completed": metrics.completed,
+            "total_conversations": total_conversations,
+            "completed_conversations": completed_conversations,
+            "conversation_results": conversation_results,
+            # Per-round prompt accounting: effective (server-preferred) and
+            # raw server-reported lengths, in flattened output order.
+            "effective_prompt_lens": [o.effective_prompt_len() for o in outputs],
+            "server_prompt_lens": [o.server_prompt_len for o in outputs],
+            "session_indices": [o.session_index for o in outputs],
+            "round_indices": [o.round_index for o in outputs],
+            # False when any successful round lacked server usage — input and
+            # cache-hit numbers then partly rest on client-side estimates.
+            "input_metrics_complete": all(
+                o.server_prompt_len is not None for o in outputs if o.success
+            ),
             "total_input_tokens": metrics.total_input,
             "total_input_text_tokens": metrics.total_input_text,
             "total_input_vision_tokens": metrics.total_input_vision,
@@ -1883,6 +2016,9 @@ def run_benchmark(args_: argparse.Namespace):
     # Set default value for warmup_requests if not present
     if not hasattr(args, "warmup_requests"):
         args.warmup_requests = 1
+
+    if not hasattr(args, "num_sessions"):
+        args.num_sessions = None
 
     if not hasattr(args, "output_details"):
         args.output_details = False
@@ -2120,6 +2256,36 @@ def _finite_positive_float(value) -> float:
     return parsed
 
 
+# Datasets whose rows are whole conversations replayed round by round.
+MULTI_TURN_DATASETS = {"recovery-agent", "agentic-trace"}
+
+
+def _validate_parsed_session_args(
+    parser: argparse.ArgumentParser, args: argparse.Namespace
+) -> None:
+    """Resolve --num-sessions and reject invalid session/dataset pairings at
+    parse time, before server readiness checks or a dataset build."""
+    if args.num_sessions is not None:
+        if args.dataset_name not in MULTI_TURN_DATASETS:
+            parser.error(
+                f"--num-sessions only applies to multi-turn datasets "
+                f"({', '.join(sorted(MULTI_TURN_DATASETS))}); got --dataset-name "
+                f"{args.dataset_name}"
+            )
+        if args.num_sessions <= 0:
+            parser.error(f"--num-sessions must be > 0, got {args.num_sessions}")
+        # Downstream code counts conversations via num_prompts.
+        args.num_prompts = args.num_sessions
+    if args.dataset_name == "recovery-agent" and args.backend not in (
+        MULTI_TURN_BACKENDS
+    ):
+        parser.error(
+            f"--dataset-name recovery-agent requires a multi-turn chat backend "
+            f"({', '.join(sorted(MULTI_TURN_BACKENDS))}); got --backend "
+            f"{args.backend}"
+        )
+
+
 def _validate_parsed_gsp_args(
     parser: argparse.ArgumentParser, args: argparse.Namespace
 ) -> None:
@@ -2188,6 +2354,7 @@ def cli_main():
         choices=[
             "agentic-trace",
             "autobench",
+            "recovery-agent",
             "sharegpt",
             "custom",
             "openai",
@@ -2212,6 +2379,15 @@ def cli_main():
         help="Rotate the conversation list by this many entries before sampling "
         "(agentic-trace dataset), so successive sweep steps start on fresh "
         "conversations.",
+    )
+    parser.add_argument(
+        "--recovery-profile",
+        type=str,
+        default="agent-short",
+        choices=["agent-short", "agent-long"],
+        help="Workload shape profile for the recovery-agent dataset: "
+        "'agent-short' (shallower sessions, ~14.8k mean prompt) or "
+        "'agent-long' (deep sessions, ~20.9k mean prompt).",
     )
     parser.add_argument(
         "--agentic-max-turns",
@@ -2248,11 +2424,21 @@ def cli_main():
         type=str,
         help="Name or path of the tokenizer. If not set, using the model conf.",
     )
-    parser.add_argument(
+    num_prompts_group = parser.add_mutually_exclusive_group()
+    num_prompts_group.add_argument(
         "--num-prompts",
         type=int,
         default=1000,
         help="Number of prompts to process. Default is 1000.",
+    )
+    num_prompts_group.add_argument(
+        "--num-sessions",
+        type=int,
+        default=None,
+        help="Number of multi-turn sessions (conversations) to run. Only valid "
+        "for multi-turn datasets; mutually exclusive with --num-prompts. With "
+        "sessions, --request-rate is session arrivals per second and "
+        "--max-concurrency bounds concurrently active sessions.",
     )
     parser.add_argument(
         "--sharegpt-output-len",
@@ -2696,6 +2882,7 @@ def cli_main():
     )
     args = parser.parse_args()
     _validate_parsed_gsp_args(parser, args)
+    _validate_parsed_session_args(parser, args)
     run_benchmark(args)
 
 

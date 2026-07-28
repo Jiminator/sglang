@@ -1,0 +1,490 @@
+"""Offline CPU tests for the recovery-agent dataset and the multi-turn
+session harness (content-only replay, session CLI, usage-based metrics).
+
+No network, no GPU: the tokenizer is a locally constructed word-level
+tokenizer and all server interactions are faked.
+"""
+
+import asyncio
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import numpy as np
+from tokenizers import Tokenizer
+from tokenizers.models import WordLevel
+from tokenizers.pre_tokenizers import Whitespace
+from transformers import PreTrainedTokenizerFast
+
+import sglang.benchmark.serving as serving
+from sglang.benchmark.datasets import recovery_agent
+from sglang.benchmark.datasets.recovery_agent import (
+    MIN_TURN_INPUT_TOKENS,
+    PROFILES,
+    RecoveryAgentDataset,
+    _allocate_turn_inputs,
+    _plan_session,
+    build_sessions,
+)
+from sglang.benchmark.serving import (
+    RequestFuncInput,
+    RequestFuncOutput,
+    aggregate_cache_report,
+    calculate_metrics,
+    wrap_multi_turn_request_func,
+)
+from sglang.test.ci.ci_register import register_cpu_ci
+from sglang.test.test_utils import CustomTestCase
+
+register_cpu_ci(est_time=60, suite="base-a-test-cpu")
+
+
+def _make_tokenizer() -> PreTrainedTokenizerFast:
+    vocab = {"[UNK]": 0, "[PAD]": 1}
+    vocab.update({f"tok_{i}": i + 2 for i in range(512)})
+    tokenizer = Tokenizer(WordLevel(vocab=vocab, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = Whitespace()
+    hf_tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=tokenizer, unk_token="[UNK]", pad_token="[PAD]"
+    )
+    hf_tokenizer.chat_template = (
+        "{% for message in messages %}"
+        "{{ message['role'] }} : {{ message['content'] }} \n "
+        "{% endfor %}"
+    )
+    hf_tokenizer.name_or_path = "local-test-tokenizer"
+    return hf_tokenizer
+
+
+def _tiny_profile(**overrides):
+    """A shrunken profile so builds stay fast on the word-level tokenizer."""
+    base = dict(
+        name="tiny",
+        turns_p50=3.0,
+        turns_p95=6.0,
+        turns_cap=12,
+        input_per_turn_p50=30.0,
+        input_per_turn_p95=90.0,
+        input_per_turn_cap=400,
+        final_context_p50=300.0,
+        final_context_p95=700.0,
+        final_context_cap=1500,
+        output_len_per_turn=20,
+        head_tokens=60,
+        turns_context_correlation=0.5,
+        request_weighted_isl_target=260,
+        request_weighted_isl_tolerance=0.10,
+        reference_population=64,
+    )
+    base.update(overrides)
+    return recovery_agent.SessionProfile(**base)
+
+
+class TestSessionPlanning(CustomTestCase):
+    def test_budget_exact_over_many_seeds(self):
+        for profile in PROFILES.values():
+            for i in range(300):
+                rng = np.random.RandomState(10_000 + i)
+                plan = _plan_session(profile, rng, 8)
+                self.assertEqual(sum(plan.turn_inputs), plan.input_budget)
+                self.assertGreaterEqual(min(plan.turn_inputs), MIN_TURN_INPUT_TOKENS)
+                self.assertLessEqual(max(plan.turn_inputs), profile.input_per_turn_cap)
+                self.assertLessEqual(plan.turn_count, profile.turns_cap)
+                self.assertLessEqual(plan.final_context, profile.final_context_cap)
+
+    def test_allocation_is_exact_at_boundaries(self):
+        profile = PROFILES["agent-short"]
+        rng = np.random.RandomState(0)
+        # Minimum feasible budget: every turn pinned at the floor.
+        sizes = _allocate_turn_inputs(profile, rng, 5, 5 * MIN_TURN_INPUT_TOKENS)
+        self.assertEqual(sizes, [MIN_TURN_INPUT_TOKENS] * 5)
+        # Maximum feasible budget: every turn pinned at the cap.
+        cap = profile.input_per_turn_cap
+        sizes = _allocate_turn_inputs(profile, rng, 3, 3 * cap)
+        self.assertEqual(sizes, [cap] * 3)
+
+    def test_calibrated_isl_within_tolerance(self):
+        for profile in PROFILES.values():
+            prompt_lens = []
+            for i in range(profile.reference_population):
+                rng = np.random.RandomState(42 + i)
+                plan = _plan_session(profile, rng, 8)
+                prompt = profile.head_tokens + 8
+                for turn_index, turn_input in enumerate(plan.turn_inputs):
+                    if turn_index == 0:
+                        prompt += turn_input
+                    else:
+                        prompt += turn_input + profile.output_len_per_turn + 8
+                    prompt_lens.append(prompt)
+            isl_mean = float(np.mean(prompt_lens))
+            target = profile.request_weighted_isl_target
+            self.assertLessEqual(
+                abs(isl_mean - target) / target,
+                profile.request_weighted_isl_tolerance,
+                f"{profile.name}: calibrated constants no longer hit the "
+                f"target ({isl_mean:.0f} vs {target})",
+            )
+
+
+class TestDatasetBuild(CustomTestCase):
+    def setUp(self):
+        self.tokenizer = _make_tokenizer()
+        self.profile = _tiny_profile()
+
+    def _build(self, seed=42, num_sessions=4):
+        return build_sessions(
+            self.tokenizer,
+            profile=self.profile,
+            seed=seed,
+            num_sessions=num_sessions,
+        )
+
+    def test_deterministic_and_seed_sensitive(self):
+        first = self._build()
+        second = self._build()
+        self.assertEqual(first["conversations"], second["conversations"])
+        other_seed = self._build(seed=7)
+        self.assertNotEqual(first["conversations"], other_seed["conversations"])
+
+    def test_prefix_stable_growth(self):
+        small = self._build(num_sessions=3)
+        large = self._build(num_sessions=6)
+        self.assertEqual(large["conversations"][:3], small["conversations"])
+
+    def test_shared_head_unique_sessions(self):
+        payload = self._build(num_sessions=3)
+        heads = {conv[0]["messages"][0]["content"] for conv in payload["conversations"]}
+        self.assertEqual(len(heads), 1)  # one fixed head across sessions
+        issues = {
+            conv[0]["messages"][1]["content"] for conv in payload["conversations"]
+        }
+        self.assertEqual(len(issues), 3)  # unique issue text per session
+
+    def test_manifest_reports_synthetic_and_sampling_error(self):
+        payload = self._build(num_sessions=4)
+        metadata = payload["metadata"]
+        self.assertTrue(metadata["synthetic"])
+        realized = metadata["realized"]
+        self.assertEqual(realized["sessions"], 4)
+        self.assertFalse(realized["conformant_population"])  # 4 < 64
+
+
+class TestDatasetLoad(CustomTestCase):
+    def setUp(self):
+        self.tokenizer = _make_tokenizer()
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp_dir.cleanup)
+        self.cache_file = Path(self.tmp_dir.name) / "cache.json"
+        patches = [
+            patch.object(
+                recovery_agent, "_cache_path", lambda metadata_key: self.cache_file
+            ),
+            patch.dict(recovery_agent.PROFILES, {"agent-short": _tiny_profile()}),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _dataset(self, **overrides):
+        params = dict(
+            profile_name="agent-short",
+            seed=42,
+            num_sessions=2,
+            offset=0,
+            dataset_path="",
+        )
+        params.update(overrides)
+        return RecoveryAgentDataset(**params)
+
+    def test_load_builds_rows_with_routing_keys(self):
+        rows = self._dataset().load(self.tokenizer)
+        self.assertEqual(len(rows), 2)
+        keys = {row.routing_key for row in rows}
+        self.assertEqual(len(keys), 2)
+        for row in rows:
+            self.assertTrue(row.routing_key.startswith("session-"))
+            self.assertIsInstance(row.prompt, list)
+            self.assertEqual(row.prompt[0][0]["role"], "system")
+
+    def test_offset_slices_are_disjoint_and_deterministic(self):
+        first = self._dataset(num_sessions=1).load(self.tokenizer)
+        second = self._dataset(num_sessions=1, offset=1).load(self.tokenizer)
+        self.assertNotEqual(first[0].prompt, second[0].prompt)
+        self.assertNotEqual(first[0].routing_key, second[0].routing_key)
+        both = self._dataset(num_sessions=2).load(self.tokenizer)
+        self.assertEqual(both[0].prompt, first[0].prompt)
+        self.assertEqual(both[1].prompt, second[0].prompt)
+
+    def test_prebuilt_over_consumption_is_hard_error(self):
+        self._dataset(num_sessions=2).load(self.tokenizer)  # writes the cache
+        with self.assertRaisesRegex(ValueError, "never recycled"):
+            self._dataset(num_sessions=3, dataset_path=str(self.cache_file)).load(
+                self.tokenizer
+            )
+
+    def test_tampered_cache_fingerprint_forces_rebuild(self):
+        self._dataset().load(self.tokenizer)
+        payload = json.loads(self.cache_file.read_text())
+        payload["metadata"]["seed"] = 999  # stale fingerprint
+        self.cache_file.write_text(json.dumps(payload))
+        self._dataset().load(self.tokenizer)
+        rebuilt = json.loads(self.cache_file.read_text())
+        self.assertEqual(rebuilt["metadata"]["seed"], 42)
+
+    def test_unknown_profile_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Unknown recovery-agent profile"):
+            self._dataset(profile_name="nope").load(self.tokenizer)
+
+
+class TestMultiTurnReplay(CustomTestCase):
+    """The wrapper replays content only, aborts failed sessions, and stamps
+    session/round identity."""
+
+    def _wrap(self, request_func):
+        return wrap_multi_turn_request_func(request_func, backend="sglang-oai-chat")
+
+    def _input(self, rounds, session_index=0):
+        return RequestFuncInput(
+            model="m",
+            prompt=rounds,
+            api_url="http://localhost/v1/chat/completions",
+            prompt_len=10,
+            output_len=8,
+            lora_name=None,
+            image_data=None,
+            extra_request_body={},
+            session_index=session_index,
+        )
+
+    def test_replay_excludes_reasoning(self):
+        seen_prompts = []
+
+        async def fake_request(request_func_input, pbar=None):
+            seen_prompts.append(request_func_input.prompt)
+            output = RequestFuncOutput.init_new(request_func_input)
+            output.success = True
+            output.generated_text = "THOUGHTS then the reply"
+            output.assistant_replay_text = "the reply"
+            return output
+
+        outputs = asyncio.run(
+            self._wrap(fake_request)(self._input(["q1", "q2"], session_index=3))
+        )
+        self.assertEqual(len(outputs), 2)
+        replayed_assistant = seen_prompts[1][1]
+        self.assertEqual(replayed_assistant["role"], "assistant")
+        self.assertEqual(replayed_assistant["content"], "the reply")
+        self.assertNotIn("THOUGHTS", replayed_assistant["content"])
+        self.assertEqual([o.session_index for o in outputs], [3, 3])
+        self.assertEqual([o.round_index for o in outputs], [0, 1])
+
+    def test_failed_round_aborts_session(self):
+        calls = []
+
+        async def fake_request(request_func_input, pbar=None):
+            calls.append(1)
+            output = RequestFuncOutput.init_new(request_func_input)
+            output.success = len(calls) < 2  # second round fails
+            output.generated_text = "ok"
+            output.assistant_replay_text = "ok"
+            return output
+
+        outputs = asyncio.run(self._wrap(fake_request)(self._input(["a", "b", "c"])))
+        self.assertEqual(len(calls), 2)  # third round never attempted
+        self.assertEqual(len(outputs), 2)
+        self.assertFalse(outputs[-1].success)
+
+
+class TestStreamingReplayExtraction(CustomTestCase):
+    """The streaming chat path keeps reasoning in generated_text (metrics)
+    while assistant_replay_text carries content deltas only."""
+
+    class _FakeContent:
+        def __init__(self, chunks):
+            self._chunks = chunks
+
+        def __aiter__(self):
+            self._iter = iter(self._chunks)
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._iter)
+            except StopIteration:
+                raise StopAsyncIteration
+
+    def _fake_session(self, chunks):
+        outer = self
+
+        class _FakeResponse:
+            status = 200
+            content = outer._FakeContent(chunks)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+        class _FakeSession:
+            def post(self, url, json=None, headers=None):
+                return _FakeResponse()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+        return _FakeSession()
+
+    def test_stream_separates_reasoning_from_replay(self):
+        def sse(payload):
+            return f"data: {json.dumps(payload)}".encode()
+
+        chunks = [
+            sse({"choices": [{"delta": {"reasoning_content": "THINKING "}}]}),
+            sse({"choices": [{"delta": {"content": "final "}}]}),
+            sse({"choices": [{"delta": {"content": "answer"}}]}),
+            sse(
+                {"choices": [], "usage": {"prompt_tokens": 77, "completion_tokens": 5}}
+            ),
+            b"data: [DONE]",
+        ]
+        request_func_input = RequestFuncInput(
+            model="m",
+            prompt=[{"role": "user", "content": "q"}],
+            api_url="http://localhost/v1/chat/completions",
+            prompt_len=10,
+            output_len=8,
+            lora_name=None,
+            image_data=None,
+            extra_request_body={},
+        )
+        with patch.object(
+            serving,
+            "_create_bench_client_session",
+            lambda: self._fake_session(chunks),
+        ), patch.object(
+            serving,
+            "args",
+            SimpleNamespace(
+                disable_stream=False,
+                disable_ignore_eos=True,
+                dataset_name="recovery-agent",
+            ),
+            create=True,
+        ):
+            output = asyncio.run(
+                serving.async_request_openai_chat_completions(request_func_input)
+            )
+        self.assertTrue(output.success)
+        self.assertEqual(output.generated_text, "THINKING final answer")
+        self.assertEqual(output.assistant_replay_text, "final answer")
+        self.assertEqual(output.server_prompt_len, 77)
+        self.assertEqual(output.output_len, 5)
+
+
+class TestUsageBasedMetrics(CustomTestCase):
+    def _output(self, prompt_len, server_prompt_len, cached, success=True):
+        output = RequestFuncOutput()
+        output.success = success
+        output.prompt_len = prompt_len
+        output.server_prompt_len = server_prompt_len
+        output.cached_tokens = cached
+        output.generated_text = "x"
+        output.output_len = 4
+        output.latency = 1.0
+        output.ttft = 0.5
+        return output
+
+    def test_cache_denominator_prefers_server_usage(self):
+        outputs = [
+            self._output(prompt_len=10, server_prompt_len=100, cached=50),
+            self._output(prompt_len=10, server_prompt_len=None, cached=5),
+            self._output(prompt_len=10, server_prompt_len=999, cached=0, success=False),
+        ]
+        report = aggregate_cache_report(outputs)
+        # 100 (server) + 10 (client fallback); the failure is excluded.
+        self.assertEqual(report["total_prompt_tokens"], 110)
+        self.assertEqual(report["total_cached"], 55)
+        self.assertAlmostEqual(report["hit_rate"], 50.0)
+
+    def test_multi_turn_total_input_from_outputs(self):
+        tokenizer = _make_tokenizer()
+        outputs = [
+            self._output(prompt_len=10, server_prompt_len=120, cached=0),
+            self._output(prompt_len=10, server_prompt_len=250, cached=0),
+        ]
+        with patch.object(
+            serving,
+            "args",
+            SimpleNamespace(dataset_name="recovery-agent", plot_throughput=False),
+            create=True,
+        ):
+            metrics, _ = calculate_metrics(
+                input_requests=None,
+                outputs=outputs,
+                dur_s=2.0,
+                tokenizer=tokenizer,
+                backend="sglang-oai-chat",
+            )
+        self.assertEqual(metrics.total_input, 370)
+
+
+class TestSessionCli(CustomTestCase):
+    def _run_cli(self, argv):
+        with patch.object(serving.sys, "argv", ["bench_serving"] + argv), patch.object(
+            serving, "run_benchmark"
+        ) as run_mock:
+            serving.cli_main()
+        return run_mock.call_args.args[0]
+
+    def test_num_sessions_conflicts_with_num_prompts(self):
+        with self.assertRaises(SystemExit):
+            self._run_cli(
+                [
+                    "--backend",
+                    "sglang-oai-chat",
+                    "--dataset-name",
+                    "recovery-agent",
+                    "--num-sessions",
+                    "8",
+                    "--num-prompts",
+                    "8",
+                ]
+            )
+
+    def test_num_sessions_rejected_for_single_turn_dataset(self):
+        with self.assertRaises(SystemExit):
+            self._run_cli(["--dataset-name", "random", "--num-sessions", "8"])
+
+    def test_recovery_agent_requires_chat_backend(self):
+        with self.assertRaises(SystemExit):
+            self._run_cli(["--backend", "sglang", "--dataset-name", "recovery-agent"])
+
+    def test_num_sessions_normalizes_into_num_prompts(self):
+        args = self._run_cli(
+            [
+                "--backend",
+                "sglang-oai-chat",
+                "--dataset-name",
+                "recovery-agent",
+                "--num-sessions",
+                "5",
+            ]
+        )
+        self.assertEqual(args.num_prompts, 5)
+
+    def test_default_profile_is_agent_short(self):
+        args = self._run_cli(
+            ["--backend", "sglang-oai-chat", "--dataset-name", "recovery-agent"]
+        )
+        self.assertEqual(args.recovery_profile, "agent-short")
+
+
+if __name__ == "__main__":
+    unittest.main()
