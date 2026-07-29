@@ -129,10 +129,52 @@ def rank_script_digest(fleet, rank):
     return result.stdout.split()[0]
 
 
-def preflight(fleet, spec, full_run):
+EXPECTED_RANK_ROLES = {0: "prefill", 1: "prefill", 2: "decode", 3: "decode"}
+
+
+def preflight(fleet, spec, start_stage):
     """Verify every identity the evidence gate will later require, BEFORE any
-    fleet mutation; raise on any mismatch. A full run writes a fresh
-    manifest.json; a resume requires the existing one to match HEAD."""
+    fleet mutation; raise on any mismatch. All local (side-effect-free)
+    checks run first, then the remote identity checks; only after everything
+    passes does a full run write its fresh manifest.json. A resume requires
+    the existing manifest to match the live identities AND every prior
+    stage's evidence to validate."""
+    full_run = start_stage == 1
+    # --- local checks, no side effects -----------------------------------
+    if fleet.model_path != spec["model_path"]:
+        raise RuntimeError(
+            f"fleet model {fleet.model_path} != spec {spec['model_path']}"
+        )
+    if {r: role for r, (role, _ip) in fleet.ranks.items()} != EXPECTED_RANK_ROLES:
+        raise RuntimeError(
+            f"fleet ranks/roles {fleet.ranks} != expected {EXPECTED_RANK_ROLES}"
+        )
+    ips = [ip for _role, ip in fleet.ranks.values()]
+    if len(set(ips)) != len(ips):
+        raise RuntimeError(f"fleet worker IPs are not unique: {ips}")
+    topology = spec["topology"]
+    if (
+        len(fleet.prefill) != topology["prefill_workers"]
+        or len(fleet.decode) != topology["decode_workers"]
+    ):
+        raise RuntimeError(
+            f"fleet pools {len(fleet.prefill)}P/{len(fleet.decode)}D != spec "
+            f"{topology['prefill_workers']}P/{topology['decode_workers']}D"
+        )
+    ledger_path = fleet.ramp_dir / "ledger.json"
+    if full_run:
+        stale = [
+            p.name
+            for p in [ledger_path, *(fleet.ramp_dir / f"stage{s}" for s in range(1, 6))]
+            if p.exists()
+        ]
+        if stale:
+            raise RuntimeError(
+                f"full run refused: evidence dir is not fresh ({stale}); use a "
+                "new --ramp-dir or resume with --start-stage"
+            )
+    elif not ledger_path.exists():
+        raise RuntimeError("resume refused: no ledger.json in the evidence dir")
     commit = head_commit()
     retained = fleet.ramp_dir / DATASET_NAME
     if not retained.exists():
@@ -144,6 +186,7 @@ def preflight(fleet, spec, full_run):
             f"retained dataset sha {digest[:16]}… != spec "
             f"{spec['dataset_sha256'][:16]}…; refusing all fleet action"
         )
+    # --- remote identity checks ------------------------------------------
     tracked_digest = dataset_digest(TRACKED_WORKER_SCRIPT)
     ranks_identity = {}
     for rank in fleet.ranks:
@@ -166,28 +209,34 @@ def preflight(fleet, spec, full_run):
             f"package RECORD digests differ across ranks: {ranks_identity}"
         )
     manifest_path = fleet.ramp_dir / "manifest.json"
+    manifest = {
+        "commit": commit,
+        "dataset_sha256": digest,
+        "worker_script_sha256": tracked_digest,
+        "ranks": ranks_identity,
+    }
     if full_run:
-        manifest_path.write_text(
-            json.dumps(
-                {
-                    "commit": commit,
-                    "dataset_sha256": digest,
-                    "worker_script_sha256": tracked_digest,
-                    "ranks": ranks_identity,
-                },
-                indent=2,
-            )
-        )
+        manifest_path.write_text(json.dumps(manifest, indent=2))
     else:
-        manifest = (
+        existing = (
             json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
         )
-        if manifest.get("commit") != commit:
+        # The ENTIRE manifest must match the live identities: a resume that
+        # only checks the commit can silently mix packages or scripts.
+        if existing != manifest:
             raise RuntimeError(
-                f"resume refused: manifest commit "
-                f"{str(manifest.get('commit'))[:12]} != HEAD {commit[:12]} — "
-                "a resume cannot mix commits; start a full run instead"
+                f"resume refused: manifest {existing} does not match the live "
+                f"identities {manifest}; start a full run in a fresh dir"
             )
+        # Every prior stage's evidence must already validate — resuming on
+        # top of an invalid stage would launder it into a completed ramp.
+        for stage in range(1, start_stage):
+            if not (fleet.ramp_dir / f"stage{stage}").is_dir():
+                raise RuntimeError(f"resume refused: stage{stage} evidence missing")
+            if not validate_stage(fleet.ramp_dir, stage):
+                raise RuntimeError(
+                    f"resume refused: stage{stage} evidence fails validation"
+                )
 
 
 def http_ok(url, timeout=5):
@@ -470,25 +519,64 @@ def router_serves_traffic(fleet, deadline_s=420):
     return False
 
 
-def ensure_router(fleet):
-    if http_ok(f"{fleet.router_url}/health"):
-        return
+def expected_router_cmd(fleet):
     prefill_args = " ".join(
         f"--prefill {url} {fleet.bootstrap_port}" for url in fleet.prefill.values()
     )
     decode_args = " ".join(f"--decode {url}" for url in fleet.decode.values())
     port = fleet.router_url.rsplit(":", 1)[1]
-    cmd = (
+    return (
         f"setsid {fleet.router_python} -m sglang_router.launch_router "
         "--pd-disaggregation --policy consistent_hashing "
         "--prefill-policy consistent_hashing --decode-policy consistent_hashing "
         f"{prefill_args} {decode_args} --host 0.0.0.0 --port {port} "
         f"> {fleet.ramp_dir}/router.log 2>&1 &"
     )
+
+
+def live_router_processes():
+    result = subprocess.run(
+        ["pgrep", "-af", "sglang_router.launch_router"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout
+
+
+def ensure_router(fleet):
+    """The router artifact must describe the LIVE router this run uses: a
+    merely-healthy process of unknown configuration is killed and replaced by
+    one we launched ourselves, and the retained config/process artifacts are
+    written from that launch — never inherited from a previous run."""
+    cmd = expected_router_cmd(fleet)
+    config_path = fleet.ramp_dir / "router_config.txt"
+    port = fleet.router_url.rsplit(":", 1)[1]
+    if http_ok(f"{fleet.router_url}/health"):
+        live = live_router_processes()
+        bound = (
+            config_path.exists()
+            and config_path.read_text() == cmd
+            and f"--port {port}" in live
+            and all(url in live for url in fleet.prefill.values())
+            and all(url in live for url in fleet.decode.values())
+        )
+        if bound:
+            return
+        # Healthy but unverifiable/mismatched: replace it with our own.
+        subprocess.run(
+            ["pkill", "-f", "sglang_router.launch_router"],
+            capture_output=True,
+            check=False,
+        )
+        time.sleep(3)
     subprocess.Popen(["bash", "-c", cmd])
-    (fleet.ramp_dir / "router_config.txt").write_text(cmd)
+    config_path.write_text(cmd)
     for _ in range(30):
         if http_ok(f"{fleet.router_url}/health"):
+            (fleet.ramp_dir / "router_process.txt").write_text(
+                live_router_processes()
+            )
             return
         time.sleep(2)
     raise RuntimeError("router failed to start")
@@ -505,11 +593,146 @@ def gate_fleet_ready(fleet):
     return None
 
 
+def init_ledger(ramp_dir, start_stage):
+    """Structured per-stage status ledger: the run's identity plus one
+    status/reason record per stage and the derived last_passing_stage. A
+    full run creates it fresh; a resume keeps prior stages' records."""
+    path = ramp_dir / "ledger.json"
+    if start_stage > 1 and path.exists():
+        return
+    spec_digest = hashlib.sha256(
+        (TRACKED_DIR / "ramp_run_spec.json").read_bytes()
+    ).hexdigest()
+    path.write_text(
+        json.dumps(
+            {
+                "run_id": time.strftime("%Y-%m-%d_%H-%M-%S"),
+                "commit": head_commit(),
+                "spec_sha256": spec_digest,
+                "stages": {
+                    str(stage): {"status": "pending", "reason": None}
+                    for stage in range(1, 6)
+                },
+                "last_passing_stage": None,
+            },
+            indent=2,
+        )
+    )
+
+
+def update_ledger(ramp_dir, stage, status, reason=None):
+    path = ramp_dir / "ledger.json"
+    ledger = json.loads(path.read_text())
+    ledger["stages"][str(stage)] = {"status": status, "reason": reason}
+    passed = [
+        int(s) for s, v in ledger["stages"].items() if v["status"] == "passed"
+    ]
+    ledger["last_passing_stage"] = max(passed) if passed else None
+    path.write_text(json.dumps(ledger, indent=2))
+
+
+def run_small_stage(fleet, ramp_dir, stage, roles_to_launch, prior, reuse_fleet):
+    """One staged configuration: (re)launch, gate, benchmark, retain, and
+    validate. Returns None on success or a failure reason string."""
+    stage_dir = ramp_dir / f"stage{stage}"
+    stage_dir.mkdir(exist_ok=True)
+    if reuse_fleet:
+        print(f"=== stage {stage}: reusing in-flight fleet", flush=True)
+        for rank, (role, _ip) in fleet.ranks.items():
+            prior[rank] = worker_launch_stage(role, stage)
+    else:
+        print(f"=== stage {stage}: relaunching {sorted(roles_to_launch)}", flush=True)
+        kill_ranks = [
+            r for r, (role, _) in fleet.ranks.items() if role in roles_to_launch
+        ]
+        kill_workers(fleet, kill_ranks)
+        time.sleep(8)
+        for rank, (role, _ip) in fleet.ranks.items():
+            if role in roles_to_launch:
+                worker_stage = worker_launch_stage(role, stage)
+                launch_worker(fleet, rank, role, worker_stage)
+                prior[rank] = worker_stage
+    failure = gate_fleet_ready(fleet)
+    if failure:
+        return failure
+    collect_stage_evidence(fleet, stage_dir, prior)
+    (stage_dir / "counters_pre.json").write_text(json.dumps(counters(fleet), indent=2))
+    affinity_ok = run_stage_sessions(fleet, stage_dir)
+    (stage_dir / "counters_post.json").write_text(
+        json.dumps(counters(fleet), indent=2)
+    )
+    probe_ok = wire_probe(fleet, stage_dir)
+    evidence_ok = validate_stage(ramp_dir, stage)
+    print(
+        f"stage {stage}: affinity_ok={affinity_ok} wire_ok={probe_ok} "
+        f"evidence_ok={evidence_ok}",
+        flush=True,
+    )
+    if not evidence_ok:
+        return "evidence validation failed"
+    if not (affinity_ok and probe_ok):
+        return f"affinity_ok={affinity_ok} wire_ok={probe_ok}"
+    return None
+
+
+def run_final_stage(fleet, ramp_dir, prior):
+    """Final configuration, 32 concurrent sessions after a cache flush.
+    Returns None on success or a failure reason string."""
+    stage_dir = ramp_dir / "stage5"
+    stage_dir.mkdir(exist_ok=True)
+    failure = gate_fleet_ready(fleet)
+    if failure:
+        return failure
+    collect_stage_evidence(fleet, stage_dir, prior)
+    pre = counters(fleet)
+    for url in list(fleet.prefill.values()) + list(fleet.decode.values()):
+        try:
+            urllib.request.urlopen(
+                urllib.request.Request(f"{url}/flush_cache", method="POST"),
+                timeout=30,
+            )
+        except Exception as error:
+            print(f"flush_cache {url}: {error}", flush=True)
+    (stage_dir / "counters_pre.json").write_text(json.dumps(pre, indent=2))
+    result = bench(fleet, 0, 32, 8, stage_dir / "bench_32s.jsonl")
+    (stage_dir / "bench_32s.out").write_text(
+        result.stdout[-120_000:] + result.stderr[-20_000:]
+    )
+    (stage_dir / "counters_post.json").write_text(
+        json.dumps(counters(fleet), indent=2)
+    )
+    attribution_ok = stage5_attribution(fleet, stage_dir)
+    probe_ok = wire_probe(fleet, stage_dir)
+    evidence_ok = validate_stage(ramp_dir, 5)
+    print(
+        f"stage 5: bench_rc={result.returncode} attribution_ok={attribution_ok} "
+        f"wire_ok={probe_ok} evidence_ok={evidence_ok}",
+        flush=True,
+    )
+    if result.returncode != 0:
+        return f"benchmark exited {result.returncode}"
+    if not evidence_ok:
+        return "evidence validation failed"
+    if not (attribution_ok and probe_ok):
+        return f"attribution_ok={attribution_ok} wire_ok={probe_ok}"
+    return None
+
+
+STAGE_PLAN = {
+    1: {"prefill", "decode"},
+    2: {"prefill", "decode"},
+    3: {"prefill", "decode"},
+    4: {"prefill"},  # HiCache changes prefill only; decode stays at stage 3
+}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ramp-dir", required=True)
     parser.add_argument("--fleet-config", required=True)
-    parser.add_argument("--start-stage", type=int, default=1)
+    parser.add_argument(
+        "--start-stage", type=int, default=1, choices=[1, 2, 3, 4, 5]
+    )
     parser.add_argument(
         "--skip-relaunch",
         action="store_true",
@@ -522,125 +745,61 @@ def main():
     fleet = Fleet(json.loads(Path(args.fleet_config).read_text()), ramp_dir)
     spec = load_spec()
     start_stage = args.start_stage
-    preflight(fleet, spec, full_run=start_stage == 1)
+    preflight(fleet, spec, start_stage)
+    init_ledger(ramp_dir, start_stage)
 
-    overall_ok = True
-    stage_plan = [
-        (stage, roles)
-        for stage, roles in [
-            (1, {"prefill", "decode"}),
-            (2, {"prefill", "decode"}),
-            (3, {"prefill", "decode"}),
-            (4, {"prefill"}),  # HiCache changes prefill only; decode stays 3
-        ]
-        if stage >= start_stage
-    ]
-    if start_stage == 4 and stage_plan:
-        # Resuming at stage 4 still needs the decode fleet at stage-3 config.
-        stage_plan[0] = (4, {"prefill", "decode"})
     # rank -> stage the worker was actually launched at (evidence lives in
     # that stage's log file). A direct stage-5 resume reuses the final fleet:
     # prefill launched at stage 4, decode at stage 3.
     prior = (
-        {r: (4 if role == "prefill" else 3) for r, (role, _ip) in fleet.ranks.items()}
-        if start_stage >= 5
+        {r: worker_launch_stage(role, 5) for r, (role, _ip) in fleet.ranks.items()}
+        if start_stage == 5
         else {}
     )
-    for stage, roles_to_launch in stage_plan:
-        stage_dir = ramp_dir / f"stage{stage}"
-        stage_dir.mkdir(exist_ok=True)
-        if args.skip_relaunch and stage == stage_plan[0][0]:
-            print(f"=== stage {stage}: reusing in-flight fleet", flush=True)
-            for rank, (role, _ip) in fleet.ranks.items():
-                prior[rank] = worker_launch_stage(role, stage)
+    overall_ok = True
+    # Attempt every required stage, recording each outcome — a stage failure
+    # is a FAILED ledger entry with a reason, not an abort. (Preflight is the
+    # only global interlock; each stage relaunches its own configuration.)
+    for stage, base_roles in STAGE_PLAN.items():
+        if stage < start_stage:
+            continue
+        roles = base_roles
+        if stage == 4 and start_stage == 4:
+            # Resuming at stage 4 still needs the decode fleet at stage-3
+            # config, so relaunch both roles.
+            roles = {"prefill", "decode"}
+        update_ledger(ramp_dir, stage, "attempted")
+        reason = run_small_stage(
+            fleet,
+            ramp_dir,
+            stage,
+            roles,
+            prior,
+            reuse_fleet=args.skip_relaunch and stage == start_stage,
+        )
+        if reason:
+            print(f"STAGE {stage} FAILED: {reason}", flush=True)
+            (ramp_dir / f"stage{stage}" / "STAGE_FAILED").write_text(reason)
+            update_ledger(ramp_dir, stage, "failed", reason)
+            overall_ok = False
         else:
-            print(
-                f"=== stage {stage}: relaunching {sorted(roles_to_launch)}", flush=True
-            )
-            kill_ranks = [
-                r for r, (role, _) in fleet.ranks.items() if role in roles_to_launch
-            ]
-            kill_workers(fleet, kill_ranks)
-            time.sleep(8)
-            for rank, (role, _ip) in fleet.ranks.items():
-                if role in roles_to_launch:
-                    worker_stage = worker_launch_stage(role, stage)
-                    launch_worker(fleet, rank, role, worker_stage)
-                    prior[rank] = worker_stage
-        failure = gate_fleet_ready(fleet)
-        if failure:
-            print(f"STAGE {stage}: {failure}", flush=True)
-            (stage_dir / "STAGE_FAILED").write_text(failure)
-            overall_ok = False
-            break
-        collect_stage_evidence(fleet, stage_dir, prior)
-        (stage_dir / "counters_pre.json").write_text(
-            json.dumps(counters(fleet), indent=2)
-        )
-        affinity_ok = run_stage_sessions(fleet, stage_dir)
-        (stage_dir / "counters_post.json").write_text(
-            json.dumps(counters(fleet), indent=2)
-        )
-        probe_ok = wire_probe(fleet, stage_dir)
-        evidence_ok = validate_stage(ramp_dir, stage)
-        print(
-            f"stage {stage}: affinity_ok={affinity_ok} wire_ok={probe_ok} "
-            f"evidence_ok={evidence_ok}",
-            flush=True,
-        )
-        if not evidence_ok:
-            # Fail closed: a stage without complete evidence never counts,
-            # and later (more expensive) stages are not attempted on top of
-            # an unattributable one.
-            (stage_dir / "STAGE_FAILED").write_text("evidence validation failed")
-            overall_ok = False
-            break
-        overall_ok &= affinity_ok and probe_ok
+            update_ledger(ramp_dir, stage, "passed")
+    update_ledger(ramp_dir, 5, "attempted")
+    reason = run_final_stage(fleet, ramp_dir, prior)
+    if reason:
+        print(f"STAGE 5 FAILED: {reason}", flush=True)
+        (ramp_dir / "stage5" / "STAGE_FAILED").write_text(reason)
+        update_ledger(ramp_dir, 5, "failed", reason)
+        overall_ok = False
     else:
-        # stage 5: identical final config, 32 concurrent sessions after flush
-        stage_dir = ramp_dir / "stage5"
-        stage_dir.mkdir(exist_ok=True)
-        failure = gate_fleet_ready(fleet)
-        if failure:
-            print(f"STAGE 5: {failure}", flush=True)
-            (stage_dir / "STAGE_FAILED").write_text(failure)
-            overall_ok = False
-        else:
-            collect_stage_evidence(fleet, stage_dir, prior)
-            pre = counters(fleet)
-            for url in list(fleet.prefill.values()) + list(fleet.decode.values()):
-                try:
-                    urllib.request.urlopen(
-                        urllib.request.Request(f"{url}/flush_cache", method="POST"),
-                        timeout=30,
-                    )
-                except Exception as error:
-                    print(f"flush_cache {url}: {error}", flush=True)
-            (stage_dir / "counters_pre.json").write_text(json.dumps(pre, indent=2))
-            result = bench(fleet, 0, 32, 8, stage_dir / "bench_32s.jsonl")
-            (stage_dir / "bench_32s.out").write_text(
-                result.stdout[-120_000:] + result.stderr[-20_000:]
-            )
-            (stage_dir / "counters_post.json").write_text(
-                json.dumps(counters(fleet), indent=2)
-            )
-            attribution_ok = stage5_attribution(fleet, stage_dir)
-            probe_ok = wire_probe(fleet, stage_dir)
-            evidence_ok = validate_stage(ramp_dir, 5)
-            print(
-                f"stage 5: bench_rc={result.returncode} "
-                f"attribution_ok={attribution_ok} wire_ok={probe_ok} "
-                f"evidence_ok={evidence_ok}",
-                flush=True,
-            )
-            overall_ok &= (
-                result.returncode == 0 and attribution_ok and probe_ok and evidence_ok
-            )
+        update_ledger(ramp_dir, 5, "passed")
 
     # Final global gate: all stages + full run identity together.
     global_ok = validate_stage(ramp_dir)
     print(f"global evidence gate: {'PASS' if global_ok else 'FAIL'}", flush=True)
     overall_ok &= global_ok
+    ledger = json.loads((ramp_dir / "ledger.json").read_text())
+    print(f"last passing stage: {ledger['last_passing_stage']}", flush=True)
     print(f"RAMP {'COMPLETE' if overall_ok else 'FAILED'}", flush=True)
     return 0 if overall_ok else 1
 

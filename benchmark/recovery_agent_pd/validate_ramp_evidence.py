@@ -398,7 +398,7 @@ def validate_counters(results, stage_dir, stage, expected_rounds):
         all(
             post[key]["cached_tokens"] - pre[key]["cached_tokens"]
             <= post[key]["prompt_tokens"] - pre[key]["prompt_tokens"]
-            for key in PREFILL_KEYS
+            for key in WORKER_KEYS
         ),
     )
     prefill_delta = sum(
@@ -410,12 +410,16 @@ def validate_counters(results, stage_dir, stage, expected_rounds):
     prompt_delta = sum(
         post[key]["prompt_tokens"] - pre[key]["prompt_tokens"] for key in PREFILL_KEYS
     )
+    # The counter snapshots enclose ONLY the benchmark window (the driver
+    # snapshots immediately before/after), and the router sends each request
+    # to exactly one worker per pool, so the deltas must EQUAL the planned
+    # rounds — "covers" would accept phantom traffic.
     _check(
         results,
-        f"stage{stage}: pool request deltas cover the planned rounds",
+        f"stage{stage}: pool request deltas equal the planned rounds exactly",
         expected_rounds is not None
-        and prefill_delta >= expected_rounds
-        and decode_delta >= expected_rounds
+        and prefill_delta == expected_rounds
+        and decode_delta == expected_rounds
         and prompt_delta > 0,
         f"prefill {prefill_delta}, decode {decode_delta} vs planned "
         f"{expected_rounds}; prompt tokens {prompt_delta}",
@@ -427,9 +431,12 @@ def validate_counters(results, stage_dir, stage, expected_rounds):
 # ---------------------------------------------------------------------------
 
 
-def validate_bench(results, name, bench, session_rounds):
+def validate_bench(results, name, bench, session_rounds, spec, offset):
     """session_rounds: planned rounds per in-run session index, from the
-    retained population; every per-round array must structurally agree."""
+    retained population; offset: the dataset offset this bench consumed.
+    Every per-round array must structurally agree, aggregates must equal the
+    per-round records, and the artifact must be BOUND to the retained
+    population (sha/offset/count/profile/authority/routing keys)."""
     if session_rounds is None or not isinstance(bench, dict):
         _check(results, f"{name}: bench artifact parseable with population", False)
         return
@@ -484,21 +491,61 @@ def validate_bench(results, name, bench, session_rounds):
         sequences_ok,
     )
     conversations = bench.get("conversation_results")
+    conversations_ok = isinstance(conversations, list) and len(
+        conversations
+    ) == sessions
+    if conversations_ok:
+        by_session = {}
+        for c in conversations:
+            if not isinstance(c, dict) or not isinstance(c.get("session_index"), int):
+                conversations_ok = False
+                break
+            by_session[c["session_index"]] = c
+        # Unique EXACT coverage: relabeling every result as session 0 must
+        # fail, not collapse into one accepted entry.
+        conversations_ok = (
+            conversations_ok
+            and set(by_session) == set(range(sessions))
+            and all(
+                by_session[s].get("success") is True
+                and by_session[s].get("planned_rounds")
+                == by_session[s].get("completed_rounds")
+                == session_rounds[s]
+                for s in range(sessions)
+            )
+        )
     _check(
         results,
-        f"{name}: conversation_results all succeed with exact planned rounds",
-        isinstance(conversations, list)
-        and len(conversations) == sessions
-        and all(
-            isinstance(c, dict)
-            and c.get("success") is True
-            and c.get("planned_rounds")
-            == c.get("completed_rounds")
-            == session_rounds[i]
-            for i, c in enumerate(
-                sorted(conversations, key=lambda c: c.get("session_index", -1))
-            )
-        ),
+        f"{name}: conversation_results uniquely cover every session and all "
+        "succeed with exact planned rounds",
+        conversations_ok,
+    )
+    server_lens = bench.get("server_prompt_lens")
+    _check(
+        results,
+        f"{name}: aggregate input tokens equal the per-round server prompt lengths",
+        _positive_int_list(server_lens, total_rounds)
+        and bench.get("total_input_tokens") == sum(server_lens),
+        f"total_input_tokens={bench.get('total_input_tokens')}",
+    )
+    binding = bench.get("dataset_binding")
+    expected = spec["dataset"]
+    binding_ok = (
+        isinstance(binding, dict)
+        and binding.get("dataset_path_sha256") == spec["dataset_sha256"]
+        and binding.get("dataset_offset") == offset
+        and binding.get("num_sessions") == sessions
+        and binding.get("profile") == expected["profile"]
+        and binding.get("authority") == expected["authority"]
+        and binding.get("routing_keys")
+        == [routing_key(expected["seed"], offset + i) for i in range(sessions)]
+    )
+    _check(
+        results,
+        f"{name}: bound to the retained population "
+        "(sha/offset/count/profile/authority/routing keys)",
+        binding_ok,
+        f"dataset_binding={'present' if isinstance(binding, dict) else 'absent'}",
     )
 
 
@@ -522,7 +569,11 @@ def validate_affinity(results, stage_dir, stage):
         prefill_used, decode_used = set(), set()
         for record in records:
             delta = record.get("delta")
-            if not isinstance(delta, dict) or not set(delta) >= set(WORKER_KEYS):
+            if (
+                not isinstance(delta, dict)
+                or not set(delta) >= set(WORKER_KEYS)
+                or not all(_counter_value_ok(delta[k]) for k in WORKER_KEYS)
+            ):
                 derived_sticky = False
                 break
             hit_prefill = sorted(k for k in PREFILL_KEYS if delta[k] > 0)
@@ -555,6 +606,44 @@ def validate_affinity(results, stage_dir, stage):
         and isinstance(affinity, dict)
         and affinity.get("all_sticky") is derived_sticky
         and affinity.get("spread_ok") is derived_spread,
+    )
+
+
+def validate_counter_affinity_reconciliation(results, stage_dir, stage):
+    """Cross-artifact coherence: the aggregate pre/post snapshots enclose
+    exactly the eight sequential per-session benches, so each worker's
+    aggregate request delta must EQUAL the sum of its retained per-session
+    deltas — disagreement means one of the artifacts misrepresents the run."""
+    pre = _read_json(stage_dir / "counters_pre.json")
+    post = _read_json(stage_dir / "counters_post.json")
+    affinity = _read_json(stage_dir / "affinity.json")
+    ok = False
+    detail = f"{stage_dir}/counters_*,affinity.json"
+    if _snapshot_ok(pre) and _snapshot_ok(post) and isinstance(affinity, dict):
+        records = affinity.get("sessions")
+        sums = {key: 0 for key in WORKER_KEYS}
+        coherent = isinstance(records, list) and bool(records)
+        for record in records if coherent else []:
+            delta = record.get("delta") if isinstance(record, dict) else None
+            if not isinstance(delta, dict) or not all(
+                _counter_value_ok(delta.get(key)) for key in WORKER_KEYS
+            ):
+                coherent = False
+                break
+            for key in WORKER_KEYS:
+                sums[key] += delta[key]
+        if coherent:
+            aggregate = {
+                key: post[key]["chat_requests"] - pre[key]["chat_requests"]
+                for key in WORKER_KEYS
+            }
+            ok = aggregate == sums
+            detail = f"aggregate {aggregate} vs per-session sums {sums}"
+    _check(
+        results,
+        f"stage{stage}: aggregate request deltas equal the per-session sums",
+        ok,
+        detail,
     )
 
 
@@ -637,14 +726,45 @@ def validate_attribution(results, stage_dir, dataset):
 
 
 def validate_wire(results, stage_dir, stage):
+    """Derive the wire verdict from the retained hashes; never trust the
+    stored summary booleans alone (a truthy [False, False] list once passed).
+
+    Content-only equality is derived from the sha256/chars of the round-1
+    content replay vs the round-2 assistant message; that equality plus a
+    nonempty round-1 reasoning whose hash differs from the content proves the
+    reasoning was not replayed. Stored bits must agree with the derivation."""
     wire = _read_json(stage_dir / "wire_probe.json")
+    ok = False
+    if isinstance(wire, dict):
+        reasoning = wire.get("round1_reasoning")
+        replay = wire.get("round1_content_replay")
+        round2 = wire.get("round2_assistant_content")
+        hashed = all(
+            isinstance(part, dict)
+            and isinstance(part.get("sha256"), str)
+            and isinstance(part.get("chars"), int)
+            for part in (reasoning, replay, round2)
+        )
+        if hashed:
+            derived_equal = (
+                replay["sha256"] == round2["sha256"]
+                and replay["chars"] == round2["chars"]
+            )
+            derived_reasoning_present = (
+                reasoning["chars"] > 0 and reasoning["sha256"] != replay["sha256"]
+            )
+            ok = (
+                wire.get("rounds_succeeded") == [True, True]
+                and derived_equal
+                and derived_reasoning_present
+                and wire.get("round2_assistant_equals_content_only") is True
+                and wire.get("reasoning_absent_from_round2") is True
+            )
     _check(
         results,
-        f"stage{stage}: wire probe passed",
-        isinstance(wire, dict)
-        and wire.get("reasoning_absent_from_round2")
-        and wire.get("round2_assistant_equals_content_only")
-        and wire.get("rounds_succeeded"),
+        f"stage{stage}: wire probe passed "
+        "(derived from retained hashes; both rounds succeeded)",
+        ok,
         f"{stage_dir}/wire_probe.json",
     )
 
@@ -659,6 +779,7 @@ def validate_small_stage(results, stage_dir, stage, spec, planned_rounds):
     expected = sum(planned_rounds[:SMALL_STAGE_SESSIONS]) if planned_rounds else None
     validate_counters(results, stage_dir, stage, expected)
     validate_affinity(results, stage_dir, stage)
+    validate_counter_affinity_reconciliation(results, stage_dir, stage)
     for session in range(SMALL_STAGE_SESSIONS):
         rounds = (
             [planned_rounds[session]]
@@ -670,6 +791,8 @@ def validate_small_stage(results, stage_dir, stage, spec, planned_rounds):
             f"stage{stage}: bench_s{session}",
             _bench_last(stage_dir / f"bench_s{session}.jsonl"),
             rounds,
+            spec,
+            offset=session,
         )
     validate_wire(results, stage_dir, stage)
 
@@ -687,6 +810,8 @@ def validate_final_stage(results, stage_dir, spec, dataset, planned_rounds):
         "stage5: bench_32s",
         _bench_last(stage_dir / "bench_32s.jsonl"),
         planned_rounds,
+        spec,
+        offset=0,
     )
     validate_attribution(results, stage_dir, dataset)
     validate_wire(results, stage_dir, FINAL_STAGE)
@@ -716,17 +841,30 @@ def validate(
     dataset = _dataset(ramp_dir)
     planned_rounds = _planned_rounds(dataset)
     stages = [only_stage] if only_stage else [1, 2, 3, 4, FINAL_STAGE]
+
+    def guarded(label, fn, *args):
+        # Fail-closed even against malformed nested types: an exception from
+        # a broken artifact records a failed check, never a crash.
+        try:
+            fn(*args)
+        except Exception as error:
+            _check(results, f"{label}: validator exception on malformed artifact",
+                   False, repr(error))
+
     for stage in stages:
         stage_dir = ramp_dir / f"stage{stage}"
         if not _check(results, f"stage{stage}: directory present", stage_dir.is_dir()):
             continue
         if stage == FINAL_STAGE:
-            validate_final_stage(results, stage_dir, spec, dataset, planned_rounds)
+            guarded(f"stage{stage}", validate_final_stage,
+                    results, stage_dir, spec, dataset, planned_rounds)
         else:
-            validate_small_stage(results, stage_dir, stage, spec, planned_rounds)
+            guarded(f"stage{stage}", validate_small_stage,
+                    results, stage_dir, stage, spec, planned_rounds)
     # Identity checks run in EVERY mode: a per-stage gate that skips dataset,
     # manifest, script, or topology identity is a fail-open gate.
-    validate_run_identity(results, ramp_dir, spec, expected_commit, tracked_script)
+    guarded("run identity", validate_run_identity,
+            results, ramp_dir, spec, expected_commit, tracked_script)
     return results
 
 

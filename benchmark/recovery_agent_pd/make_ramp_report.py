@@ -3,16 +3,20 @@ inside the evidence directory, stamped with the commit the report was
 generated at.
 
     python3 make_ramp_report.py --ramp-dir DIR --output REPORT_MD
+        [--notes NOTES_MD]
 
 Rendering is bound to a FRESH validator run: this script invokes
 ``validate_ramp_evidence.validate()`` against the artifacts it is about to
 render (never trusting a pre-existing verdict JSON — a stale or copied
 passing JSON must not produce the passed-ramp presentation) and retains that
-result as ``evidence_validation.json`` alongside the report. A "controlled,
-passed ramp" presentation requires the fresh verdict to be all-ok; otherwise
-the stages are reported as ATTEMPTED runs with intended (unverified)
-configuration labels, per-rank artifact status, and a strict separation
-between directly proven benchmark facts and stage attribution claims.
+result as ``evidence_validation.json`` alongside the report.
+
+The renderer is TOTAL over failed or incomplete evidence: a missing or
+malformed stage renders as a failed/missing row (with the ledger's recorded
+reason and the last passing stage), never a crash, and each metric section
+appears only when the artifacts backing it exist and parse. Run-specific
+narrative belongs in an optional ``--notes`` file appended verbatim; this
+generator itself derives every claim from the evidence directory.
 """
 
 import argparse
@@ -36,12 +40,18 @@ CONFIG_FIELDS = (
 )
 
 
-def read_json(path):
-    return json.loads(Path(path).read_text())
+def _maybe_json(path):
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
 
 
-def bench_last(path):
-    return json.loads(Path(path).read_text().strip().splitlines()[-1])
+def _maybe_bench(path):
+    try:
+        return json.loads(Path(path).read_text().strip().splitlines()[-1])
+    except (OSError, ValueError, IndexError):
+        return None
 
 
 def rank_configs(stage_dir):
@@ -64,9 +74,8 @@ def rank_configs(stage_dir):
 
 
 def artifact_matrix(stage_dir):
-    """(resolved server_args count, nonempty startup log count) over all ranks."""
-    args_ok = 0
-    logs_ok = 0
+    """(resolved-args count, nonempty-log count) over the four ranks."""
+    args_ok = logs_ok = 0
     for rank, role in RANK_ROLES.items():
         args_path = stage_dir / f"server_args_rank{rank}_{role}.txt"
         log_path = stage_dir / f"startup_rank{rank}_{role}.log"
@@ -78,39 +87,59 @@ def artifact_matrix(stage_dir):
 
 
 def stage_summary(ramp_dir, stage):
+    """Benchmark facts for one small stage, or None when its artifacts are
+    missing/unreadable (the row renders from the ledger instead)."""
     d = ramp_dir / f"stage{stage}"
-    affinity = read_json(d / "affinity.json")
-    wire = read_json(d / "wire_probe.json")
-    benches = [bench_last(p) for p in sorted(d.glob("bench_s*.jsonl"))]
-    return {
-        "affinity": affinity,
-        "wire": wire,
-        "conversations": f"{sum(b['completed_conversations'] for b in benches)}"
-        f"/{sum(b['total_conversations'] for b in benches)}",
-        "rounds": sum(b["completed"] for b in benches),
-        "tokens": sum(b["total_input_tokens"] for b in benches),
-        "complete": all(b["input_metrics_complete"] for b in benches),
-        "configs": rank_configs(d),
-        "artifacts": artifact_matrix(d),
-    }
+    if not d.is_dir():
+        return None
+    affinity = _maybe_json(d / "affinity.json")
+    wire = _maybe_json(d / "wire_probe.json")
+    benches = [_maybe_bench(p) for p in sorted(d.glob("bench_s*.jsonl"))]
+    benches = [b for b in benches if isinstance(b, dict)]
+    if not benches or not isinstance(affinity, dict) or not isinstance(wire, dict):
+        return None
+    try:
+        return {
+            "affinity": affinity,
+            "wire": wire,
+            "conversations": f"{sum(b['completed_conversations'] for b in benches)}"
+            f"/{sum(b['total_conversations'] for b in benches)}",
+            "rounds": sum(b["completed"] for b in benches),
+            "tokens": sum(b["total_input_tokens"] for b in benches),
+            "complete": all(b["input_metrics_complete"] for b in benches),
+            "configs": rank_configs(d),
+            "artifacts": artifact_matrix(d),
+        }
+    except (KeyError, TypeError):
+        return None
+
+
+def stage_failure_reason(ramp_dir, ledger, stage):
+    entry = (ledger or {}).get("stages", {}).get(str(stage), {})
+    if entry.get("reason"):
+        return entry["reason"]
+    marker = ramp_dir / f"stage{stage}" / "STAGE_FAILED"
+    if marker.exists():
+        return marker.read_text().strip()
+    if not (ramp_dir / f"stage{stage}").is_dir():
+        return "stage not attempted (no evidence directory)"
+    return "artifacts missing or unreadable"
 
 
 def manifest_display(ramp_dir):
     """Manifest for the environment section: the structured manifest.json if
     present, else the legacy text manifest (archived runs)."""
-    structured = ramp_dir / "manifest.json"
-    legacy = ramp_dir / "manifest.txt"
-    if structured.exists():
-        return structured.read_text().strip()
-    if legacy.exists():
-        return legacy.read_text().strip()
+    for name in ("manifest.json", "manifest.txt"):
+        path = ramp_dir / name
+        if path.exists():
+            return path.read_text().strip()
     return "<no manifest retained>"
 
 
 def run_commit(ramp_dir):
-    manifest = ramp_dir / "manifest.json"
-    if manifest.exists():
-        return str(read_json(manifest).get("commit", "<unknown>"))
+    manifest = _maybe_json(ramp_dir / "manifest.json")
+    if isinstance(manifest, dict) and manifest.get("commit"):
+        return str(manifest["commit"])
     legacy = ramp_dir / "manifest.txt"
     if legacy.exists():
         match = re.search(r"branch: \S+ @ (\w+)", legacy.read_text())
@@ -119,7 +148,7 @@ def run_commit(ramp_dir):
     return "<unknown>"
 
 
-def generate(ramp_dir, output):
+def generate(ramp_dir, output, notes=None):
     # Fresh verdict, bound to the exact artifacts rendered below.
     checks = validator.validate(ramp_dir)
     failed_checks = [c for c in checks if not c["ok"]]
@@ -129,25 +158,17 @@ def generate(ramp_dir, output):
     )
 
     spec = validator.load_spec()
+    ledger = _maybe_json(ramp_dir / "ledger.json")
     stages = {s: stage_summary(ramp_dir, s) for s in (1, 2, 3, 4)}
-    s5 = bench_last(ramp_dir / "stage5/bench_32s.jsonl")
-    s5_wire = read_json(ramp_dir / "stage5/wire_probe.json")
-    s5_configs = rank_configs(ramp_dir / "stage5")
-    s5_artifacts = artifact_matrix(ramp_dir / "stage5")
-    pre = read_json(ramp_dir / "stage5/counters_pre.json")
-    post = read_json(ramp_dir / "stage5/counters_post.json")
+    stage5_dir = ramp_dir / "stage5"
+    s5 = _maybe_bench(stage5_dir / "bench_32s.jsonl")
+    s5_wire = _maybe_json(stage5_dir / "wire_probe.json")
+    pre = _maybe_json(stage5_dir / "counters_pre.json")
+    post = _maybe_json(stage5_dir / "counters_post.json")
     prefill_keys = validator.PREFILL_KEYS
-    prompt_delta = {
-        w: post[w]["prompt_tokens"] - pre[w]["prompt_tokens"] for w in prefill_keys
-    }
-    cached_delta = {
-        w: post[w]["cached_tokens"] - pre[w]["cached_tokens"] for w in prefill_keys
-    }
-    pool_prompt = sum(prompt_delta.values())
-    pool_cached = sum(cached_delta.values())
-    lc = s5["live_conformance"]
-    fixed_meta = read_json(ramp_dir / validator.DATASET_NAME)["metadata"]
-    planned = fixed_meta["planned_stats"]["dimensions"]
+    counters_ok = all(
+        isinstance(s, dict) and all(k in s for k in prefill_keys) for s in (pre, post)
+    )
     generated_at = subprocess.run(
         ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=ramp_dir
     ).stdout.strip()
@@ -172,14 +193,14 @@ def generate(ramp_dir, output):
     w = lines.append
     w("# Recovery-Agent Benchmark Validation Report (regenerated from retained artifacts)")
     w("")
-    w(f"Ramp executed at commit {ran_at[:12]} (manifest); report regenerated at commit {generated_at[:12]} by `benchmark/recovery_agent_pd/make_ramp_report.py`, which re-runs the fail-closed validator against the exact artifacts rendered here at generation time. Every number below is read from a file inside the evidence directory — self-contained, including the fixed 32-session population.")
+    w(f"Ramp executed at commit {ran_at[:12]} (manifest); report regenerated at commit {generated_at[:12]} by `benchmark/recovery_agent_pd/make_ramp_report.py`, which re-runs the fail-closed validator against the exact artifacts rendered here at generation time. Every number below is read from a file inside the evidence directory.")
     w("")
     w("## Evidence verdict (validator re-run at report generation)")
     w("")
     w(f"`benchmark/recovery_agent_pd/validate_ramp_evidence.py` fresh result: **{len(checks) - len(failed_checks)}/{len(checks)} checks pass** (`all_ok: {validated}`).")
     w("")
     if not validated:
-        w("**This archive is NOT a validated controlled ramp.** The validator (written after this run as review remediation; it now gates every stage of any future run) fails closed on:")
+        w("**This evidence set is NOT a validated controlled ramp.** The failing checks, grouped:")
         w("")
         failure_kinds = {}
         for c in failed_checks:
@@ -188,11 +209,18 @@ def generate(ramp_dir, output):
         for kind, items in sorted(failure_kinds.items()):
             w(f"- **{kind}** ({len(items)}×): e.g. `{items[0]}`")
         w("")
-        w("**Directly proven facts** (from artifacts that DO exist and validate): every retained per-session benchmark completed with usage-complete, error-free per-round records matching the fixed population's planned round counts; per-session affinity records exist for stages 1–4; wire probes passed at every stage; stage 5 completed 32/32 conversations and the retained prefill-pool counters moved consistently with it.")
+        w("Stage labels below are the INTENDED configurations; a stage's configuration is verified only where its per-rank checks above pass. Benchmark numbers shown are directly measured from the retained artifacts, but their attribution to a specific verified configuration holds only for stages with passing configuration checks.")
         w("")
-        w("**NOT proven** (missing evidence — attribution unverified): which exact server configuration served each stage on the ranks whose args/logs are missing; that stage 1 was a dense baseline (its retained args resolve to DSA, same as stage 2 — the recipe now pins `--attention-backend triton` precisely because of this); the full runtime identity (model/TP/roles/transfer/packages/script) the current validator requires; stage-5 worker configuration and per-key routing attribution. The stage labels in the table below are therefore INTENDED configurations, not verified ones.")
+    if isinstance(ledger, dict) and ledger.get("stages"):
+        w("## Run ledger")
         w("")
-        w("A full audit-grade rerun under the fail-closed driver was explicitly descoped by user decision (time constraint); `ramp_driver.py` + this validator are in place for the next run, which cannot print RAMP COMPLETE unless every check above passes.")
+        w(f"Run `{ledger.get('run_id', '<unknown>')}` at commit {str(ledger.get('commit', ''))[:12]}; **last passing stage: {ledger.get('last_passing_stage')}**.")
+        w("")
+        w("| stage | status | reason |")
+        w("|---|---|---|")
+        for stage_id in sorted(ledger["stages"], key=int):
+            entry = ledger["stages"][stage_id]
+            w(f"| {stage_id} | {entry.get('status')} | {entry.get('reason') or '—'} |")
         w("")
     w("## Environment (retained manifest)")
     w("```")
@@ -202,7 +230,7 @@ def generate(ramp_dir, output):
     if validated:
         w("## Controlled 2P2D ramp (stage1..5, evidence-validated)")
     else:
-        w("## Attempted staged 2P2D run (stage1..5 — stage attribution unverified, see verdict above)")
+        w("## Attempted staged 2P2D run (stage1..5 — see verdict above)")
     w("")
     w(f"One fixed prebuilt 32-session `agent-short` population (sha256 {spec['dataset_sha256'][:16]}…, seed {spec['dataset']['seed']}, context-authoritative, retained in the evidence dir); stages 1–4 replay its first 8 sessions as sequential single-session runs (per-session affinity attribution from worker counter deltas); stage 5 runs all 32 concurrently on the final configuration after a worker cache flush.")
     w("")
@@ -211,60 +239,71 @@ def generate(ramp_dir, output):
     w("|---|---|---|---|---|---|---|---|---|---|")
     for s in (1, 2, 3, 4):
         st = stages[s]
+        if st is None:
+            reason = stage_failure_reason(ramp_dir, ledger, s)
+            w(f"| {s} ({stage_names[s]}) | **FAILED/MISSING**: {reason} | — | — | — | — | — | — | — | — |")
+            continue
         args_ok, logs_ok = st["artifacts"]
-        w(f"| {s} ({stage_names[s]}) | see per-rank matrix | {st['conversations']} | {st['rounds']} | {st['tokens']:,} | {st['complete']} | {st['affinity']['all_sticky']} | {st['affinity']['spread_ok']} | {st['wire']['reasoning_absent_from_round2']} | {args_ok}/4 args, {logs_ok}/4 logs |")
-    w(f"| 5 (final config, 32 sessions, conc. 8) | see per-rank matrix | {s5['completed_conversations']}/{s5['total_conversations']} | {s5['completed']} | {s5['total_input_tokens']:,} | {s5['input_metrics_complete']} | n/a (concurrent) | n/a | {s5_wire['reasoning_absent_from_round2']} | {s5_artifacts[0]}/4 args, {s5_artifacts[1]}/4 logs |")
+        w(f"| {s} ({stage_names[s]}) | see per-rank matrix | {st['conversations']} | {st['rounds']} | {st['tokens']:,} | {st['complete']} | {st['affinity'].get('all_sticky')} | {st['affinity'].get('spread_ok')} | {st['wire'].get('reasoning_absent_from_round2')} | {args_ok}/4 args, {logs_ok}/4 logs |")
+    if isinstance(s5, dict) and isinstance(s5_wire, dict):
+        s5_args, s5_logs = artifact_matrix(stage5_dir)
+        w(f"| 5 (final config, 32 sessions, conc. 8) | see per-rank matrix | {s5.get('completed_conversations')}/{s5.get('total_conversations')} | {s5.get('completed')} | {s5.get('total_input_tokens', 0):,} | {s5.get('input_metrics_complete')} | n/a (concurrent) | n/a | {s5_wire.get('reasoning_absent_from_round2')} | {s5_args}/4 args, {s5_logs}/4 logs |")
+    else:
+        w(f"| 5 (final config) | **FAILED/MISSING**: {stage_failure_reason(ramp_dir, ledger, 5)} | — | — | — | — | — | — | — | — |")
     w("")
     w("Per-rank resolved configuration (from each rank's retained `server_args`; `MISSING` = no resolved args retained for that rank at that stage, so its configuration is unattributable):")
     w("")
-    for s in (1, 2, 3, 4):
+    for s in (1, 2, 3, 4, 5):
+        stage_dir = ramp_dir / f"stage{s}"
         w(f"- stage {s}:")
-        for rank, config in stages[s]["configs"].items():
+        if not stage_dir.is_dir():
+            w("  - no evidence directory")
+            continue
+        for rank, config in rank_configs(stage_dir).items():
             w(f"  - {rank}: `{config}`")
-    w("- stage 5:")
-    for rank, config in s5_configs.items():
-        w(f"  - {rank}: `{config}`")
     w("")
-    if validated:
-        w("## Stage-5 headline (stage5/bench_32s.jsonl + counters)")
-    else:
-        w("## Final 32-session benchmark — direct evidence (stage5/bench_32s.jsonl + counters; configuration attribution unverified)")
-    w("")
-    w(f"- Conversations: **{s5['completed_conversations']}/{s5['total_conversations']}** ({s5['completed']} rounds), `input_metrics_complete: {s5['input_metrics_complete']}`")
-    w(f"- Total input tokens (server-reported): {s5['total_input_tokens']:,}")
-    w(f"- Turn throughput {s5['turn_throughput_turns_per_s']:.2f} turns/s; session throughput {s5['session_throughput_sessions_per_s']:.3f} sessions/s; mean TTFT {s5['mean_ttft_ms']:.0f} ms; mean E2E {s5['mean_e2e_latency_ms']:.0f} ms")
-    w(f"- **Prefill-pool radix hit rate {100*pool_cached/pool_prompt:.1f}%** ({pool_prompt:,.0f} prompt tokens, {pool_cached:,.0f} device-cached; " + "; ".join(f"{k} {100*cached_delta[k]/prompt_delta[k]:.1f}%" for k in prompt_delta) + ") — from retained pre/post worker counters")
-    w(f"- Wire probe: separate reasoning present in round 1 and absent from round 2's assistant history ({s5_wire['round2_assistant_equals_content_only']=})")
-    if not validated:
-        w("- These numbers are directly measured; which exact worker configuration produced them is unverified for the ranks/stage-5 artifacts listed as MISSING above.")
-    w("")
-    w("## Live conformance (server-defined shape, stage5 JSON `live_conformance`)")
-    w("")
-    w(f"available={lc['available']}, sessions_observed={lc['sessions_observed']}, all_sessions_usable={lc['all_sessions_usable']}, gates_within_tolerance={lc['gates_within_tolerance']}, conformant_population={lc['conformant_population']} (reference population 2048 — a 32-session run cannot and does not claim calibration conformance).")
-    w("")
-    w("| dimension | target | planned (this slice) | live | live dev |")
-    w("|---|---|---|---|---|")
-    for k, e in lc["dimensions"].items():
-        w(f"| {k} | {e['target']:,.1f} | {planned[k]['realized']:,.1f} | {e['realized']:,.1f} | {e['deviation_frac']:+.3f} |")
-    w("")
-    w("Interpretation: turns match the planned slice exactly (the harness replays the planned structure faithfully). The live context/ISL sit ~8% under planned, which is CONSISTENT WITH the reasoning-exclusion replay contract (replayed history carries assistant `content` only while the plan charges the full per-turn output budget); the retained wire probes establish that contract per-probe, but no controlled decomposition isolating replay length from actual assistant content length, sizing deficits, or template effects was retained, so the mechanism is supported, not proven exhaustive. The slice-vs-target gaps are 32-session sampling deviation, reported as non-conformant rather than claimed as success.")
-    w("")
-    w("## Observational comparison to the reference document (not gates)")
-    w("")
-    w(f"- Reference: >=94% of input tokens are radix-cache hits under session-sticky routing. This run: **{100*pool_cached/pool_prompt:.1f}%** prefill-pool hits from retained counters (a warm-head, 32-session run over TCP transport with a fresh flush; the earlier transcript-only 550-round observation was 95.3%).")
-    w("- Decode-bound steady state and the HiCache write_back cold-start delta were not measured (no load sweep / controlled cold A/B) — out of scope per plan.")
-    w("")
-    w("## Deviations from the reference deployment (see benchmark/recovery_agent_pd/README.md for the full table)")
-    w("")
-    w("- Plain TP4 per worker (no DP-attention/EP); MoE runner at the v0.5.16 default; `--enable-symm-mem` omitted (NCCL symmetric-memory registration produced one capture wedge and one registration crash in this pod environment — startup logs retained); UCX pinned to `tcp,cuda_copy,cuda_ipc` on `eth0` (pod exposes one uverbs device — documented as a deviation in the README environment table); HiCache 32 GB/rank vs reference 160; 2 decode workers per the user-specified 2P2D vs the reference's 4.")
-    w("- flashinfer python/cubin/jit-cache aligned at 0.6.14 (base image ships 0.6.12 prebuilts; mismatch crashes `trtllm_*` kernels).")
-    w("- The symm-mem removal landed mid-ramp (commit c5136fb6e1) after decode failures at stage 3: stages 1-2 decode workers ran with `--enable-symm-mem` still present, stages 3-5 without. Where a rank's resolved args are retained they record its exact configuration; where they are MISSING (see matrix) the configuration is unattributable.")
-    w("")
-    w("## Rung 1-3 results (unchanged artifacts)")
-    w("")
-    w("- Offline CPU tests: focused + full bench_fn pass (`HF_HUB_OFFLINE=1`); 2 pre-existing environmental failures reproduce on base 50c118704a (`base_commit_env_failures.txt`).")
-    w("- Small-model 2P2D: 8/8 sticky + stripped-key negative control (`affinity_check_output.txt`, `affinity_control_output.txt`); 16/16 concurrent sessions (`small_pd/bench_16sessions.jsonl`).")
-    w("- GLM TP4 unified shakeout: verified stage 8/8 conv, 90.7% client-visible cache hit, accept 3.33 (`glm_tp4/bench_verified_8s.jsonl`); doc-full stage 8/8, 56 rounds, 89.9%, accept 2.95 (`glm_tp4/bench_docfull_8s.jsonl`). (Client-visible `cached_tokens` is meaningful in unified mode; in PD mode it reflects the decode worker and the prefill-side counters above are authoritative.)")
+    if isinstance(s5, dict) and counters_ok:
+        prompt_delta = {
+            k: post[k]["prompt_tokens"] - pre[k]["prompt_tokens"] for k in prefill_keys
+        }
+        cached_delta = {
+            k: post[k]["cached_tokens"] - pre[k]["cached_tokens"] for k in prefill_keys
+        }
+        pool_prompt = sum(prompt_delta.values())
+        pool_cached = sum(cached_delta.values())
+        if validated:
+            w("## Stage-5 headline (stage5/bench_32s.jsonl + counters)")
+        else:
+            w("## Final 32-session benchmark — direct evidence (stage5/bench_32s.jsonl + counters; configuration attribution unverified)")
+        w("")
+        w(f"- Conversations: **{s5['completed_conversations']}/{s5['total_conversations']}** ({s5['completed']} rounds), `input_metrics_complete: {s5['input_metrics_complete']}`")
+        w(f"- Total input tokens (server-reported): {s5['total_input_tokens']:,}")
+        w(f"- Turn throughput {s5['turn_throughput_turns_per_s']:.2f} turns/s; session throughput {s5['session_throughput_sessions_per_s']:.3f} sessions/s; mean TTFT {s5['mean_ttft_ms']:.0f} ms; mean E2E {s5['mean_e2e_latency_ms']:.0f} ms")
+        if pool_prompt > 0:
+            w(f"- **Prefill-pool radix hit rate {100*pool_cached/pool_prompt:.1f}%** ({pool_prompt:,.0f} prompt tokens, {pool_cached:,.0f} device-cached; " + "; ".join(f"{k} {100*cached_delta[k]/prompt_delta[k]:.1f}%" for k in prompt_delta if prompt_delta[k] > 0) + ") — from retained pre/post worker counters")
+        if isinstance(s5_wire, dict):
+            w(f"- Wire probe: separate reasoning present in round 1 and absent from round 2's assistant history ({s5_wire.get('round2_assistant_equals_content_only')=})")
+        w("")
+    lc = s5.get("live_conformance") if isinstance(s5, dict) else None
+    if isinstance(lc, dict):
+        w("## Live conformance (server-defined shape, stage5 JSON `live_conformance`)")
+        w("")
+        w(f"available={lc.get('available')}, sessions_observed={lc.get('sessions_observed')}, all_sessions_usable={lc.get('all_sessions_usable')}, gates_within_tolerance={lc.get('gates_within_tolerance')}, conformant_population={lc.get('conformant_population')} (reference population 2048 — a 32-session run cannot and does not claim calibration conformance).")
+        w("")
+        dimensions = lc.get("dimensions") or {}
+        if dimensions:
+            w("| dimension | target | live | live dev |")
+            w("|---|---|---|---|")
+            for k, e in dimensions.items():
+                w(f"| {k} | {e['target']:,.1f} | {e['realized']:,.1f} | {e['deviation_frac']:+.3f} |")
+            w("")
+            w("Interpretation: live context/ISL deviations below planned values are CONSISTENT WITH the reasoning-exclusion replay contract (replayed history carries assistant `content` only while the plan charges the full per-turn output budget); the retained wire probes establish that contract per-probe, but no controlled decomposition isolating replay length from actual assistant content length, sizing deficits, or template effects is retained, so the mechanism is supported, not proven exhaustive. Small-population deviations from the calibration targets are sampling error, reported as non-conformant rather than claimed as success.")
+            w("")
+    if notes:
+        w("## Run-specific notes (appended verbatim from --notes)")
+        w("")
+        w(Path(notes).read_text().strip())
+        w("")
 
     Path(output).write_text("\n".join(lines) + "\n")
     print(f"wrote {output} ({len(lines)} lines; validated={validated})")
@@ -274,8 +313,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ramp-dir", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--notes",
+        default=None,
+        help="Optional Markdown file appended verbatim (run-specific "
+        "narrative lives there, never in this generator)",
+    )
     args = parser.parse_args()
-    generate(Path(args.ramp_dir), args.output)
+    generate(Path(args.ramp_dir), args.output, args.notes)
 
 
 if __name__ == "__main__":

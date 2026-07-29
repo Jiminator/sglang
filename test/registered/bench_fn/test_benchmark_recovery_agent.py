@@ -870,6 +870,8 @@ class TestBenchmarkLevelBehavior(CustomTestCase):
             warmup_requests=0,
             flush_cache=False,
             disable_tqdm=True,
+            dataset_path="",
+            dataset_offset=0,
             seed=42,
             backend="sglang-oai-chat",
             tag=None,
@@ -978,6 +980,15 @@ class TestBenchmarkLevelBehavior(CustomTestCase):
         )
         self.assertIn("live_conformance", result)
         self.assertIn("NOTE: recovery-agent replays assistant `content` only", printed)
+        # The persisted result is bound to the exact population slice it
+        # consumed, so an evidence file can be audited against its dataset.
+        binding = result["dataset_binding"]
+        self.assertEqual(binding["dataset_name"], "recovery-agent")
+        self.assertEqual(binding["dataset_offset"], 0)
+        self.assertEqual(binding["num_sessions"], 2)
+        self.assertEqual(binding["profile"], "agent-short")
+        self.assertEqual(binding["authority"], "context")
+        self.assertEqual(binding["routing_keys"], ["session-0", "session-1"])
 
     def test_inline_thinking_in_replay_warns_once(self):
         async def leaky_request(request_func_input, pbar=None):

@@ -1926,6 +1926,36 @@ async def benchmark(
     resp = requests.get(base_url + "/server_info", headers=get_auth_headers())
     server_info = resp.json() if resp.status_code == 200 else None
 
+    # Bind the persisted result to the exact population slice it consumed, so
+    # a result file can be audited against the dataset it claims to represent
+    # (sha, slice, shape identity, and each conversation's routing key).
+    dataset_binding = None
+    if is_multi_turn:
+        import hashlib
+
+        dataset_sha = None
+        if args.dataset_path and os.path.isfile(args.dataset_path):
+            dataset_sha = hashlib.sha256(
+                Path(args.dataset_path).read_bytes()
+            ).hexdigest()
+        dataset_binding = {
+            "dataset_name": args.dataset_name,
+            "dataset_path_sha256": dataset_sha,
+            "dataset_offset": args.dataset_offset,
+            "num_sessions": len(input_requests),
+            "profile": (
+                args.recovery_profile
+                if args.dataset_name == "recovery-agent"
+                else None
+            ),
+            "authority": (
+                args.recovery_authority
+                if args.dataset_name == "recovery-agent"
+                else None
+            ),
+            "routing_keys": [row.routing_key for row in input_requests],
+        }
+
     # The immutable final-context definition is the server-reported prompt
     # length; judge the live workload shape from usage, never from plans.
     live_conformance = None
@@ -2003,6 +2033,7 @@ async def benchmark(
                 o.server_prompt_len is not None for o in outputs if o.success
             ),
             "live_conformance": live_conformance,
+            "dataset_binding": dataset_binding,
             "total_input_tokens": metrics.total_input,
             "total_input_text_tokens": metrics.total_input_text,
             "total_input_vision_tokens": metrics.total_input_vision,

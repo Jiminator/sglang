@@ -96,31 +96,39 @@ def _server_args_line(stage, role, rank):
     return f"[ts] rank{rank} server_args=ServerArgs(" + ", ".join(fields) + ")"
 
 
-def _counters(base):
-    return {
+def _counters_pair(per_worker_rounds):
+    """Aggregate snapshots coherent with the per-session affinity records:
+    each worker's request delta equals the sum of its per-session deltas."""
+    pre = {
+        key: {"chat_requests": 10, "prompt_tokens": 1000, "cached_tokens": 100}
+        for key in validator.WORKER_KEYS
+    }
+    post = {
         key: {
-            "chat_requests": base,
-            "prompt_tokens": base * 100,
-            "cached_tokens": base * 10,
+            "chat_requests": 10 + per_worker_rounds[key],
+            "prompt_tokens": 1000 + 100 * per_worker_rounds[key],
+            "cached_tokens": 100 + 10 * per_worker_rounds[key],
         }
         for key in validator.WORKER_KEYS
     }
+    return pre, post
 
 
-def _bench(sessions, rounds_per_session):
+def _bench(sessions, rounds_per_session, dataset_sha, offset):
     total = sessions * rounds_per_session
     session_indices, round_indices = [], []
     for s in range(sessions):
         for r in range(rounds_per_session):
             session_indices.append(s)
             round_indices.append(r)
+    server_prompt_lens = [100 + i for i in range(total)]
     return {
         "completed_conversations": sessions,
         "total_conversations": sessions,
         "input_metrics_complete": True,
         "completed": total,
+        "total_input_tokens": sum(server_prompt_lens),
         # Metric fields consumed by the report generator (not the validator).
-        "total_input_tokens": 100 * total,
         "turn_throughput_turns_per_s": 1.0,
         "session_throughput_sessions_per_s": 0.1,
         "mean_ttft_ms": 10.0,
@@ -134,8 +142,8 @@ def _bench(sessions, rounds_per_session):
             "dimensions": {},
         },
         "errors": ["" for _ in range(total)],
-        "server_prompt_lens": [100 + i for i in range(total)],
-        "effective_prompt_lens": [100 + i for i in range(total)],
+        "server_prompt_lens": server_prompt_lens,
+        "effective_prompt_lens": list(server_prompt_lens),
         "session_indices": session_indices,
         "round_indices": round_indices,
         "conversation_results": [
@@ -147,14 +155,37 @@ def _bench(sessions, rounds_per_session):
             }
             for s in range(sessions)
         ],
+        "dataset_binding": {
+            "dataset_name": "recovery-agent",
+            "dataset_path_sha256": dataset_sha,
+            "dataset_offset": offset,
+            "num_sessions": sessions,
+            "profile": "agent-short",
+            "authority": "context",
+            "routing_keys": [
+                validator.routing_key(SEED, offset + i) for i in range(sessions)
+            ],
+        },
+    }
+
+
+def _clip(text):
+    return {
+        "sha256": hashlib.sha256(text.encode()).hexdigest(),
+        "chars": len(text),
+        "head": text[:120],
     }
 
 
 def _wire():
     return {
+        "round1_reasoning_present": True,
+        "round1_reasoning": _clip("let me think about this carefully"),
+        "round1_content_replay": _clip("the answer is 391"),
+        "round2_assistant_content": _clip("the answer is 391"),
         "reasoning_absent_from_round2": True,
         "round2_assistant_equals_content_only": True,
-        "rounds_succeeded": True,
+        "rounds_succeeded": [True, True],
     }
 
 
@@ -252,21 +283,34 @@ def build_valid_evidence(ramp_dir):
             (stage_dir / f"startup_rank{rank}_{role}.log").write_text(
                 f"stage {stage} rank {rank} startup\n{args_line}\nready\n"
             )
-        rounds = ROUNDS_PER_SESSION * (8 if stage < 5 else NUM_SESSIONS)
-        (stage_dir / "counters_pre.json").write_text(json.dumps(_counters(10)))
-        (stage_dir / "counters_post.json").write_text(
-            json.dumps(_counters(10 + rounds))
-        )
+        if stage < 5:
+            # 8 sessions alternate P0/P1 and D2/D3, so each worker serves
+            # 4 sessions x ROUNDS_PER_SESSION requests.
+            per_worker = {key: 4 * ROUNDS_PER_SESSION for key in validator.WORKER_KEYS}
+        else:
+            per_worker = {
+                key: NUM_SESSIONS * ROUNDS_PER_SESSION // 2
+                for key in validator.WORKER_KEYS
+            }
+        pre, post = _counters_pair(per_worker)
+        (stage_dir / "counters_pre.json").write_text(json.dumps(pre))
+        (stage_dir / "counters_post.json").write_text(json.dumps(post))
         (stage_dir / "wire_probe.json").write_text(json.dumps(_wire()))
         if stage < 5:
             (stage_dir / "affinity.json").write_text(json.dumps(_affinity()))
             for session in range(8):
                 (stage_dir / f"bench_s{session}.jsonl").write_text(
-                    json.dumps(_bench(1, ROUNDS_PER_SESSION)) + "\n"
+                    json.dumps(
+                        _bench(1, ROUNDS_PER_SESSION, spec["dataset_sha256"], session)
+                    )
+                    + "\n"
                 )
         else:
             (stage_dir / "bench_32s.jsonl").write_text(
-                json.dumps(_bench(NUM_SESSIONS, ROUNDS_PER_SESSION)) + "\n"
+                json.dumps(
+                    _bench(NUM_SESSIONS, ROUNDS_PER_SESSION, spec["dataset_sha256"], 0)
+                )
+                + "\n"
             )
             (stage_dir / "attribution.json").write_text(json.dumps(_attribution()))
     return spec, tracked_script
@@ -505,6 +549,123 @@ class TestRampEvidenceValidator(CustomTestCase):
         )
         self.assertTrue(any("stage5: bench_32s" in c for c in self._failed()))
 
+    def test_failed_wire_rounds_fail(self):
+        """Round-6 demonstrated false pass: rounds_succeeded=[False, False]
+        is a truthy list and passed the old summary check."""
+        self._edit_json(
+            "stage2/wire_probe.json",
+            lambda w: w.update(rounds_succeeded=[False, False]),
+        )
+        self.assertTrue(
+            any("stage2" in c and "wire probe" in c for c in self._failed())
+        )
+
+    def test_forged_wire_equality_bit_fails(self):
+        """The replay-equality bit must agree with the retained hashes."""
+
+        def forge(payload):
+            payload["round2_assistant_content"] = _clip("something else entirely")
+            # stored bits left forged True
+
+        self._edit_json("stage3/wire_probe.json", forge)
+        self.assertTrue(
+            any("stage3" in c and "wire probe" in c for c in self._failed())
+        )
+
+    def test_decode_cached_delta_exceeding_prompt_delta_fails(self):
+        """Round-6 demonstrated false pass: the bound only covered prefill
+        workers, so a decode worker's cached delta could exceed its prompt
+        delta."""
+        self._edit_json(
+            "stage2/counters_post.json",
+            lambda c: c["D2"].update(cached_tokens=10 ** 9),
+        )
+        self.assertTrue(
+            any("cached-token deltas bounded" in c for c in self._failed())
+        )
+
+    def test_aggregate_vs_per_session_delta_mismatch_fails(self):
+        """Round-6 demonstrated false pass: aggregate snapshots showing twice
+        the per-session traffic passed because they were never reconciled."""
+
+        def inflate(counters):
+            for value in counters.values():
+                value["chat_requests"] += 12
+
+        self._edit_json("stage1/counters_post.json", inflate)
+        self.assertTrue(any("per-session sums" in c for c in self._failed()))
+
+    def test_duplicate_conversation_session_indices_fail(self):
+        """Round-6 demonstrated false pass: relabeling every conversation
+        result as session 0 passed the sorted-list check."""
+        self._edit_json(
+            "stage5/bench_32s.jsonl",
+            lambda b: [c.update(session_index=0) for c in b["conversation_results"]],
+        )
+        self.assertTrue(any("uniquely cover" in c for c in self._failed()))
+
+    def test_negative_total_input_tokens_fails(self):
+        """Round-6 demonstrated false pass: the report headline total was
+        never checked against the per-round prompt lengths."""
+        self._edit_json(
+            "stage5/bench_32s.jsonl", lambda b: b.update(total_input_tokens=-999999)
+        )
+        self.assertTrue(
+            any("aggregate input tokens" in c for c in self._failed())
+        )
+
+    def test_missing_dataset_binding_fails(self):
+        self._edit_json(
+            "stage1/bench_s0.jsonl", lambda b: b.pop("dataset_binding")
+        )
+        self.assertTrue(
+            any(
+                "stage1: bench_s0" in c and "bound to the retained population" in c
+                for c in self._failed()
+            )
+        )
+
+    def test_wrong_binding_routing_key_fails(self):
+        self._edit_json(
+            "stage2/bench_s3.jsonl",
+            lambda b: b["dataset_binding"]["routing_keys"].__setitem__(
+                0, "session-0000000000000000"
+            ),
+        )
+        self.assertTrue(
+            any(
+                "bench_s3" in c and "bound to the retained population" in c
+                for c in self._failed()
+            )
+        )
+
+    def test_wrong_binding_offset_fails(self):
+        self._edit_json(
+            "stage3/bench_s2.jsonl",
+            lambda b: b["dataset_binding"].update(dataset_offset=7),
+        )
+        self.assertTrue(
+            any(
+                "bench_s2" in c and "bound to the retained population" in c
+                for c in self._failed()
+            )
+        )
+
+    def test_malformed_nested_types_record_failures_not_crashes(self):
+        (self.ramp_dir / "stage4/wire_probe.json").write_text(
+            json.dumps({"round1_reasoning": 5, "rounds_succeeded": {"a": 1}})
+        )
+        self._edit_json(
+            "stage4/bench_s0.jsonl",
+            lambda b: b.update(conversation_results=[17, None, "x"]),
+        )
+        self._edit_json(
+            "stage4/affinity.json",
+            lambda a: a["sessions"].__setitem__(2, {"session": 2, "delta": "junk"}),
+        )
+        failed = self._failed()  # must not raise
+        self.assertTrue(any("stage4" in c for c in failed), failed)
+
     # -- affinity (derived, not trusted) -----------------------------------
 
     def test_affinity_without_raw_deltas_fails(self):
@@ -679,33 +840,87 @@ class TestRampEvidenceValidator(CustomTestCase):
         self.assertEqual(failed, ["manifest: stamped with the exact running commit"])
 
 
-class TestReportBoundToFreshVerdict(CustomTestCase):
-    """The report generator must re-validate the artifacts it renders: a
-    stale or copied passing evidence_validation.json must not produce the
-    passed-ramp presentation (round-5 demonstrated staleness hole)."""
+def _load_report_module():
+    spec_loader = importlib.util.spec_from_file_location(
+        "make_ramp_report", _TRACKED_DIR / "make_ramp_report.py"
+    )
+    report_module = importlib.util.module_from_spec(spec_loader)
+    spec_loader.loader.exec_module(report_module)
+    return report_module
+
+
+class TestReportGenerator(CustomTestCase):
+    """The report generator must re-validate the artifacts it renders (a
+    stale passing verdict JSON must not survive — round-5 demonstrated
+    staleness hole) and must be TOTAL over failed/missing evidence (a
+    missing stage once crashed generation with FileNotFoundError — round-6
+    demonstrated failure path)."""
+
+    def setUp(self):
+        self.ramp_dir = Path(tempfile.mkdtemp(prefix="ramp_report_"))
+        self.addCleanup(shutil.rmtree, self.ramp_dir, ignore_errors=True)
+        build_valid_evidence(self.ramp_dir)
+        self.report = _load_report_module()
+        self.output = self.ramp_dir / "report.md"
 
     def test_stale_passing_json_does_not_survive_generation(self):
-        ramp_dir = Path(tempfile.mkdtemp(prefix="ramp_report_"))
-        self.addCleanup(shutil.rmtree, ramp_dir, ignore_errors=True)
-        build_valid_evidence(ramp_dir)
         # Forge a stale "all_ok" verdict, then break the evidence.
-        (ramp_dir / "evidence_validation.json").write_text(
+        (self.ramp_dir / "evidence_validation.json").write_text(
             json.dumps({"checks": [], "all_ok": True})
         )
-        (ramp_dir / "stage1/server_args_rank0_prefill.txt").write_text("MISSING")
-        spec_loader = importlib.util.spec_from_file_location(
-            "make_ramp_report", _TRACKED_DIR / "make_ramp_report.py"
-        )
-        report_module = importlib.util.module_from_spec(spec_loader)
-        spec_loader.loader.exec_module(report_module)
-        output = ramp_dir / "report.md"
-        report_module.generate(ramp_dir, output)
-        text = output.read_text()
+        (self.ramp_dir / "stage1/server_args_rank0_prefill.txt").write_text("MISSING")
+        self.report.generate(self.ramp_dir, self.output)
+        text = self.output.read_text()
         self.assertIn("NOT a validated controlled ramp", text)
         self.assertNotIn("evidence-validated", text)
         # The stored JSON was refreshed by generation, not trusted.
-        refreshed = json.loads((ramp_dir / "evidence_validation.json").read_text())
+        refreshed = json.loads(
+            (self.ramp_dir / "evidence_validation.json").read_text()
+        )
         self.assertFalse(refreshed["all_ok"])
+
+    def test_missing_stage_renders_failed_row_with_last_passing_stage(self):
+        """Round-6 demonstrated failure: removing stage4 crashed generation
+        instead of reporting the failed stage and last passing stage."""
+        shutil.rmtree(self.ramp_dir / "stage4")
+        (self.ramp_dir / "ledger.json").write_text(
+            json.dumps(
+                {
+                    "run_id": "test-run",
+                    "commit": COMMIT,
+                    "spec_sha256": "0" * 64,
+                    "stages": {
+                        "1": {"status": "passed", "reason": None},
+                        "2": {"status": "passed", "reason": None},
+                        "3": {"status": "passed", "reason": None},
+                        "4": {"status": "failed", "reason": "workers not healthy"},
+                        "5": {"status": "failed", "reason": "prior stage failed"},
+                    },
+                    "last_passing_stage": 3,
+                }
+            )
+        )
+        self.report.generate(self.ramp_dir, self.output)  # must not raise
+        text = self.output.read_text()
+        self.assertIn("last passing stage: 3", text)
+        self.assertIn("FAILED/MISSING", text)
+        self.assertIn("workers not healthy", text)
+        self.assertIn("NOT a validated controlled ramp", text)
+
+    def test_missing_final_stage_renders_without_metrics(self):
+        shutil.rmtree(self.ramp_dir / "stage5")
+        self.report.generate(self.ramp_dir, self.output)  # must not raise
+        text = self.output.read_text()
+        self.assertNotIn("Prefill-pool radix hit rate", text)
+        self.assertIn("FAILED/MISSING", text)
+
+    def test_notes_are_appended_verbatim(self):
+        notes = self.ramp_dir / "notes.md"
+        notes.write_text("archive-specific narrative sentinel")
+        self.report.generate(self.ramp_dir, self.output, notes=notes)
+        self.assertIn(
+            "archive-specific narrative sentinel", self.output.read_text()
+        )
 
 
 if __name__ == "__main__":
