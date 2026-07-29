@@ -18,6 +18,11 @@ Layout:
   decode role, staged feature levels) for the 2 prefill + 2 decode, 16-GPU
   deployment.
 - `launch_router.sh` — the PD router with consistent hashing on both pools.
+- `validate_ramp_evidence.py` — fail-closed evidence validator for staged
+  2P2D validation ramps (per-stage worker artifacts, exact positive/negative
+  configuration markers, counter/bench/attribution consistency, dataset and
+  commit identity); a ramp driver runs it after every stage and as the final
+  gate.
 
 ## Flag parity table (reference config → sglang v0.5.16)
 
@@ -90,7 +95,7 @@ Every flag of the reference deployment appears exactly once, either carried
 | Reference setting | This deployment | Status |
 |---|---|---|
 | `SGLANG_DISAGGREGATION_NIXL_BACKEND=UCX` | same | carried |
-| `UCX_TLS=cuda_ipc,cuda_copy,rc` | same | carried |
+| `UCX_TLS=cuda_ipc,cuda_copy,rc` | script default `same`; validation runs override to `tcp,cuda_copy,cuda_ipc` | deviation in practice: the validation pods expose no usable RC device, so the executed ramps pinned TCP transports (`UCX_NET_DEVICES=eth0`); hosts with working HCAs can keep the carried default |
 | `UCX_NET_DEVICES=mlx5_0:1,...` | discovered per host (`ibv_devices`) | deviation: HCA names are fleet-specific; forcing absent devices prevents startup |
 | 100 Gi `/dev/shm` | pod-provided (verify ≥ 64 Gi) | deviation: sized by the environment; too small ⇒ NCCL "unhandled system error" |
 
