@@ -1,0 +1,17 @@
+{
+  "model_path": "/scratch/models/GLM-5.2-NVFP4",
+  "dataset_sha256": "64ed75745c1206ff18eaf0753414e6583be117086633059b798e276cd90afbf3",
+  "dataset": {
+    "id": "recovery-agent",
+    "profile": "agent-short",
+    "authority": "context",
+    "seed": 42,
+    "num_sessions": 32
+  },
+  "topology": {
+    "tp_size": 4,
+    "prefill_workers": 2,
+    "decode_workers": 2
+  },
+  "sglang_version": "0.5.16"
+}

@@ -1,0 +1,18 @@
+{
+  "_comment": "Environment-specific fleet topology for ramp_driver.py. Copy next to your (ignored) runs directory and fill in real values; do NOT track the filled-in copy.",
+  "ranks": {
+    "0": {"role": "prefill", "ip": "10.0.0.1"},
+    "1": {"role": "prefill", "ip": "10.0.0.2"},
+    "2": {"role": "decode", "ip": "10.0.0.3"},
+    "3": {"role": "decode", "ip": "10.0.0.4"}
+  },
+  "router_url": "http://127.0.0.1:30500",
+  "remote_cmd": ["rx", "devbox", "run", "<devbox-name>", "--rank"],
+  "wrapper": "export PATH=/scratch/v0516-venv/bin:$PATH; export UCX_TLS=tcp,cuda_copy,cuda_ipc; export UCX_NET_DEVICES=eth0; ",
+  "source_dataset": "/scratch/recovery_agent_fixed_32.json",
+  "worker_script": "/scratch/launch_glm_pd_worker.sh",
+  "router_python": "/scratch/v0516-venv/bin/python3",
+  "worker_port": 30001,
+  "bootstrap_port": 8998,
+  "model_path": "/scratch/models/GLM-5.2-NVFP4"
+}
