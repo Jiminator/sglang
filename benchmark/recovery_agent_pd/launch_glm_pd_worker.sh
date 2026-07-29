@@ -55,7 +55,6 @@ else
     --max-running-requests 128
     --num-continuous-decode-steps 3
     --flashinfer-allreduce-fusion-backend auto
-    --enable-symm-mem
     --cuda-graph-config '{"decode": {"backend": "full", "max_bs": 128}}'
   )
 fi

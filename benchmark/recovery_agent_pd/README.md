@@ -69,7 +69,7 @@ Every flag of the reference deployment appears exactly once, either carried
 | `mem-fraction-static: 0.87` | same | carried |
 | `num-continuous-decode-steps: 3` | same | carried |
 | `enable-flashinfer-allreduce-fusion: true` | `--flashinfer-allreduce-fusion-backend auto` | deviation: the boolean flag is a deprecated alias in v0.5.16 |
-| `enable-symm-mem: true` | same | carried |
+| `enable-symm-mem: true` | — | deviation: NCCL symmetric-memory registration proved unstable in this pod environment during EAGLE cuda-graph init (one wedge, one `NCCL symmetric memory registration failed` crash); omitted from the validated recipe |
 | `cuda-graph-config: '{"decode": {"backend": "full", "max_bs": 128}}'` | same | carried |
 | `attention-backend: dsa` | same | carried (decode DSA backend left at the v0.5.16 default; the resolved backend is recorded from server logs) |
 | — | decode radix cache / HiCache restore | intentionally absent: v0.5.16 rejects `--disaggregation-decode-enable-radix-cache` together with speculative decoding |
