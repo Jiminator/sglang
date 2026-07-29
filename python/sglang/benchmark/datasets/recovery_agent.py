@@ -170,11 +170,23 @@ class SessionProfile(msgspec.Struct, frozen=True):
         return self.request_weighted_isl_tolerance
 
     def dimension_target(self, dimension: str) -> float:
-        if dimension == "request_weighted_isl_mean":
-            return float(self.request_weighted_isl_target)
-        if dimension in UPPER_BOUND_DIMENSIONS:
-            return float(getattr(self, f"{dimension}_target"))
-        return float(getattr(self, dimension))
+        # Explicit mapping (no dynamic attribute lookup): every retained
+        # dimension names its target field here.
+        targets = {
+            "turns_mean": self.turns_mean,
+            "turns_p50": self.turns_p50,
+            "turns_p95": self.turns_p95,
+            "input_per_turn_mean": self.input_per_turn_mean,
+            "input_per_turn_p50": self.input_per_turn_p50,
+            "input_per_turn_p95": self.input_per_turn_p95,
+            "input_per_turn_max": self.input_per_turn_max_target,
+            "final_context_mean": self.final_context_mean,
+            "final_context_p50": self.final_context_p50,
+            "final_context_p95": self.final_context_p95,
+            "final_context_max": self.final_context_max_target,
+            "request_weighted_isl_mean": self.request_weighted_isl_target,
+        }
+        return float(targets[dimension])
 
 
 # The two lineages, fitted to their published summaries. The correlation
@@ -891,26 +903,46 @@ def live_conformance_report(
         finals.append(ordered[-1])
         isl.extend(ordered)
 
-    if not turns:
+    if not planned:
         return {
             "available": False,
-            "reason": "no session with complete server usage",
+            "reason": "no planned conversations with session identity",
+            "sessions_observed": 0,
+            "sessions_planned": 0,
+            "all_sessions_usable": False,
+            "gates_within_tolerance": False,
+            "conformant_population": False,
         }
+    usable_count = len(turns)
+    if usable_count < len(planned):
+        # ANY unusable planned conversation makes the conformance report
+        # unavailable — a partial report must never present itself as an
+        # available judgement. The dimensions computed over the usable subset
+        # are retained under an explicitly diagnostic field only.
+        result = {
+            "available": False,
+            "reason": (
+                f"only {usable_count} of {len(planned)} planned conversations "
+                "have complete server usage"
+            ),
+            "sessions_observed": usable_count,
+            "sessions_planned": len(planned),
+            "all_sessions_usable": False,
+            "gates_within_tolerance": False,
+            "conformant_population": False,
+        }
+        if turns:
+            result["partial_diagnostics_not_a_conformance_report"] = (
+                _dimension_records(
+                    profile,
+                    _live_realized_values(turns, finals, isl),
+                )
+            )
+        return result
 
-    turns_arr = np.array(turns)
-    finals_arr = np.array(finals)
-    isl_arr = np.array(isl)
-    realized_values = {
-        "turns_mean": float(turns_arr.mean()),
-        "turns_p50": float(np.percentile(turns_arr, 50)),
-        "turns_p95": float(np.percentile(turns_arr, 95)),
-        "final_context_mean": float(finals_arr.mean()),
-        "final_context_p50": float(np.percentile(finals_arr, 50)),
-        "final_context_p95": float(np.percentile(finals_arr, 95)),
-        "final_context_max": float(finals_arr.max()),
-        "request_weighted_isl_mean": float(isl_arr.mean()),
-    }
-    records = _dimension_records(profile, realized_values)
+    records = _dimension_records(
+        profile, _live_realized_values(turns, finals, isl)
+    )
     live_gated = [d for d in profile.gated_dimensions() if d in records]
     gates_ok = all(records[d]["within_tolerance"] for d in live_gated)
     population_ok = len(turns) >= profile.reference_population
@@ -925,6 +957,22 @@ def live_conformance_report(
         # Small live runs report deviations as sampling error, exactly like
         # small builds; conformance additionally needs every session usable.
         "conformant_population": population_ok and gates_ok and complete,
+    }
+
+
+def _live_realized_values(turns, finals, isl) -> Dict[str, float]:
+    turns_arr = np.array(turns)
+    finals_arr = np.array(finals)
+    isl_arr = np.array(isl)
+    return {
+        "turns_mean": float(turns_arr.mean()),
+        "turns_p50": float(np.percentile(turns_arr, 50)),
+        "turns_p95": float(np.percentile(turns_arr, 95)),
+        "final_context_mean": float(finals_arr.mean()),
+        "final_context_p50": float(np.percentile(finals_arr, 50)),
+        "final_context_p95": float(np.percentile(finals_arr, 95)),
+        "final_context_max": float(finals_arr.max()),
+        "request_weighted_isl_mean": float(isl_arr.mean()),
     }
 
 
@@ -1043,6 +1091,12 @@ class RecoveryAgentDataset(BaseDataset):
         profile = msgspec.structs.replace(
             PROFILES[self.profile_name], authority=self.authority
         )
+        if self.offset < 0:
+            raise ValueError(f"Dataset offset must be >= 0, got {self.offset}.")
+        if self.num_sessions <= 0:
+            raise ValueError(
+                f"Session count must be > 0, got {self.num_sessions}."
+            )
         needed = self.offset + self.num_sessions
         routing_seed = self.seed
 
@@ -1106,6 +1160,11 @@ class RecoveryAgentDataset(BaseDataset):
                 "--dataset-offset, or rebuild without --dataset-path."
             )
         selected = conversations[self.offset : needed]
+        # A normalized session count means exactly that many conversations.
+        assert len(selected) == self.num_sessions, (
+            f"selected {len(selected)} conversations for a request of "
+            f"{self.num_sessions}"
+        )
 
         rows = []
         for session_index, conversation in enumerate(selected):

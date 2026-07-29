@@ -346,6 +346,27 @@ class TestDatasetLoad(CustomTestCase):
         self.assertEqual(both[0].prompt, first[0].prompt)
         self.assertEqual(both[1].prompt, second[0].prompt)
 
+    def test_negative_offset_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "offset"):
+            self._dataset(offset=-1).load(self.tokenizer)
+
+    def test_non_positive_session_count_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "[Ss]ession count"):
+            self._dataset(num_sessions=0).load(self.tokenizer)
+
+    def test_load_returns_exactly_the_requested_count(self):
+        """Black-box exact-count contract: N requested sessions in, exactly
+        N rows out, in slice order — never fewer, never recycled."""
+        full = self._dataset(num_sessions=3).load(self.tokenizer)
+        self.assertEqual(len(full), 3)
+        for count in (1, 2):
+            rows = self._dataset(num_sessions=count).load(self.tokenizer)
+            self.assertEqual(len(rows), count)
+            self.assertEqual(
+                [row.routing_key for row in rows],
+                [row.routing_key for row in full[:count]],
+            )
+
     def test_prebuilt_over_consumption_is_hard_error(self):
         self._dataset(num_sessions=2).load(self.tokenizer)  # writes the cache
         with self.assertRaisesRegex(ValueError, "never recycled"):
@@ -573,15 +594,30 @@ class TestLiveConformance(CustomTestCase):
         self.assertFalse(off_target["conformant_population"])
 
     def test_missing_usage_or_failed_session_blocks_conformance(self):
+        """ANY unusable planned session makes the report unavailable — a
+        partial report must never present itself as an available judgement."""
         profile = _tiny_profile(reference_population=2)
         report = self._report(
             profile,
             [([200, 340], True), ([180, None, 340], True)],
         )
+        self.assertFalse(report["available"])
+        self.assertIn("only 1 of 2", report["reason"])
+        self.assertEqual(report["sessions_observed"], 1)
+        self.assertEqual(report["sessions_planned"], 2)
         self.assertFalse(report["all_sessions_usable"])
+        self.assertFalse(report["gates_within_tolerance"])
         self.assertFalse(report["conformant_population"])
+        # No positive gate claim: dimensions appear only under the
+        # explicitly diagnostic key, never as a top-level judgement.
+        self.assertNotIn("dimensions", report)
+        self.assertIn(
+            "final_context_mean",
+            report["partial_diagnostics_not_a_conformance_report"],
+        )
         failed = self._report(profile, [([200, 340], False)])
         self.assertFalse(failed["available"])
+        self.assertFalse(failed["conformant_population"])
 
     def test_input_dimensions_never_judged_live(self):
         profile = msgspec.structs.replace(
@@ -1086,6 +1122,21 @@ class TestSessionCli(CustomTestCase):
     def test_recovery_agent_requires_chat_backend(self):
         with self.assertRaises(SystemExit):
             self._run_cli(["--backend", "sglang", "--dataset-name", "recovery-agent"])
+
+    def test_negative_dataset_offset_rejected_at_parse_time(self):
+        with self.assertRaises(SystemExit):
+            self._run_cli(
+                [
+                    "--backend",
+                    "sglang-oai-chat",
+                    "--dataset-name",
+                    "recovery-agent",
+                    "--num-sessions",
+                    "4",
+                    "--dataset-offset",
+                    "-1",
+                ]
+            )
 
     def test_num_sessions_normalizes_into_num_prompts(self):
         args = self._run_cli(

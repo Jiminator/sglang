@@ -61,4 +61,10 @@ doc-full)
   ;;
 esac
 
+if [ "${DRY_RUN:-0}" = 1 ]; then
+  printf '#COMMAND %s\n' "unified:$STAGE"
+  printf '%s\n' "${args[@]}"
+  exit 0
+fi
+
 exec python3 -m sglang.launch_server "${args[@]}"

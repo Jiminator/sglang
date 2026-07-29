@@ -25,11 +25,20 @@ for url in $DECODE_URLS; do
   decode_args+=(--decode "$url")
 done
 
-exec python3 -m sglang_router.launch_router \
-  --pd-disaggregation \
-  --policy consistent_hashing \
-  --prefill-policy consistent_hashing \
-  --decode-policy consistent_hashing \
-  "${prefill_args[@]}" \
-  "${decode_args[@]}" \
+args=(
+  --pd-disaggregation
+  --policy consistent_hashing
+  --prefill-policy consistent_hashing
+  --decode-policy consistent_hashing
+  "${prefill_args[@]}"
+  "${decode_args[@]}"
   --host 0.0.0.0 --port "$ROUTER_PORT"
+)
+
+if [ "${DRY_RUN:-0}" = 1 ]; then
+  printf '#COMMAND %s\n' "router"
+  printf '%s\n' "${args[@]}"
+  exit 0
+fi
+
+exec python3 -m sglang_router.launch_router "${args[@]}"

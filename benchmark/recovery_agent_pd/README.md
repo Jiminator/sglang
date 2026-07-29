@@ -35,19 +35,19 @@ Every flag of the reference deployment appears exactly once, either carried
 | `kv-cache-dtype: fp8_e4m3` | same | carried |
 | `context-length: 262144` | `--context-length 262144` | carried |
 | `mem-fraction-static: 0.93` | same | carried |
-| `attention-backend: dsa` | `--attention-backend dsa` | carried |
-| `--dsa-prefill-backend trtllm` (worker CLI) | same flag in v0.5.16 | carried |
+| `attention-backend: dsa` | `--attention-backend dsa` | carried (stage 2; stage 1 pins `--attention-backend triton` so the dense baseline is genuinely distinct — v0.5.16 auto-selects DSA for this model) |
+| `dsa-prefill-backend: trtllm` (worker CLI) | same flag in v0.5.16 | carried (stage 2) |
 | `moe-runner-backend: flashinfer_trtllm_routed` | — | deviation: the PD worker script leaves the MoE runner at the v0.5.16 default, which resolves to `flashinfer_trtllm` (the verified GLM NVFP4 value) on this hardware; the unified shakeout script's `doc-full` stage does exercise the reference value |
 | `chunked-prefill-size: 16384` | same | carried |
 | `max-prefill-tokens: 32768` | same | carried |
 | `max-running-requests: 32` | same | carried |
 | `disaggregation-mode: prefill` | same | carried |
 | `disaggregation-transfer-backend: nixl` | same, **pinned explicitly** | carried (v0.5.16 default is `mooncake`) |
-| EAGLE `3-1-4` (`speculative-algorithm/num-steps/eagle-topk/num-draft-tokens`) | same | carried (stage 3) |
+| `speculative-algorithm: EAGLE`, `speculative-num-steps: 3`, `speculative-eagle-topk: 1`, `speculative-num-draft-tokens: 4` | same | carried (stage 3) |
 | `kv-events-config: {publisher: zmq, ...}` | — | deviation: publishes KV events for the Dynamo KV router; the sgl-router consistent-hashing policy does not consume them |
 | `disable-overlap-schedule: true` | same | carried |
 | `enable-hierarchical-cache: true` | same | carried (stage 4, prefill only) |
-| `hicache-size: 160` | `--hicache-size 32` | deviation: 160 GB is per DP rank; on a shared validation host start at 32 GB/rank |
+| `hicache-size: 160` | `--hicache-size 32` | deviation (stage 4): 160 GB is per DP rank; on a shared validation host start at 32 GB/rank |
 | `hicache-io-backend: direct` | same | carried (stage 4) |
 | `hicache-mem-layout: page_first_direct` | same | carried (stage 4) |
 | `hicache-write-policy: write_back` | same | carried (stage 4; `write_through` stalls prefill during cache building) |
@@ -64,14 +64,15 @@ Every flag of the reference deployment appears exactly once, either carried
 | `fp4-gemm-backend: flashinfer_cutlass` | same | carried |
 | `quantization: modelopt_fp4`, `kv-cache-dtype: fp8_e4m3` | same | carried |
 | `disaggregation-mode: decode`, `disaggregation-transfer-backend: nixl` | same | carried |
-| EAGLE `3-1-4` + `speculative-attention-mode: decode` | same | carried (stage 3; 5-1-6 measured slower at load in the reference) |
+| `speculative-algorithm: EAGLE`, `speculative-num-steps: 3`, `speculative-eagle-topk: 1`, `speculative-num-draft-tokens: 4`, `speculative-attention-mode: decode` | same | carried (stage 3; 5-1-6 measured slower at load in the reference) |
 | `max-running-requests: 128` | same | carried (256 measured slower in the reference) |
 | `mem-fraction-static: 0.87` | same | carried |
 | `num-continuous-decode-steps: 3` | same | carried |
 | `enable-flashinfer-allreduce-fusion: true` | `--flashinfer-allreduce-fusion-backend auto` | deviation: the boolean flag is a deprecated alias in v0.5.16 |
 | `enable-symm-mem: true` | — | deviation: NCCL symmetric-memory registration proved unstable in this pod environment during EAGLE cuda-graph init (one wedge, one `NCCL symmetric memory registration failed` crash); omitted from the validated recipe |
 | `cuda-graph-config: '{"decode": {"backend": "full", "max_bs": 128}}'` | same | carried |
-| `attention-backend: dsa` | same | carried (decode DSA backend left at the v0.5.16 default; the resolved backend is recorded from server logs) |
+| `attention-backend: dsa` | same | carried (stage 2; stage 1 pins `--attention-backend triton`; the decode DSA backend is left at the v0.5.16 default and the resolved backend is recorded from server logs) |
+| — | `--reasoning-parser glm45` | addition: same wire-format requirement as the prefill workers — the decode workers produce the streamed output whose `reasoning_content` must be separated |
 | — | decode radix cache / HiCache restore | intentionally absent: v0.5.16 rejects `--disaggregation-decode-enable-radix-cache` together with speculative decoding |
 
 ### Frontend / router
@@ -109,6 +110,6 @@ Notes:
   `--speculative-num-steps`, `--speculative-eagle-topk`,
   `--speculative-num-draft-tokens`, `--speculative-attention-mode`) whose
   reference values appear in the tables above.
-- Stages for the PD deployment (fault attribution): stage 1 = PD baseline
-  (default attention, no speculation), stage 2 = +DSA, stage 3 = +EAGLE
-  3-1-4, stage 4 = +HiCache on prefill.
+- Stages for the PD deployment (fault attribution): stage 1 = dense baseline
+  (`--attention-backend triton` pinned explicitly, no speculation), stage 2 =
+  +DSA, stage 3 = +EAGLE 3-1-4, stage 4 = +HiCache on prefill.

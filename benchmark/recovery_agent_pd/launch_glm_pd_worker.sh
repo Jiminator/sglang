@@ -2,7 +2,7 @@
 # One GLM-5.2-NVFP4 TP4 PD worker for the 2 prefill + 2 decode deployment
 # (one worker per 4-GPU GB300 node). ROLE selects prefill|decode; STAGE ramps
 # features so failures attribute cleanly:
-#   STAGE=1  PD baseline (default attention, no speculation)
+#   STAGE=1  dense baseline (--attention-backend triton, no speculation)
 #   STAGE=2  +DSA attention (prefill adds --dsa-prefill-backend trtllm)
 #   STAGE=3  +EAGLE 3-1-4 speculation
 #   STAGE=4  +HiCache host tier on prefill workers (write_back)
@@ -64,6 +64,10 @@ if [ "$STAGE" -ge 2 ]; then
   if [ "$ROLE" = prefill ]; then
     args+=(--dsa-prefill-backend trtllm)
   fi
+else
+  # Explicit dense attention: v0.5.16 auto-selects DSA for this model, so the
+  # baseline stage must pin a non-DSA backend to be genuinely distinct.
+  args+=(--attention-backend triton)
 fi
 
 if [ "$STAGE" -ge 3 ]; then
@@ -85,6 +89,12 @@ if [ "$STAGE" -ge 4 ] && [ "$ROLE" = prefill ]; then
     --hicache-mem-layout page_first_direct
     --hicache-write-policy write_back
   )
+fi
+
+if [ "${DRY_RUN:-0}" = 1 ]; then
+  printf '#COMMAND %s\n' "pd-worker:$ROLE:stage$STAGE"
+  printf '%s\n' "${args[@]}"
+  exit 0
 fi
 
 exec python3 -m sglang.launch_server "${args[@]}"

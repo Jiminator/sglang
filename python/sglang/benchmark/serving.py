@@ -2398,6 +2398,11 @@ def _validate_parsed_session_args(
                 f"The session count must be > 0, got {args.num_prompts} "
                 "(--num-sessions/--num-prompts)"
             )
+        if args.dataset_offset < 0:
+            parser.error(
+                f"--dataset-offset must be >= 0 for multi-turn datasets "
+                f"(exact slice [offset, offset+N)); got {args.dataset_offset}"
+            )
 
 
 def _validate_parsed_gsp_args(
@@ -2490,9 +2495,9 @@ def cli_main():
         "--dataset-offset",
         type=int,
         default=0,
-        help="Rotate the conversation list by this many entries before sampling "
-        "(agentic-trace dataset), so successive sweep steps start on fresh "
-        "conversations.",
+        help="Skip this many conversations before taking the exact slice "
+        "[offset, offset+N) (multi-turn datasets), so successive sweep steps "
+        "consume fresh, never-recycled conversations.",
     )
     parser.add_argument(
         "--recovery-profile",
