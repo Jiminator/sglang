@@ -22,6 +22,19 @@ export SGLANG_DISAGGREGATION_NIXL_BACKEND=${SGLANG_DISAGGREGATION_NIXL_BACKEND:-
 export UCX_TLS=${UCX_TLS:-cuda_ipc,cuda_copy,rc}
 # UCX_NET_DEVICES is deliberately not defaulted: discover the host's HCAs
 # (ibv_devices) and export it yourself, or leave unset to let UCX choose.
+#
+# MNNVL (NVLink-fabric) KV transfer — the validated fast path on GB300
+# NVL72 trays sharing one fabric clique. The KV pool MUST be fabric-
+# allocated for cross-node cuda_ipc to engage: SGLANG_MOONCAKE_CUSTOM_MEM_POOL
+# gates a generic cuMem fabric allocator (env-only, works for nixl too).
+# Never substitute PYTORCH_CUDA_ALLOC_CONF=expandable_segments — torch VMM
+# exports POSIX-FD handles, not fabric handles, and segfaults on first copy.
+# Measured (1 session, 12k ctx): mean TTFT 2244ms (TCP) -> 437ms (fabric).
+# Set SGLANG_MOONCAKE_CUSTOM_MEM_POOL="" to fall back to non-fabric transfer.
+export SGLANG_MOONCAKE_CUSTOM_MEM_POOL=${SGLANG_MOONCAKE_CUSTOM_MEM_POOL-NVLINK}
+export UCX_CUDA_IPC_ENABLE_MNNVL=${UCX_CUDA_IPC_ENABLE_MNNVL:-y}
+export NCCL_CUMEM_ENABLE=${NCCL_CUMEM_ENABLE:-1}
+export NCCL_MNNVL_ENABLE=${NCCL_MNNVL_ENABLE:-1}
 
 args=(
   --model-path "$MODEL_PATH"
