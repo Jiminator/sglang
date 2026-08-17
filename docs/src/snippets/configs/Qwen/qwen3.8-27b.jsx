@@ -613,42 +613,32 @@ export const config = {
         "--port {{PORT}}",
       ],
     },
-    // DGX Spark (GB10, SM121): single node, 128GB coherent unified memory
-    // shared with the CPU — every checkpoint fits, so all three quants get a
-    // cell. FlashInfer attention comes from the SM120 pair; the platform gets
-    // its own operating point at 8192-token prefill chunks, 0.95 static
-    // fraction, and prefill CUDA graphs disabled.
+    // DGX Spark (GB10, SM121): single node, 128GB coherent unified memory shared
+    // with the CPU — every checkpoint fits, so all three quants get a cell.
     //
-    // Validated on SM121 / aarch64 (replacing the unvalidated note these cells
-    // carried) on GB10 under `lmsysorg/sglang:qwen38-27b`, arm64 variant,
-    // sglang 0.0.0.dev0+qwen38.27b.g561c8f3 / torch 2.13.0+cu130. Each cell was
-    // booted and then driven with `sglang.bench_serving --dataset-name random`
-    // at 8192-in/1024-out, concurrency 1, `--random-range-ratio 1`
-    // `--flush-cache`, and counted only on an exact request/token match.
-    // Coverage is partial — see each cell's `verified` — and EAGLE was not run
-    // here at all, so `--enable-linear-replayssm-spec` renders untested on SM121.
-    // Neither image-version signature appeared even though both paths ran: no
-    // `mat1 and mat2` from DSpark over NVFP4's 4-bit lm_head, and no FlashInfer
-    // `plan()` arity error at the 8192 chunk.
-    // `--max-prefill-tokens 8192` is pinned with the chunk because that pairing
-    // is what was measured (the default is 16384), as the h200 cells do at 32768.
+    // These cells now carry the RTX PRO 6000 recipe verbatim (0.85 static
+    // fraction, 2048-token prefill chunks, flashinfer attention) rather than a
+    // separate SM121 operating point. Both are SM12x Blackwell, and GB10's 128GB
+    // unified pool is larger than the 6000's 96GB, so a recipe that fits the
+    // smaller card has headroom here. Dropping the bespoke settings also removes
+    // `--disable-prefill-cuda-graph`, which arrived in #34863 with no measurement
+    // behind it — the comment that introduced it called the recipe unvalidated on
+    // SM121 in the same sentence.
+    //
+    // All three stay UNVERIFIED: SM121 / aarch64 validation of this recipe is in
+    // progress and no cell here has been measured at these flag values yet. Any
+    // earlier DGX Spark measurements were taken at the old 0.95 / 8192 operating
+    // point and do not describe these commands.
     {
       match: { hw: "dgx-spark", variant: "default", quant: "nvfp4", nodes: "single" },
-      // MEASURED with speculation off, across the full tier x state-dtype square
-      // (4 configurations, all served). EAGLE and DSPARK were not measured at
-      // this cell's rendered command, so they report Not Verified rather than
-      // borrowing this badge.
-      verified: (sel) => sel.spec === "none",
       env: [],
       flags: [
         "--trust-remote-code",
         "--model-path {{MODEL_NAME}}",
         "--kv-cache-dtype fp8_e4m3",
-        "--mem-fraction-static 0.95",
+        "--mem-fraction-static 0.85",
         "--attention-backend flashinfer",
-        "--chunked-prefill-size 8192",
-        "--max-prefill-tokens 8192",
-        "--disable-prefill-cuda-graph",
+        "--chunked-prefill-size 2048",
         "--reasoning-parser qwen3",
         "--tool-call-parser qwen3_coder",
         "--host {{HOST_IP}}",
@@ -657,18 +647,14 @@ export const config = {
     },
     {
       match: { hw: "dgx-spark", variant: "default", quant: "fp8", nodes: "single" },
-      // Not verified: the speculation-off arm was measured on NVFP4 but not on
-      // FP8, and a badge is not lent across quantizations.
       env: [],
       flags: [
         "--trust-remote-code",
         "--model-path {{MODEL_NAME}}",
         "--kv-cache-dtype fp8_e4m3",
-        "--mem-fraction-static 0.95",
+        "--mem-fraction-static 0.85",
         "--attention-backend flashinfer",
-        "--chunked-prefill-size 8192",
-        "--max-prefill-tokens 8192",
-        "--disable-prefill-cuda-graph",
+        "--chunked-prefill-size 2048",
         "--reasoning-parser qwen3",
         "--tool-call-parser qwen3_coder",
         "--host {{HOST_IP}}",
@@ -682,10 +668,9 @@ export const config = {
         "--trust-remote-code",
         "--model-path {{MODEL_NAME}}",
         "--kv-cache-dtype fp8_e4m3",
-        "--mem-fraction-static 0.95",
+        "--mem-fraction-static 0.85",
         "--attention-backend flashinfer",
-        "--chunked-prefill-size 8192",
-        "--disable-prefill-cuda-graph",
+        "--chunked-prefill-size 2048",
         "--reasoning-parser qwen3",
         "--tool-call-parser qwen3_coder",
         "--host {{HOST_IP}}",

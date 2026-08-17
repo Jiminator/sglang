@@ -180,18 +180,17 @@ checkpoint's calibration scales automatically.
   On DGX Spark the 128GB is unified memory shared with the host CPU, so all
   three checkpoints fit; its cells use 8192-token prefill chunks,
   `--mem-fraction-static 0.95`, and `--disable-prefill-cuda-graph`.
-- **DGX Spark (GB10, SM121, aarch64) — validated, partially.** Bring-up ran on
-  GB10 under `lmsysorg/sglang:qwen38-27b` (the tag is multi-arch, so the arm64
-  variant pulls natively), sglang `0.0.0.dev0+qwen38.27b.g561c8f3`. Everything
-  run served: NVFP4 with speculation off and with DSpark, plus FP8 and BF16 with
-  DSpark, each across all four Serving Strategy x Mamba SSM Dtype combinations.
-  **EAGLE/MTP was not run here**, nor speculation-off on FP8 or BF16, so those
-  selections report Not Verified. The FlashInfer `plan`/`uniform_q_len` caveat
-  above did not bite this image, and neither did the quantized-`lm_head` DSpark
-  bug despite NVFP4 placing `lm_head` in its 4-bit group. Two host quirks when
-  reproducing: docker GPU access is CDI-only (`--device nvidia.com/gpu=all`, as
-  no `nvidia` runtime is registered), and `nvidia-smi` reports `Not Supported`
-  for memory because it is unified — gate a relaunch on `MemAvailable` instead.
+- **DGX Spark (GB10, SM121, aarch64)**: the cells carry the RTX PRO 6000 recipe
+  verbatim — `--mem-fraction-static 0.85`, `--chunked-prefill-size 2048`,
+  `--attention-backend flashinfer` — rather than a separate SM121 operating
+  point. Both cards are SM12x Blackwell, and GB10's 128GB unified pool is larger
+  than the 6000's 96GB, so a recipe that fits the smaller card has headroom
+  here. These cells are **not yet verified**: SM121 / aarch64 validation of this
+  recipe is in progress. Two host quirks worth knowing when reproducing on GB10:
+  docker GPU access is CDI-only (`--device nvidia.com/gpu=all`, as no `nvidia`
+  runtime is registered), and `nvidia-smi` reports `Not Supported` for memory
+  because it is unified with the CPU — gate a relaunch on `MemAvailable` in
+  `/proc/meminfo` instead.
 - **H200 (SM90)**: BF16 and FP8 only — the card has no FP4 tensor cores, so the
   NVFP4 checkpoint's MLP would fall back to the Marlin W4A16 weight-only path
   and its cell is greyed out. The H200 recipes use 32768-token prefill chunks
