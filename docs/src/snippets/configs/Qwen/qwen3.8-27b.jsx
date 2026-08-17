@@ -180,6 +180,19 @@ export const config = {
             "--speculative-algorithm DSPARK",
             "--speculative-draft-model-path RadixArk/Qwen3.8-27B-DSpark",
             "--speculative-draft-attention-backend flashinfer",
+            // Deliberately NO --speculative-dspark-block-size pin: gamma is
+            // inherited from the draft checkpoint (7 for
+            // RadixArk/Qwen3.8-27B-DSpark, so D = 8), which is also what the
+            // ratio calculator falls back to when the flag is absent.
+            // Do not pin a narrower gamma to save state memory. That flag is not
+            // a verify-window knob -- gamma sets how many tokens the draft
+            // predicts, and this draft is a dLLM that emits its whole block
+            // jointly, so a smaller value runs it off the width it was trained
+            // at rather than taking a prefix of it. The engine funnels one gamma
+            // into both roles (dspark_config.py: verify_num_draft_tokens =
+            // gamma + 1) and logs "DSpark gamma mismatch" when the flag disagrees
+            // with the checkpoint. Shrinking the verifier independently of the
+            // draft is not expressible today.
             // MEASURED at the engine-default 2048 prefill chunk: bf16 state
             // serves at 0.90 (0.88 was only needed to dodge the old 8192-chunk
             // runtime OOM) and fp32 state needs 0.92 -- at 0.90/0.88 its state
@@ -604,10 +617,28 @@ export const config = {
     // shared with the CPU — every checkpoint fits, so all three quants get a
     // cell. FlashInfer attention comes from the SM120 pair; the platform gets
     // its own operating point at 8192-token prefill chunks, 0.95 static
-    // fraction, and prefill CUDA graphs disabled. Unvalidated on SM121 /
-    // aarch64.
+    // fraction, and prefill CUDA graphs disabled.
+    //
+    // Validated on SM121 / aarch64 (replacing the unvalidated note these cells
+    // carried) on GB10 under `lmsysorg/sglang:qwen38-27b`, arm64 variant,
+    // sglang 0.0.0.dev0+qwen38.27b.g561c8f3 / torch 2.13.0+cu130. Each cell was
+    // booted and then driven with `sglang.bench_serving --dataset-name random`
+    // at 8192-in/1024-out, concurrency 1, `--random-range-ratio 1`
+    // `--flush-cache`, and counted only on an exact request/token match.
+    // Coverage is partial — see each cell's `verified` — and EAGLE was not run
+    // here at all, so `--enable-linear-replayssm-spec` renders untested on SM121.
+    // Neither image-version signature appeared even though both paths ran: no
+    // `mat1 and mat2` from DSpark over NVFP4's 4-bit lm_head, and no FlashInfer
+    // `plan()` arity error at the 8192 chunk.
+    // `--max-prefill-tokens 8192` is pinned with the chunk because that pairing
+    // is what was measured (the default is 16384), as the h200 cells do at 32768.
     {
       match: { hw: "dgx-spark", variant: "default", quant: "nvfp4", nodes: "single" },
+      // MEASURED with speculation off, across the full tier x state-dtype square
+      // (4 configurations, all served). EAGLE and DSPARK were not measured at
+      // this cell's rendered command, so they report Not Verified rather than
+      // borrowing this badge.
+      verified: (sel) => sel.spec === "none",
       env: [],
       flags: [
         "--trust-remote-code",
@@ -616,6 +647,7 @@ export const config = {
         "--mem-fraction-static 0.95",
         "--attention-backend flashinfer",
         "--chunked-prefill-size 8192",
+        "--max-prefill-tokens 8192",
         "--disable-prefill-cuda-graph",
         "--reasoning-parser qwen3",
         "--tool-call-parser qwen3_coder",
@@ -625,6 +657,8 @@ export const config = {
     },
     {
       match: { hw: "dgx-spark", variant: "default", quant: "fp8", nodes: "single" },
+      // Not verified: the speculation-off arm was measured on NVFP4 but not on
+      // FP8, and a badge is not lent across quantizations.
       env: [],
       flags: [
         "--trust-remote-code",
@@ -633,6 +667,7 @@ export const config = {
         "--mem-fraction-static 0.95",
         "--attention-backend flashinfer",
         "--chunked-prefill-size 8192",
+        "--max-prefill-tokens 8192",
         "--disable-prefill-cuda-graph",
         "--reasoning-parser qwen3",
         "--tool-call-parser qwen3_coder",

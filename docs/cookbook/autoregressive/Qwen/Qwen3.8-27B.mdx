@@ -179,8 +179,19 @@ checkpoint's calibration scales automatically.
   (newer than 0.6.15.post1); otherwise run spec with `--attention-backend triton`.
   On DGX Spark the 128GB is unified memory shared with the host CPU, so all
   three checkpoints fit; its cells use 8192-token prefill chunks,
-  `--mem-fraction-static 0.95`, and `--disable-prefill-cuda-graph`. The SM121
-  recipe is not yet validated on that platform.
+  `--mem-fraction-static 0.95`, and `--disable-prefill-cuda-graph`.
+- **DGX Spark (GB10, SM121, aarch64) — validated, partially.** Bring-up ran on
+  GB10 under `lmsysorg/sglang:qwen38-27b` (the tag is multi-arch, so the arm64
+  variant pulls natively), sglang `0.0.0.dev0+qwen38.27b.g561c8f3`. Everything
+  run served: NVFP4 with speculation off and with DSpark, plus FP8 and BF16 with
+  DSpark, each across all four Serving Strategy x Mamba SSM Dtype combinations.
+  **EAGLE/MTP was not run here**, nor speculation-off on FP8 or BF16, so those
+  selections report Not Verified. The FlashInfer `plan`/`uniform_q_len` caveat
+  above did not bite this image, and neither did the quantized-`lm_head` DSpark
+  bug despite NVFP4 placing `lm_head` in its 4-bit group. Two host quirks when
+  reproducing: docker GPU access is CDI-only (`--device nvidia.com/gpu=all`, as
+  no `nvidia` runtime is registered), and `nvidia-smi` reports `Not Supported`
+  for memory because it is unified — gate a relaunch on `MemAvailable` instead.
 - **H200 (SM90)**: BF16 and FP8 only — the card has no FP4 tensor cores, so the
   NVFP4 checkpoint's MLP would fall back to the Marlin W4A16 weight-only path
   and its cell is greyed out. The H200 recipes use 32768-token prefill chunks
@@ -199,7 +210,13 @@ checkpoint's calibration scales automatically.
   `--speculative-num-draft-tokens`: its verify window is
   `--speculative-dspark-block-size` (gamma) **+ 1**, and gamma is auto-inferred
   from the draft checkpoint when the flag is omitted (7 for this checkpoint, so
-  D = 8). That `D` is a term in the balanced ratio —
+  D = 8). Leave that flag alone rather than pinning a smaller gamma to reclaim
+  state memory: it sets how many tokens the *draft* predicts, and this draft is a
+  dLLM that emits its whole block jointly, so a smaller value runs it off the
+  width it was trained at instead of taking a prefix. One gamma feeds both the
+  draft block and the verify window (`verify_num_draft_tokens = gamma + 1`), and
+  a value that disagrees with the checkpoint logs a `DSpark gamma mismatch`
+  warning at startup. That `D` is a term in the balanced ratio —
   `r = (S + D) x token_equiv / L`, where `token_equiv` is the state slot
   expressed in KV tokens, `state_bytes / kv_bytes_per_token` (4698 at fp32
   state / 2394 at bf16, over fp8 KV) — so DSpark needs a materially higher
