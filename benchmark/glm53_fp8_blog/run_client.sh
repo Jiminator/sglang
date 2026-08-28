@@ -7,7 +7,7 @@
 #   ./run_client.sh <model-path> <output-dir> <run-name>
 #
 #   <model-path>  model the server is serving; also selects the dataset
-#                 tokenizer (zai-org/GLM-5.3)
+#                 tokenizer (zai-org/GLM-5.3 or RadixArk/GLM-5.3-NVFP4)
 #   <output-dir>  where results land (created if missing)
 #   <run-name>    subdirectory name for this run (e.g. tp4, tep8)
 #

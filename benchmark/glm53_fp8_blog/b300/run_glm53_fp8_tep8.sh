@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# zai-org/GLM-5.3 (FP8) | container SGLang | 8xB300 | TEP8: server + sweep client.
+# zai-org/GLM-5.3 | container SGLang | 8xB300 | TEP8: server + sweep client.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source common.sh
 
-OUT=results/b300/glm53
+OUT=results/b300/glm53_fp8
 sweep_already_done "$OUT/tep8" && exit 0
 ensure_evalscope
 

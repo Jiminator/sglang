@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-# zai-org/GLM-5.3 (FP8) | container SGLang | 4xGB300 | TP4: server + sweep client.
+# RadixArk/GLM-5.3-NVFP4 | container SGLang | 8xB300 | TEP8: server + sweep client.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source common.sh
 
-OUT=results/gb300/glm53
-sweep_already_done "$OUT/tp4" && exit 0
+OUT=results/b300/glm53_nvfp4
+sweep_already_done "$OUT/tep8" && exit 0
 ensure_evalscope
 
 export SGLANG_OPT_USE_TOPK_V2=1
-start_server "$OUT/server_tp4.log" python3 -m sglang.launch_server \
-    --model-path zai-org/GLM-5.3 \
-    --tensor-parallel-size 4 \
+start_server "$OUT/server_tep8.log" python3 -m sglang.launch_server \
+    --model-path RadixArk/GLM-5.3-NVFP4 \
+    --tensor-parallel-size 8 \
+    --ep-size 8 \
     --context-length 90000 \
     --max-running-requests 16 \
     --max-prefill-tokens 8192 \
@@ -31,5 +32,5 @@ start_server "$OUT/server_tp4.log" python3 -m sglang.launch_server \
     --host localhost \
     --port "$PORT"
 
-./run_client.sh zai-org/GLM-5.3 "$OUT" tp4
+./run_client.sh RadixArk/GLM-5.3-NVFP4 "$OUT" tep8
 stop_server
