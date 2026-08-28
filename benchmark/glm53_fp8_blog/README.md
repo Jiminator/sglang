@@ -30,12 +30,12 @@ Inside it:
 ```bash
 git clone --depth 1 -b glm53-fp8-blog-repro https://github.com/Jiminator/sglang.git
 cd sglang/benchmark/glm53_fp8_blog
-b300/run_all.sh     # -> figure_b300.png (TP=8 + TEP=8 panels, FP8 + NVFP4 curves)
+b300/run_all.sh     # -> figure_b300.png (TP=8, FP8 + NVFP4 curves)
 ```
 
 On a bare machine the master handles everything itself: it installs the pinned
-evalscope on first use, builds the datasets, runs the four sweeps (FP8 first,
-then NVFP4), and renders the figure. Expect roughly 2–3 hours end to end
+evalscope on first use, builds the datasets, runs the two TP=8 sweeps (FP8
+first, then NVFP4), and renders the figure. Expect roughly 1–2 hours end to end
 (dominated by model downloads if the HF cache is cold). Compare against
 `expected_figure_b300.png`.
 
@@ -47,12 +47,10 @@ after an interruption.
 
 ```
 b300/run_all.sh                    both curves + the full figure
-├── b300/run_glm53_fp8.sh          one curve (both panels) + a single-curve figure
-│   ├── b300/run_glm53_fp8_tp8.sh  one sweep: server up -> client -> server down
-│   └── b300/run_glm53_fp8_tep8.sh
+├── b300/run_glm53_fp8.sh          one curve + a single-curve figure
+│   └── b300/run_glm53_fp8_tp8.sh  one sweep: server up -> client -> server down
 └── b300/run_glm53_nvfp4.sh
-    ├── b300/run_glm53_nvfp4_tp8.sh
-    └── b300/run_glm53_nvfp4_tep8.sh
+    └── b300/run_glm53_nvfp4_tp8.sh
 ```
 
 Only the leaf scripts touch the server and the client (`run_client.sh`);
@@ -63,9 +61,8 @@ curve alone) — pre-stage the checkpoint or set `FORCE_DOWNLOAD=1` to include
 it. To validate just the FP8 half end to end, run `b300/run_glm53_fp8.sh`.
 
 - Server flags live in the leaf scripts and are identical across the two
-  models; the two panels differ only by `--ep-size 8` (expert parallelism).
-  Both run with `SGLANG_OPT_USE_TOPK_V2=1` and real speculative acceptance
-  (MTP/EAGLE k=5).
+  models (TP=8, `SGLANG_OPT_USE_TOPK_V2=1`, real speculative acceptance,
+  MTP/EAGLE k=5).
 - `run_client.sh` builds the per-model dataset on first use (~10–20 min,
   cached under `datasets/`) and runs concurrency 1→8 in a single evalscope
   invocation (offset rotation keeps every step on fresh conversations).

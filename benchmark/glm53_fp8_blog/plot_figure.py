@@ -4,8 +4,8 @@
 Usage:
     python3 plot_figure.py b300 [--curves glm53_fp8,glm53_nvfp4] [--out figure.png]
 
-One figure, two subplots — TP=8 and TEP=8 — each with one curve per model
-config (FP8 and NVFP4), read from
+One figure, one TP=8 panel with one curve per model config (FP8 and NVFP4),
+read from
 results/b300/<curve>/<panel>/parallel_*/benchmark_{summary,percentile}.json.
 
 X = p90 interactivity = 1000 / p90 TPOT(ms), where per-request
@@ -39,7 +39,7 @@ CURVES = [
     ("NVFP4", "glm53_nvfp4", "#2E6E8E", "-", False),
 ]
 
-PANELS = (("TP=8", "tp8"), ("TEP=8", "tep8"))
+PANELS = (("TP=8", "tp8"),)
 N_GPUS = 8
 Y_FLOOR = 5000
 

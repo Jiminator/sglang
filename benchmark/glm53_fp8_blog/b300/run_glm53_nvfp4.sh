@@ -14,5 +14,4 @@ if [ "${FORCE_DOWNLOAD:-0}" != "1" ] && ! model_cached RadixArk/GLM-5.3-NVFP4; t
     exit 0
 fi
 ./run_glm53_nvfp4_tp8.sh
-./run_glm53_nvfp4_tep8.sh
 python3 ../plot_figure.py b300 --curves glm53_nvfp4 --out ../figure_b300_glm53_nvfp4.png

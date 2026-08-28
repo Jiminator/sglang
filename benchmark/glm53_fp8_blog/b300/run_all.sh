@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Everything for B300: both curves (FP8 first, then NVFP4), then the full
-# two-panel figure (TP=8, TEP=8) with both curves in each panel.
+# Everything for B300: both curves (FP8 first, then NVFP4), then the
+# TP=8 figure with both curves.
 set -euo pipefail
 cd "$(dirname "$0")"
 ./run_glm53_fp8.sh
