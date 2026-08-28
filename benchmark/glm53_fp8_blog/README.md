@@ -8,7 +8,8 @@ serving code is exactly what the image ships.
 
 Workload: OpenHands multi-turn agentic replay — mean input ≈ 80k tokens/request,
 220 output tokens/turn, 13 turns/conversation, ~92% aggregate prefix-cache hit
-rate, real EAGLE speculative acceptance (nothing simulated).
+rate, speculative acceptance pinned to AL=5.0 (deterministic, so the figure
+is independent of drafting quality).
 
 Models (identical server config, only the checkpoint differs):
 
@@ -61,8 +62,9 @@ curve alone) — pre-stage the checkpoint or set `FORCE_DOWNLOAD=1` to include
 it. To validate just the FP8 half end to end, run `b300/run_glm53_fp8.sh`.
 
 - Server flags live in the leaf scripts and are identical across the two
-  models (TP=8, `SGLANG_OPT_USE_TOPK_V2=1`, real speculative acceptance,
-  MTP/EAGLE k=5).
+  models (TP=8, `SGLANG_OPT_USE_TOPK_V2=1`, MTP/EAGLE k=5, acceptance pinned to
+  AL=5.0 via `SGLANG_SIMULATE_ACC_*` - outputs are not correct text and are
+  discarded by the replay).
 - `run_client.sh` builds the per-model dataset on first use (~10–20 min,
   cached under `datasets/`) and runs concurrency 1→8 in a single evalscope
   invocation (offset rotation keeps every step on fresh conversations).
@@ -85,6 +87,5 @@ it. To validate just the FP8 half end to end, run `b300/run_glm53_fp8.sh`.
   disk, so a re-run of just that sweep (delete its `results/...` directory) is
   clean.
 - Run-to-run variance is ~±2–4% per point (widest at c=1): match the expected
-  figure in shape and ordering, not to the pixel. The ~92% cache-hit and ~5.0
-  acceptance-length invariants in each `benchmark_summary.json` / server log
-  confirm a faithful replay.
+  figure in shape and ordering, not to the pixel. The ~92% cache-hit invariant in each `benchmark_summary.json` and the
+  exact `accept len: 5.00` lines in the server logs confirm a faithful replay.

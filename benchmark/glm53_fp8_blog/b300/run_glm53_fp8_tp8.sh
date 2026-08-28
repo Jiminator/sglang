@@ -9,6 +9,14 @@ sweep_already_done "$OUT/tp8" && exit 0
 ensure_evalscope
 
 export SGLANG_OPT_USE_TOPK_V2=1
+# Acceptance PINNED to AL=5.0: match-expected with an integer target is
+# deterministic (every verify step commits exactly 5 tokens), which makes
+# the figure reproducible independent of drafting quality. Outputs are not
+# correct text under forced acceptance - the replay discards them; never
+# serve real traffic with these set.
+export SGLANG_SIMULATE_ACC_LEN=5
+export SGLANG_SIMULATE_ACC_METHOD=match-expected
+export SGLANG_SIMULATE_ACC_TOKEN_MODE=real-draft-token
 start_server "$OUT/server_tp8.log" python3 -m sglang.launch_server \
     --model-path zai-org/GLM-5.3 \
     --tensor-parallel-size 8 \
