@@ -2,7 +2,7 @@
 # Callers: the per-panel run scripts under gb300/ and b300/.
 #
 # Serving code is the SGLang installed in the container (the recipe runs inside
-# the lmsysorg/sglang:latest docker image) - no worktree or PYTHONPATH swap.
+# the lmsysorg/sglang:v0.5.18 docker image) - no worktree or PYTHONPATH swap.
 
 PORT="${PORT:-8002}"
 SERVER_PID=""

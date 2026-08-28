@@ -1,7 +1,8 @@
 # GLM-5.3 on SGLang — B300 figure reproduction
 
 Everything needed to reproduce the GLM-5.3 8xB300 performance figure — FP8 vs
-NVFP4 — using **SGLang from the `lmsysorg/sglang:latest` docker image** and
+NVFP4 — using **SGLang from the `lmsysorg/sglang:v0.5.18` docker image**
+(pinned so the recipe stays reproducible as `latest` moves) and
 **[evalscope](https://github.com/modelscope/evalscope)** (pinned by commit) as
 the benchmark client. Nothing is checked out or patched at run time — the
 serving code is exactly what the image ships.
@@ -23,7 +24,7 @@ Start the container (adjust the HF cache mount to where your models live):
 ```bash
 docker run --gpus all --network host --ipc host --shm-size 600g -it \
     -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
-    lmsysorg/sglang:latest bash
+    lmsysorg/sglang:v0.5.18 bash
 ```
 
 Inside it:
