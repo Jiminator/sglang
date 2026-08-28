@@ -56,7 +56,11 @@ b300/run_all.sh                    both curves + the full figure
 ```
 
 Only the leaf scripts touch the server and the client (`run_client.sh`);
-everything above them just sequences and plots.
+everything above them just sequences and plots. The NVFP4 curve is optional:
+when `RadixArk/GLM-5.3-NVFP4` is not in the local HF cache,
+`run_glm53_nvfp4.sh` skips itself (and `run_all.sh` completes with the FP8
+curve alone) — pre-stage the checkpoint or set `FORCE_DOWNLOAD=1` to include
+it. To validate just the FP8 half end to end, run `b300/run_glm53_fp8.sh`.
 
 - Server flags live in the leaf scripts and are identical across the two
   models; the two panels differ only by `--ep-size 8` (expert parallelism).

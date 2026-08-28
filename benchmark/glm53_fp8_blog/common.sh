@@ -86,3 +86,17 @@ stop_server() {
         sleep 2
     done
 }
+
+model_cached() {
+    # True when the model's snapshot is fully resolvable from the local HF
+    # cache (no network). Used to skip an optional curve gracefully instead of
+    # triggering a multi-hundred-GB download from inside run_all.
+    python3 - "$1" <<'PY'
+import sys
+from huggingface_hub import snapshot_download
+try:
+    snapshot_download(sys.argv[1], local_files_only=True)
+except Exception:
+    sys.exit(1)
+PY
+}
