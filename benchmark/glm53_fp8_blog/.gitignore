@@ -1,6 +1,3 @@
 datasets/
 results/
 figure_*.png
-isl_ablation/results/
-isl_ablation/datasets/
-isl_ablation/isl_ablation.png
