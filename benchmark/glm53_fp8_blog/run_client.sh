@@ -7,8 +7,7 @@
 #   ./run_client.sh <model-path> <output-dir> <run-name>
 #
 #   <model-path>  model the server is serving; also selects the dataset
-#                 tokenizer (nvidia/GLM-5.2-NVFP4 or nvidia/GLM-5.1-NVFP4;
-#                 day-0 servers serve GLM-5.2, so pass nvidia/GLM-5.2-NVFP4)
+#                 tokenizer (zai-org/GLM-5.3)
 #   <output-dir>  where results land (created if missing)
 #   <run-name>    subdirectory name for this run (e.g. tp4, tep8)
 #

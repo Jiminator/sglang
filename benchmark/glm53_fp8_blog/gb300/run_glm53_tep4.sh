@@ -1,22 +1,18 @@
 #!/usr/bin/env bash
-# nvidia/GLM-5.2-NVFP4 | day-0 snapshot | 8xB300 | TEP8: server + sweep client.
-# Launch-day flags on purpose: no --bf16-gemm-backend, no fused-top-k or
-# deferred-finalize env vars, and the day-0 --cuda-graph-max-bs spelling.
+# zai-org/GLM-5.3 (FP8) | container SGLang | 4xGB300 | TEP4: server + sweep client.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source common.sh
 
-OUT=results/b300/day0
-sweep_already_done "$OUT/tep8" && exit 0
+OUT=results/gb300/glm53
+sweep_already_done "$OUT/tep4" && exit 0
 ensure_evalscope
-ensure_day0_checkout
-export PYTHONPATH="$DAY0_SGLANG/python"
 
-start_server "$OUT/server_tep8.log" python3 -m sglang.launch_server \
-    --model-path nvidia/GLM-5.2-NVFP4 \
-    --tensor-parallel-size 8 \
-    --ep-size 8 \
-    --quantization modelopt_fp4 \
+export SGLANG_OPT_USE_TOPK_V2=1
+start_server "$OUT/server_tep4.log" python3 -m sglang.launch_server \
+    --model-path zai-org/GLM-5.3 \
+    --tensor-parallel-size 4 \
+    --ep-size 4 \
     --context-length 90000 \
     --max-running-requests 16 \
     --max-prefill-tokens 8192 \
@@ -25,6 +21,7 @@ start_server "$OUT/server_tep8.log" python3 -m sglang.launch_server \
     --mem-fraction-static 0.87 \
     --trust-remote-code \
     --kv-cache-dtype fp8_e4m3 \
+    --bf16-gemm-backend cutedsl \
     --reasoning-parser glm45 \
     --tool-call-parser glm47 \
     --speculative-algorithm EAGLE \
@@ -35,5 +32,5 @@ start_server "$OUT/server_tep8.log" python3 -m sglang.launch_server \
     --host localhost \
     --port "$PORT"
 
-./run_client.sh nvidia/GLM-5.2-NVFP4 "$OUT" tep8
+./run_client.sh zai-org/GLM-5.3 "$OUT" tep4
 stop_server
