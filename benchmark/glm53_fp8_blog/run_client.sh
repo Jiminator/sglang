@@ -44,6 +44,9 @@ DATASET="$SCRIPT_DIR/datasets/openhand-${SLUG}.json"
 if [ ! -s "$DATASET" ]; then
     mkdir -p "$SCRIPT_DIR/datasets"
     echo "=== building dataset for $MODEL (one-time, ~10-20 min) ==="
+    # The builder can abort in interpreter teardown (PyGILState_Release,
+    # exit 134) AFTER writing the dataset — a known cosmetic crash. Accept
+    # any exit status and judge by the output file instead.
     python3 "$SCRIPT_DIR/build_openhands_padded_dataset.py" \
         --model "$MODEL" \
         --pad-source openscience \
@@ -51,7 +54,14 @@ if [ ! -s "$DATASET" ]; then
         --subsequent-turn-length 753 \
         --num-turns 13 \
         --number 128 \
-        --output-path "$DATASET"
+        --output-path "$DATASET" || true
+    if python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$DATASET" 2>/dev/null; then
+        echo "dataset OK: $DATASET"
+    else
+        echo "dataset build FAILED (no valid JSON at $DATASET)" >&2
+        rm -f "$DATASET"
+        exit 1
+    fi
 else
     echo "reusing dataset $DATASET"
 fi
