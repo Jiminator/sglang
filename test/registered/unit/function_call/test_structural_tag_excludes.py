@@ -5,6 +5,7 @@ import unittest
 from sglang.srt.entrypoints.openai.protocol import Function, Tool
 from sglang.srt.function_call.base_format_detector import get_model_structural_tag
 from sglang.srt.function_call.deepseekv4_detector import DeepSeekV4Detector
+from sglang.srt.function_call.deepseekv41_detector import DeepSeekV41Detector
 from sglang.srt.function_call.utils import strip_structural_tag_excludes
 from sglang.test.ci.ci_register import register_cpu_ci
 
@@ -83,16 +84,21 @@ class TestStripStructuralTagExcludes(unittest.TestCase):
         self.assertEqual(tag["excludes"], ["<think>"])
 
     @unittest.skipIf(get_model_structural_tag is None, "xgrammar builtin tags absent")
-    def test_deepseek_v4_auto_tag_allows_think_tokens_after_strip(self):
-        tag = DeepSeekV4Detector().get_structural_tag([_weather_tool()], "auto")
-        before = _collect_excludes(tag.model_dump(by_alias=True), [])
-        self.assertTrue(any("</think>" in ex for ex in before))
+    def test_deepseek_auto_tags_allow_think_tokens_after_strip(self):
+        for detector, trigger in (
+            (DeepSeekV4Detector, "<｜DSML｜tool_calls>"),
+            (DeepSeekV41Detector, "<｜DSML｜ calls>"),
+        ):
+            with self.subTest(detector=detector.__name__):
+                tag = detector().get_structural_tag([_weather_tool()], "auto")
+                before = _collect_excludes(tag.model_dump(by_alias=True), [])
+                self.assertTrue(any("</think>" in ex for ex in before))
 
-        strip_structural_tag_excludes(tag, THINK_TOKENS)
+                strip_structural_tag_excludes(tag, THINK_TOKENS)
 
-        after = _collect_excludes(tag.model_dump(by_alias=True), [])
-        self.assertFalse(any(tok in ex for ex in after for tok in THINK_TOKENS))
-        self.assertEqual(tag.format.triggers, ["<｜DSML｜tool_calls>"])
+                after = _collect_excludes(tag.model_dump(by_alias=True), [])
+                self.assertFalse(any(tok in ex for ex in after for tok in THINK_TOKENS))
+                self.assertEqual(tag.format.triggers, [trigger])
 
 
 if __name__ == "__main__":

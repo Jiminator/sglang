@@ -1,5 +1,6 @@
 """Unit tests for DeepSeekV4Detector DSML streaming — no server, no model loading."""
 
+import json
 import unittest
 from unittest.mock import patch
 
@@ -57,6 +58,50 @@ class TestDeepSeekV4Streaming(unittest.TestCase):
             normal += result.normal_text
             calls.extend(result.calls)
         return normal, calls
+
+    def test_string_whitespace_policy_across_deepseek_versions(self):
+        for parser_name, block, space in (
+            ("deepseekv32", "function_calls", ""),
+            ("deepseekv4", "tool_calls", ""),
+            ("deepseekv41", " calls", " "),
+        ):
+            for value in ("  SF\n\t ", " \t\n"):
+                expected = value if parser_name == "deepseekv41" else value.strip()
+                text = (
+                    f"<{DSML}{block}>"
+                    f'<{DSML}{space}invoke name="get_weather">'
+                    f'<{DSML}{space}parameter name="city" string="true">'
+                    f"{value}</{DSML}{space}parameter>"
+                    f"</{DSML}{space}invoke></{DSML}{block}>"
+                )
+                with self.subTest(parser=parser_name, value=value, mode="one-shot"):
+                    normal, calls = FunctionCallParser(
+                        self.tools, parser_name
+                    ).parse_non_stream(text)
+                    self.assertEqual(normal, "")
+                    self.assertEqual(len(calls), 1)
+                    self.assertEqual(
+                        json.loads(calls[0].parameters), {"city": expected}
+                    )
+
+                for width in (1, 4, len(text)):
+                    with self.subTest(parser=parser_name, value=value, width=width):
+                        parser = FunctionCallParser(self.tools, parser_name)
+                        normal, calls = "", []
+                        for offset in range(0, len(text), width):
+                            content, delta = parser.parse_stream_chunk(
+                                text[offset : offset + width]
+                            )
+                            normal += content
+                            calls.extend(delta)
+                        content, delta = parser.parse_stream_end()
+                        normal += content
+                        calls.extend(delta)
+                        self.assertEqual(normal, "")
+                        self.assertEqual(len(calls), 1)
+                        self.assertEqual(
+                            json.loads(calls[0].parameters), {"city": expected}
+                        )
 
     def test_preamble_in_same_delta_as_tool_call(self):
         """Prose sharing a delta with the tool call must not be dropped, and the
