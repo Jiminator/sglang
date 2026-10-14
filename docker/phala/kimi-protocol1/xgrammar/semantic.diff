@@ -1,0 +1,91 @@
+--- a/cpp/fsm_builder.cc
++++ b/cpp/fsm_builder.cc
+@@ -552,7 +552,9 @@
+   return false;
+ }
+ 
+-std::string RewriteRegexDots(const std::string& pattern, bool dot_matches_newline, bool crlf) {
++std::string RewriteRegexDots(
++    const std::string& pattern, bool dot_matches_newline, bool crlf, RegexDotDialect dialect
++) {
+   std::string result;
+   result.reserve(pattern.size());
+   RegexCharacterClassTracker class_tracker;
+@@ -614,7 +616,11 @@
+       continue;
+     }
+     if (character == '.' && !dot_matches_newline) {
+-      result += crlf ? "[^\\r\\n]" : "[^\\n]";
++      if (dialect == RegexDotDialect::kECMAScript) {
++        result += "[^\\r\\n\\u2028\\u2029]";
++      } else {
++        result += crlf ? "[^\\r\\n]" : "[^\\n]";
++      }
+       ++position;
+       continue;
+     }
+--- a/cpp/fsm_builder.h
++++ b/cpp/fsm_builder.h
+@@ -46,13 +46,19 @@
+  */
+ bool ContainsRegexMultilineLineAnchor(const std::string& pattern, bool multiline = false);
+ 
++/*! \brief The line terminators excluded by a non-dotAll regex dot. */
++enum class RegexDotDialect { kDefault, kECMAScript };
++
+ /*!
+- * \brief Rewrite every unescaped '.' outside character classes to "[^\n]" unless
+- * `dot_matches_newline` is true. Used to implement the standard regex dot semantics (and the
+- * dot-all 's' flag) on top of the regex engine, whose '.' matches every codepoint.
++ * \brief Rewrite unescaped '.' outside character classes unless `dot_matches_newline` is true.
++ * The default dialect excludes LF (and CR in `crlf` mode); ECMAScript excludes CR, LF, U+2028,
++ * and U+2029. Scoped dot-all 's' flags are respected in both dialects.
+  */
+ std::string RewriteRegexDots(
+-    const std::string& pattern, bool dot_matches_newline, bool crlf = false
++    const std::string& pattern,
++    bool dot_matches_newline,
++    bool crlf = false,
++    RegexDotDialect dialect = RegexDotDialect::kDefault
+ );
+ 
+ /*!
+--- a/cpp/json_schema_converter.cc
++++ b/cpp/json_schema_converter.cc
+@@ -2955,19 +2955,14 @@
+     return cached->second;
+   }
+ 
+-  // Under JSON Schema search semantics, `.*` accepts every string and `.+` accepts every nonempty
+-  // string. Emit the much smaller source-spelling language directly instead of surrounding and
+-  // re-encoding overlapping decoded wildcard automata.
+-  if (regex == ".*" || regex == ".+") {
++  // Under JSON Schema search semantics, `.*` matches an empty substring in every string. Emit
++  // its smaller source-spelling language directly. `.+` must use the decoded regex path because
++  // an ECMAScript dot excludes line terminators.
++  if (regex == ".*") {
+     static constexpr const char* kAnyJSONStringContent =
+         R"((?:[^\x00-\x1F\x22\x5C]|\x5C(?:[\x22\x2F\x5C\x62\x66\x6E\x72\x74]|\x75[0-9A-Fa-f]{4}))*)";
+-    std::string json_content = kAnyJSONStringContent;
+-    if (regex == ".+") {
+-      XGRAMMAR_DCHECK(json_content.back() == '*');
+-      json_content.back() = '+';
+-    }
+     const int32_t result = builder_.AddRegex(
+-        json_content,
++        kAnyJSONStringContent,
+         /*json_string=*/false,
+         /*byte_mode=*/false,
+         /*has_json_string_normal_sink=*/true
+@@ -3055,7 +3050,10 @@
+     return result;
+   }
+ 
+-  const std::string rewritten_pattern = RewriteJSONSchemaPatternForFullMatch(regex);
++  const std::string normalized_pattern = RewriteRegexDots(
++      regex, /*dot_matches_newline=*/false, /*crlf=*/false, RegexDotDialect::kECMAScript
++  );
++  const std::string rewritten_pattern = RewriteJSONSchemaPatternForFullMatch(normalized_pattern);
+   int32_t result = RegexExpression(rewritten_pattern, /*json_string=*/true);
+   json_schema_pattern_expr_ids_.emplace(std::move(cache_key), result);
+   return result;

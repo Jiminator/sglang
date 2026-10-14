@@ -1,0 +1,439 @@
+--- a/python/xgrammar/builtin_structural_tag.py
++++ b/python/xgrammar/builtin_structural_tag.py
+@@ -16,6 +16,8 @@
+     AnyTextFormat,
+     ConstStringFormat,
+     JSONSchemaFormat,
++    OptionalFormat,
++    OrFormat,
+     RegexFormat,
+     SequenceFormat,
+     StructuralTag,
+@@ -36,6 +38,7 @@
+     any_order: bool = False,
+     exclude_special_tokens: bool = True,
+     max_whitespace_cnt: Optional[int] = None,
++    parallel_tool_calls: bool = True,
+ ) -> StructuralTag:
+     r"""Get a structural tag for a model's reasoning and tool-call output format.
+ 
+@@ -207,6 +210,14 @@
+         emit in bad cases that would otherwise blow up grammar
+         compilation/matching. Default: ``None``.
+ 
++    parallel_tool_calls : bool
++        Whether the model may emit more than one tool call in a single response.
++        Default ``True`` keeps the existing multi-call grammar. When ``False``,
++        the structural tag allows at most one tool call and ends once that
++        call closes. Ordinary text or messages may precede the call. Existing
++        model-specific tool-choice requirements remain unchanged; this flag
++        does not strengthen existing no-call branches, including Harmony's.
++
+     Notes
+     -----
+     If a tool's ``parameters`` field is omitted or ``None``, its generated
+@@ -232,6 +243,9 @@
+     function_tools, builtin_tools, simplified_tool_choice = normalize_tool_choice(
+         tools, tool_choice
+     )
++
++    if not isinstance(parallel_tool_calls, bool):
++        raise ValueError("The 'parallel_tool_calls' argument must be a bool.")
+ 
+     return func(
+         function_tools,
+@@ -241,6 +255,7 @@
+         any_order=any_order,
+         exclude_special_tokens=exclude_special_tokens,
+         max_whitespace_cnt=max_whitespace_cnt,
++        parallel_tool_calls=parallel_tool_calls,
+     )
+ 
+ 
+@@ -528,6 +543,7 @@
+     any_order: bool = False,
+     exclude_special_tokens: bool = True,
+     max_whitespace_cnt: Optional[int] = None,
++    parallel_tool_calls: bool = True,
+     **kwargs: Any,
+ ) -> StructuralTag:
+     """Get Llama style structural tag format.
+@@ -587,6 +603,7 @@
+                 triggers=[TOOLS_TRIGGER],
+                 tags=tags,
+                 excludes=_text_excludes(exclude_special_tokens, THINK_EXCLUDE_TOKENS),
++                stop_after_first=not parallel_tool_calls,
+             )
+         else:
+             suffix_tag = AnyTextFormat(
+@@ -630,6 +647,7 @@
+             tags=tags,
+             excludes=_text_excludes(exclude_special_tokens, THINK_EXCLUDE_TOKENS),
+             at_least_one=True,
++            stop_after_first=not parallel_tool_calls,
+         )
+ 
+     return StructuralTag(format=suffix_tag)
+@@ -644,6 +662,7 @@
+     any_order: bool = False,
+     exclude_special_tokens: bool = True,
+     max_whitespace_cnt: Optional[int] = None,
++    parallel_tool_calls: bool = True,
+     **kwargs: Any,
+ ) -> StructuralTag:
+     """Get Kimi-K2 style structural tag format.
+@@ -708,7 +727,9 @@
+             )
+ 
+         if len(tags) > 0:
+-            inner_tool_calls = TagsWithSeparatorFormat(tags=tags, separator="", at_least_one=True)
++            inner_tool_calls = TagsWithSeparatorFormat(
++                tags=tags, separator="", at_least_one=True, stop_after_first=not parallel_tool_calls
++            )
+             tool_calls = TagFormat(
+                 begin=TOOL_CALLS_SECTION_BEGIN, content=inner_tool_calls, end=TOOL_CALLS_SECTION_END
+             )
+@@ -718,6 +739,7 @@
+                 excludes=_text_excludes(
+                     exclude_special_tokens, [*THINK_EXCLUDE_TOKENS, TOOL_CALL_BEGIN]
+                 ),
++                stop_after_first=not parallel_tool_calls,
+             )
+         else:
+             suffix_tag = AnyTextFormat(
+@@ -776,7 +798,12 @@
+         suffix_tag = SequenceFormat(
+             elements=[
+                 ConstStringFormat(value=TOOL_CALLS_SECTION_BEGIN),
+-                TagsWithSeparatorFormat(tags=tags, separator="", at_least_one=True),
++                TagsWithSeparatorFormat(
++                    tags=tags,
++                    separator="",
++                    at_least_one=True,
++                    stop_after_first=not parallel_tool_calls,
++                ),
+                 ConstStringFormat(value=TOOL_CALLS_SECTION_END),
+             ]
+         )
+@@ -797,6 +824,7 @@
+     any_order: bool = False,
+     exclude_special_tokens: bool = True,
+     max_whitespace_cnt: Optional[int] = None,
++    parallel_tool_calls: bool = True,
+     **kwargs: Any,
+ ) -> StructuralTag:
+     """Get DeepSeek-R1 style structural tag format.
+@@ -841,7 +869,12 @@
+             )
+ 
+         if len(tags) > 0:
+-            inner_tool_calls = TagsWithSeparatorFormat(tags=tags, separator="\n", at_least_one=True)
++            inner_tool_calls = TagsWithSeparatorFormat(
++                tags=tags,
++                separator="\n",
++                at_least_one=True,
++                stop_after_first=not parallel_tool_calls,
++            )
+             tool_calls = TagFormat(
+                 begin=TOOL_CALLS_BEGIN, content=inner_tool_calls, end=TOOL_CALLS_END
+             )
+@@ -849,6 +882,7 @@
+                 triggers=[TOOL_CALLS_BEGIN],
+                 tags=[tool_calls],
+                 excludes=_text_excludes(exclude_special_tokens, THINK_EXCLUDE_TOKENS),
++                stop_after_first=not parallel_tool_calls,
+             )
+         else:
+             suffix_tag = AnyTextFormat(
+@@ -887,7 +921,9 @@
+             )
+ 
+         assert len(tags) > 0
+-        inner_tool_calls = TagsWithSeparatorFormat(tags=tags, separator="\n", at_least_one=True)
++        inner_tool_calls = TagsWithSeparatorFormat(
++            tags=tags, separator="\n", at_least_one=True, stop_after_first=not parallel_tool_calls
++        )
+         suffix_tag = TagFormat(begin=TOOL_CALLS_BEGIN, content=inner_tool_calls, end=TOOL_CALLS_END)
+ 
+     if not reasoning:
+@@ -907,6 +943,7 @@
+     any_order: bool = False,
+     exclude_special_tokens: bool = True,
+     max_whitespace_cnt: Optional[int] = None,
++    parallel_tool_calls: bool = True,
+     **kwargs: Any,
+ ) -> StructuralTag:
+     """Get DeepSeek-V3.1 style structural tag format.
+@@ -949,7 +986,9 @@
+             )
+ 
+         if len(tags) > 0:
+-            inner_tool_calls = TagsWithSeparatorFormat(tags=tags, separator="", at_least_one=True)
++            inner_tool_calls = TagsWithSeparatorFormat(
++                tags=tags, separator="", at_least_one=True, stop_after_first=not parallel_tool_calls
++            )
+             tool_calls = TagFormat(
+                 begin=TOOL_CALLS_BEGIN, content=inner_tool_calls, end=TOOL_CALLS_END
+             )
+@@ -957,6 +996,7 @@
+                 triggers=[TOOL_CALLS_BEGIN],
+                 tags=[tool_calls],
+                 excludes=_text_excludes(exclude_special_tokens, THINK_EXCLUDE_TOKENS),
++                stop_after_first=not parallel_tool_calls,
+             )
+         else:
+             suffix_tag = AnyTextFormat(
+@@ -995,7 +1035,9 @@
+             )
+ 
+         assert len(tags) > 0
+-        inner_tool_calls = TagsWithSeparatorFormat(tags=tags, separator="", at_least_one=True)
++        inner_tool_calls = TagsWithSeparatorFormat(
++            tags=tags, separator="", at_least_one=True, stop_after_first=not parallel_tool_calls
++        )
+         suffix_tag = TagFormat(begin=TOOL_CALLS_BEGIN, content=inner_tool_calls, end=TOOL_CALLS_END)
+ 
+     if not reasoning:
+@@ -1016,6 +1058,7 @@
+     any_order: bool = False,
+     exclude_special_tokens: bool = True,
+     max_whitespace_cnt: Optional[int] = None,
++    parallel_tool_calls: bool = True,
+     **kwargs: Any,
+ ) -> StructuralTag:
+     """Get Qwen XML tool-call structural tag format.
+@@ -1077,6 +1120,7 @@
+                 triggers=[TOOL_CALL_TRIGGER],
+                 tags=tags,
+                 excludes=_text_excludes(exclude_special_tokens, THINK_EXCLUDE_TOKENS),
++                stop_after_first=not parallel_tool_calls,
+             )
+         else:
+             suffix_tag = AnyTextFormat(
+@@ -1123,6 +1167,7 @@
+             tags=tags,
+             excludes=_text_excludes(exclude_special_tokens, THINK_EXCLUDE_TOKENS),
+             at_least_one=True,
++            stop_after_first=not parallel_tool_calls,
+         )
+ 
+     if not reasoning:
+@@ -1150,6 +1195,7 @@
+     any_order: bool = False,
+     exclude_special_tokens: bool = True,
+     max_whitespace_cnt: Optional[int] = None,
++    parallel_tool_calls: bool = True,
+     **kwargs: Any,
+ ) -> StructuralTag:
+     """Get Qwen3 style structural tag format.
+@@ -1209,6 +1255,7 @@
+                 triggers=[TOOL_CALL_TRIGGER],
+                 tags=tags,
+                 excludes=_text_excludes(exclude_special_tokens, THINK_EXCLUDE_TOKENS),
++                stop_after_first=not parallel_tool_calls,
+             )
+         else:
+             suffix_tag = AnyTextFormat(
+@@ -1253,6 +1300,7 @@
+             tags=tags,
+             excludes=_text_excludes(exclude_special_tokens, THINK_EXCLUDE_TOKENS),
+             at_least_one=True,
++            stop_after_first=not parallel_tool_calls,
+         )
+ 
+     if not reasoning:
+@@ -1276,6 +1324,7 @@
+     any_order: bool = False,
+     exclude_special_tokens: bool = True,
+     max_whitespace_cnt: Optional[int] = None,
++    parallel_tool_calls: bool = True,
+     **kwargs: Any,
+ ) -> StructuralTag:
+     """Get harmony(gpt-oss) style structural tag format.
+@@ -1400,8 +1449,37 @@
+         analysis_tag = TagFormat(begin=ANALYSIS_BEGIN, content=AnyTextFormat(), end=FINAL_END)
+         tags.append(analysis_tag)
+ 
+-    tags_with_separator = TagsWithSeparatorFormat(tags=tags, separator=TAG_SEPARATOR)
+-    return StructuralTag(format=tags_with_separator)
++    call_tags = [tag for tag in tags if tag.end == CALL_END]
++    message_tags = [tag for tag in tags if tag.end != CALL_END]
++    if parallel_tool_calls or not call_tags:
++        tags_with_separator = TagsWithSeparatorFormat(tags=tags, separator=TAG_SEPARATOR)
++        return StructuralTag(format=tags_with_separator)
++
++    # Harmony carries tool calls, analysis and final messages in one message stream, so
++    # capping the stream at a single message would also forbid an ordinary reasoning or
++    # final message. Cap the tool-call messages alone: any number of other messages, then
++    # at most one tool call, which ends the turn.
++    one_call = TagsWithSeparatorFormat(
++        tags=call_tags, separator=TAG_SEPARATOR, at_least_one=True, stop_after_first=True
++    )
++    if not message_tags:
++        return StructuralTag(format=OptionalFormat(content=one_call))
++    messages_then_call = SequenceFormat(
++        elements=[
++            TagsWithSeparatorFormat(tags=message_tags, separator=TAG_SEPARATOR, at_least_one=True),
++            ConstStringFormat(value=TAG_SEPARATOR),
++            one_call,
++        ]
++    )
++    return StructuralTag(
++        format=OrFormat(
++            elements=[
++                TagsWithSeparatorFormat(tags=message_tags, separator=TAG_SEPARATOR),
++                one_call,
++                messages_then_call,
++            ]
++        )
++    )
+ 
+ 
+ @register_model_structural_tag("deepseek_v3_2")
+@@ -1413,6 +1491,7 @@
+     any_order: bool = False,
+     exclude_special_tokens: bool = True,
+     max_whitespace_cnt: Optional[int] = None,
++    parallel_tool_calls: bool = True,
+     **kwargs: Any,
+ ) -> StructuralTag:
+     """Get DeepSeek-V3.2 style structural tag format.
+@@ -1464,7 +1543,10 @@
+         # generate function calling triggered tag
+         if len(tags) > 0:
+             function_calling_tags = TagsWithSeparatorFormat(
+-                tags=tags, separator=INVOKE_SEPARATOR, at_least_one=True
++                tags=tags,
++                separator=INVOKE_SEPARATOR,
++                at_least_one=True,
++                stop_after_first=not parallel_tool_calls,
+             )
+ 
+             suffix_tag = TriggeredTagsFormat(
+@@ -1477,6 +1559,7 @@
+                     )
+                 ],
+                 excludes=_text_excludes(exclude_special_tokens, THINK_EXCLUDE_TOKENS),
++                stop_after_first=not parallel_tool_calls,
+             )
+         else:
+             suffix_tag = AnyTextFormat(
+@@ -1525,7 +1608,12 @@
+         suffix_tag = SequenceFormat(
+             elements=[
+                 ConstStringFormat(value=TOOL_CALLS_PREFIX + FUNCTION_CALLS_BEGIN),
+-                TagsWithSeparatorFormat(tags=tags, separator=INVOKE_SEPARATOR, at_least_one=True),
++                TagsWithSeparatorFormat(
++                    tags=tags,
++                    separator=INVOKE_SEPARATOR,
++                    at_least_one=True,
++                    stop_after_first=not parallel_tool_calls,
++                ),
+                 ConstStringFormat(value=FUNCTION_CALLS_END),
+             ]
+         )
+@@ -1548,6 +1636,7 @@
+     any_order: bool = False,
+     exclude_special_tokens: bool = True,
+     max_whitespace_cnt: Optional[int] = None,
++    parallel_tool_calls: bool = True,
+     **kwargs: Any,
+ ) -> StructuralTag:
+     """Get MiniMax-M2.5 style structural tag format.
+@@ -1600,7 +1689,7 @@
+         # generate function calling triggered tag
+         if len(tags) > 0:
+             function_calling_tags = TagsWithSeparatorFormat(
+-                tags=tags, separator="", at_least_one=True
++                tags=tags, separator="", at_least_one=True, stop_after_first=not parallel_tool_calls
+             )
+ 
+             suffix_tag = TriggeredTagsFormat(
+@@ -1611,6 +1700,7 @@
+                     )
+                 ],
+                 excludes=_text_excludes(exclude_special_tokens, THINK_EXCLUDE_TOKENS),
++                stop_after_first=not parallel_tool_calls,
+             )
+         else:
+             suffix_tag = AnyTextFormat(
+@@ -1659,7 +1749,12 @@
+         suffix_tag = SequenceFormat(
+             elements=[
+                 ConstStringFormat(value="\n" + TOOL_CALL_BEGIN),
+-                TagsWithSeparatorFormat(tags=tags, separator="", at_least_one=True),
++                TagsWithSeparatorFormat(
++                    tags=tags,
++                    separator="",
++                    at_least_one=True,
++                    stop_after_first=not parallel_tool_calls,
++                ),
+                 ConstStringFormat(value=TOOL_CALL_END),
+             ]
+         )
+@@ -1684,6 +1779,7 @@
+     any_order: bool = False,
+     exclude_special_tokens: bool = True,
+     max_whitespace_cnt: Optional[int] = None,
++    parallel_tool_calls: bool = True,
+     **kwargs: Any,
+ ) -> StructuralTag:
+     """Get GLM-4.7/GLM-5 style structural tag format.
+@@ -1757,6 +1853,7 @@
+                 triggers=[TOOL_CALL_TRIGGER],
+                 tags=tags,
+                 excludes=_text_excludes(exclude_special_tokens, TEXT_EXCLUDES),
++                stop_after_first=not parallel_tool_calls,
+             )
+         else:
+             suffix_tag = AnyTextFormat(
+@@ -1801,6 +1898,7 @@
+             tags=tags,
+             excludes=_text_excludes(exclude_special_tokens, TEXT_EXCLUDES),
+             at_least_one=True,
++            stop_after_first=not parallel_tool_calls,
+         )
+ 
+     if not reasoning:
+@@ -1957,6 +2055,7 @@
+     any_order: bool = False,
+     exclude_special_tokens: bool = True,
+     max_whitespace_cnt: Optional[int] = None,
++    parallel_tool_calls: bool = True,
+     **kwargs: Any,
+ ) -> StructuralTag:
+     """Get DeepSeek-V4 style structural tag format.
+@@ -2006,7 +2105,10 @@
+         # generate function calling triggered tag
+         if len(tags) > 0:
+             function_calling_tags = TagsWithSeparatorFormat(
+-                tags=tags, separator=INVOKE_SEPARATOR, at_least_one=True
++                tags=tags,
++                separator=INVOKE_SEPARATOR,
++                at_least_one=True,
++                stop_after_first=not parallel_tool_calls,
+             )
+ 
+             suffix_tag = TriggeredTagsFormat(
+@@ -2019,6 +2121,7 @@
+                     )
+                 ],
+                 excludes=_text_excludes(exclude_special_tokens, THINK_EXCLUDE_TOKENS),
++                stop_after_first=not parallel_tool_calls,
+             )
+         else:
+             suffix_tag = AnyTextFormat(
+@@ -2067,7 +2170,12 @@
+         suffix_tag = SequenceFormat(
+             elements=[
+                 ConstStringFormat(value=TOOL_CALLS_PREFIX + FUNCTION_CALLS_BEGIN),
+-                TagsWithSeparatorFormat(tags=tags, separator=INVOKE_SEPARATOR, at_least_one=True),
++                TagsWithSeparatorFormat(
++                    tags=tags,
++                    separator=INVOKE_SEPARATOR,
++                    at_least_one=True,
++                    stop_after_first=not parallel_tool_calls,
++                ),
+                 ConstStringFormat(value=FUNCTION_CALLS_END),
+             ]
+         )

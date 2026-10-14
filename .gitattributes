@@ -1,0 +1,11 @@
+# Preserve the exact product bytes qualified for K3 protocol release.
+python/sglang/srt/constrained/grammar_manager.py -text
+python/sglang/srt/constrained/reasoner_grammar_backend.py -text
+python/sglang/srt/constrained/xgrammar_backend.py -text
+python/sglang/srt/entrypoints/openai/chat_encoding.py -text
+python/sglang/srt/entrypoints/openai/encoding_k3.py -text
+python/sglang/srt/entrypoints/openai/serving_chat.py -text
+python/sglang/srt/function_call/kimik3_detector.py -text
+python/sglang/srt/function_call/kimik3_structural_tag.py -text
+# Patch context blank lines and original serialization are intentional.
+docker/phala/kimi-protocol1/xgrammar/*.diff -text -whitespace

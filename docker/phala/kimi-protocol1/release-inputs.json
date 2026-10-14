@@ -1,0 +1,102 @@
+{
+  "schema": "phala.sglang.k3protocol-release-inputs.v1",
+  "upstream": {
+    "repository": "https://github.com/sgl-project/sglang",
+    "tag": "v0.5.21",
+    "commit": "e00930c5489053f26d86b179cee0d087f846acbb"
+  },
+  "base_engine_commit": "e9a40ece22f8539d434ccc138336019ddbf2e06c",
+  "base_engine_tree": "36a796bbb3e61bc97dcb881d7e955d794f03e846",
+  "base_image": "ghcr.io/phala-network/sglang:v0.5.21-phala-3-mcfix3@sha256:f077dab5c1d77930e4c117b609bd8bab8bee5216eb585e7f682ed0f6e3a23e13",
+  "base_serving_patches_commit": "a09c9f546e839cd3cedded5dea7c29145249ceff",
+  "mooncake_commit": "2214a3ca04e165ced3cab3cf604918d2ec22ed0f",
+  "protocol_source_commit": "dfbdb81c0711575763d5ed26d04b0dd7e498faf0",
+  "protocol_source_tree": "bfdf87c2d274f8b8f7d0ad767bd09feca81ae466",
+  "byte_freeze": "The development commit stores LF blobs; the qualified product manifest binds seven CRLF files and the new LF encoding module. Exact -text attributes preserve those qualified bytes in the release commit and git archive.",
+  "product_files": [
+    {
+      "path": "python/sglang/srt/constrained/grammar_manager.py",
+      "sha256": "91878c951899a59fbebef66807636c897075c84916e0de876dcf4e5e95001499",
+      "size": 15373
+    },
+    {
+      "path": "python/sglang/srt/constrained/reasoner_grammar_backend.py",
+      "sha256": "5e52a1818cd208e43a6144e6cf67bdc2e9a22a47d94e124fc9c95466c4a9a377",
+      "size": 23273
+    },
+    {
+      "path": "python/sglang/srt/constrained/xgrammar_backend.py",
+      "sha256": "e26b86ccc0354959901ac42ad430b33fee16111ac6296715956c5d484b9eaf6a",
+      "size": 18732
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/chat_encoding.py",
+      "sha256": "161997ed3467cf612978f6b7573a9e137d352c8e5f6cee71be01f0bd2d84f51a",
+      "size": 10488
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/encoding_k3.py",
+      "sha256": "b6e3d4d67ee803552cd998402867e4f301add86d1f85fbb056908217fc50d720",
+      "size": 4993
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_chat.py",
+      "sha256": "50591b8d419bf345be5e8c0c8ef7712d8606a8894cec40d95d740f8bec86c79e",
+      "size": 147228
+    },
+    {
+      "path": "python/sglang/srt/function_call/kimik3_detector.py",
+      "sha256": "7ecbada1d9590ea08b1f67c72874df048daefdb79a4d5331d6e793392bf31766",
+      "size": 11477
+    },
+    {
+      "path": "python/sglang/srt/function_call/kimik3_structural_tag.py",
+      "sha256": "c708f60a62598b49ea9ba6e88a1578eba540f1cd48d8b7e28a7523c792f4a415",
+      "size": 26530
+    }
+  ],
+  "source_manifest_sha256": "6f4ddb08a15f82336c14e4fd006bfcd2e29be0b87cf23774f970e21f5531b7a0",
+  "external_governor": "Existing external PIG deployment component; not embedded or changed by this source/image repair.",
+  "xgrammar": {
+    "version": "0.2.6rc2+phala.ecmadot.20261014.p1",
+    "upstream_repository": "https://github.com/mlc-ai/xgrammar",
+    "upstream_tag": "v0.2.6rc2",
+    "upstream_commit": "8d9679cc4b2b7eb314f7840fbf3989e2a989f880",
+    "source_archive_sha256": "6737df1762efd28f4e4a73f56b868593685346b6c0f902ddfee570850cc1350c",
+    "pristine_tree_sha256": "86cdc6c51981e72ef0db6c089dc9b617e6e7d3780bd782f0422837479ff7f5de",
+    "patched_tree_sha256": "45ee729c866f2b74ff91f3978afd8766bf508f9db840b180acbfb5241c1883b9",
+    "patches": [
+      {
+        "path": "xgrammar/semantic.diff",
+        "sha256": "98a8b861747d2e95ab2d8b8b54d9a866e63ccab275ab1bca7223de5c741fed0e",
+        "role": "schema_dot_semantics"
+      },
+      {
+        "path": "xgrammar/api-compat.diff",
+        "sha256": "1ec46d47b92a88cc6aefef7c044941ef4cda45173c22c2e4011da029b7e52499",
+        "role": "official_parallel_tool_calls_compatibility"
+      },
+      {
+        "path": "xgrammar/packaging-p1.diff",
+        "sha256": "b1a72ab8383c9f138d5d24974c4b0e1ae9c2e02addf36f43f85caf1b72c8cd75",
+        "role": "experimental_distribution_identity"
+      }
+    ],
+    "wheel_asset": "xgrammar-0.2.6rc2+phala.ecmadot.20261014.p1-cp312-cp312-linux_x86_64.whl",
+    "wheel_sha256": "e80259e5837dd5f8c21cac0b95906def48b59bcb27705697733d438ce7acd36b",
+    "wheel_bytes": 1442669,
+    "native_library_sha256": "41e8b8fa7f89c4d278c73795ad45e464fd9c800327c79465123e282bc7077fb2",
+    "python_soabi": "cpython-312-x86_64-linux-gnu",
+    "license": "Apache-2.0",
+    "artifact_policy": "Use the already tested wheel attached to the source Release; do not rebuild it for this image. Patches preserve exact source provenance, not byte-reproducible compiler output."
+  },
+  "qualification": {
+    "same_product_bytes": true,
+    "cpu_regressions_passed": 809,
+    "cpu_subtests": 782,
+    "retained_synthetic_tokenizer_skips": 12,
+    "http_entrypoint_cases": 48,
+    "live_model_matrix_cases": 60,
+    "boundary": "Source and isolated candidate evidence only; the final image, PIG/public entrypoint and per-node rollout require their own acceptance. No E2E TPS gain is claimed."
+  }
+}
