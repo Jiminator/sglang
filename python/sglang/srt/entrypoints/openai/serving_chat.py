@@ -1047,8 +1047,22 @@ class OpenAIServingChat(OpenAIServingBase):
         The reasoning parser is told the same thing, so channel-framed formats
         keep their framing intact exactly when a tool-call parser consumes it.
         """
+        response_format = request.response_format
+        # Match to_sampling_params: an explicit JSON constraint takes precedence
+        # over auto tool grammar. Its string data must not be parsed as tools.
+        constrained_json = response_format is not None and (
+            response_format.type == "json_object"
+            or (
+                response_format.type == "json_schema"
+                and (
+                    response_format.json_schema.strict is not False
+                    or self.chat_encoding_spec != "kimi_k3"
+                )
+            )
+        )
         return bool(
-            request.tool_choice != "none"
+            not constrained_json
+            and request.tool_choice != "none"
             and self._effective_tools(request)
             and self.tool_call_parser
         )
