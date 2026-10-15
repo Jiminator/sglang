@@ -1031,14 +1031,20 @@ class OpenAIServingResponses(OpenAIServingChat):
     ):
         chat_tools = self._response_tools_to_chat_tools(request)
         if self.reasoning_parser:
+            structured_json = (
+                self.reasoning_parser == "kimi_k3"
+                and request.has_json_schema_constraint()
+            )
             reasoning_parser = ReasoningParser(
                 model_type=self.reasoning_parser,
                 stream_reasoning=False,
                 # A template that prefills <think> forces the parser open even
                 # when the request itself did not ask for reasoning, same as chat.
                 force_reasoning=(
-                    self.template_manager.force_reasoning or require_reasoning
+                    require_reasoning if structured_json else
+                    (self.template_manager.force_reasoning or require_reasoning)
                 ),
+                structured_json=structured_json,
                 request=request,
                 tokenizer=self.tokenizer_manager.tokenizer,
                 tool_call_parser_active=bool(
@@ -2023,14 +2029,20 @@ class OpenAIServingResponses(OpenAIServingChat):
                 )
         reasoning_parser_obj: Optional[ReasoningParser] = None
         if self.reasoning_parser:
+            structured_json = (
+                self.reasoning_parser == "kimi_k3"
+                and request.has_json_schema_constraint()
+            )
             reasoning_parser_obj = ReasoningParser(
                 model_type=self.reasoning_parser,
                 stream_reasoning=True,
                 # A template that prefills <think> forces the parser open even
                 # when the request itself did not ask for reasoning, same as chat.
                 force_reasoning=(
-                    self.template_manager.force_reasoning or require_reasoning
+                    require_reasoning if structured_json else
+                    (self.template_manager.force_reasoning or require_reasoning)
                 ),
+                structured_json=structured_json,
                 request=request,
                 tokenizer=self.tokenizer_manager.tokenizer,
                 tool_call_parser_active=isinstance(tool_parser, FunctionCallParser),
