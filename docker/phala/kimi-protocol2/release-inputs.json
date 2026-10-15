@@ -1,0 +1,118 @@
+{
+  "schema": "phala.sglang.k3-feedback-release-inputs.v1",
+  "status": "source-bytes-frozen",
+  "upstream": {
+    "repository": "https://github.com/sgl-project/sglang",
+    "tag": "v0.5.21",
+    "commit": "e00930c5489053f26d86b179cee0d087f846acbb"
+  },
+  "base_engine_commit": "350852e6b384c1881431b0e8ec59e73cd5be3107",
+  "base_engine_tree": "ef9cef2c85ab76e55e5d49d43cc2359a21addf30",
+  "base_image": "ghcr.io/phala-network/sglang:v0.5.21-phala-3-k3protocol1@sha256:31d5b201dd88b46210b13cee50d87d328aff2c41432beb5e897a5d478b3874f4",
+  "base_serving_patches_commit": "86b9925e120847c93fe2d4149ff09c09e873e05b",
+  "mooncake_commit": "2214a3ca04e165ced3cab3cf604918d2ec22ed0f",
+  "external_governor": "Existing separately pinned external PIG; no embedded Governor or PIG change in this image.",
+  "qualified_product_commit": "8cb9b405887c7c7660e6863c345f12c2f8b2eea5",
+  "product_files": [
+    {
+      "path": "python/sglang/srt/constrained/reasoner_grammar_backend.py",
+      "sha256": "fd973c633f33c62e6ed4c15173ab6a42a87a0bb1ff0bc2ea4b4f0e3563c36cd6",
+      "size": 28723
+    },
+    {
+      "path": "python/sglang/srt/constrained/kimik3_json_schema.py",
+      "sha256": "e9b656ac9adf74a39fd5ceb33123bf739d0c9a4f06b89f0f49e56c1e831eb75f",
+      "size": 2207
+    },
+    {
+      "path": "python/sglang/srt/constrained/json_schema_validation.py",
+      "sha256": "484cf7b602f3fac47b2b8649b5a8673878507a5490f1fb732dfeb870143899cf",
+      "size": 12368
+    },
+    {
+      "path": "python/sglang/srt/function_call/kimik3_structural_tag.py",
+      "sha256": "3d57374443c690415666ee63e7dd148384958f5523d1fab0bf11df05d302eb69",
+      "size": 27852
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_chat.py",
+      "sha256": "e21c1d61f79a309388439653be6b03a77622587f27502cdb4f3f526cc7c3ae3b",
+      "size": 151222
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_responses.py",
+      "sha256": "6d9ef84f4e34a0c77f95681ab52c1768ab700e7d85dc6ec9cedfde50e7c4dd28",
+      "size": 116085
+    },
+    {
+      "path": "python/sglang/srt/parser/reasoning_parser.py",
+      "sha256": "819a01c1845560889b91d4101037ad1f7ccec48703289b0cc62cbaf070bb6572",
+      "size": 104229
+    }
+  ],
+  "qualification_references": [
+    {
+      "name": "prerelease-final-result.json",
+      "sha256": "a2369e4acff5246585efc0e6b030e3f4cbaf2a8945675646f3eb23be86cc9cf5"
+    }
+  ],
+  "xgrammar": {
+    "version": "0.2.6rc2+phala.feedback.20261015.p3",
+    "upstream_repository": "https://github.com/mlc-ai/xgrammar",
+    "upstream_tag": "v0.2.6rc2",
+    "upstream_commit": "8d9679cc4b2b7eb314f7840fbf3989e2a989f880",
+    "source_commit": "da0ecfb3a758c23650a9bbcc59b7ec15873f9c91",
+    "source_tree": "6c1105e4bfd75fa91d8a04b9f8d06019700cbc8c",
+    "patch": "xgrammar/native-source.patch",
+    "patch_sha256": "f63d313b26ac64c85eee184b37682570e2b08300608b66957bd4cadd32d39d11",
+    "source_replay_verified": true,
+    "notices": {
+      "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "NOTICE": "769c6907073c65801bfcfe3ce1c0e80bf0ae4e124e2769d4f026c038ad583c0f"
+    },
+    "wheel_asset": "xgrammar-0.2.6rc2+phala.feedback.20261015.p3-cp312-cp312-linux_x86_64.whl",
+    "wheel_sha256": "5235045af2d459f260d4e85fb3632631de858d91bbeec17adc2e75f21992956a",
+    "wheel_bytes": 1489972,
+    "wheel_package_members": {
+      "xgrammar/__init__.py": "1ed05da12db21c4aeb36daa1fd1c6b70bc5d8ffb45cdabbbf384c60c8b04ac43",
+      "xgrammar/base.py": "889935d4e0dd8b1fdafa008a21c69c8eb08f06bb55f1e37227a26d2f41c1f70e",
+      "xgrammar/builtin_structural_tag.py": "8ac13f9ed53d012859e88479123d73554a1197f32c7887e216fd66535c4384c8",
+      "xgrammar/compiler.py": "67e2154127ac14c7f9afde0761755124f2a981f7b0c5a11a1fb96092b6fd109c",
+      "xgrammar/config.py": "a5e71e4e2a2fd7908611d6d31031432993d656f39cdfbcff2563b7ffbea92640",
+      "xgrammar/contrib/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "xgrammar/contrib/hf.py": "7bb8c3853a94daacc51aff867d170c28e500ebef00095fc687962e7b2a9a37bf",
+      "xgrammar/contrib/mlxlm.py": "608c1f724144ce59a743220dabda21734edacec4263e6fa5e3b2a578d00bdb6e",
+      "xgrammar/exception.py": "3c3baeea3855169cb50d5312bf93d389c2df9a58ce67181a1687bd9a6431cf62",
+      "xgrammar/grammar.py": "2a26827c5cfbaa1e6625b3732e49d0bb3a8d790df288bfb66a73a7d118c9045d",
+      "xgrammar/kernels/__init__.py": "46675d969427ce7c2e47886b6575c8f9ad0fcb99b497213250a0812e7b449da5",
+      "xgrammar/kernels/apply_token_bitmask_inplace_cpu.py": "0d9dd747303b877bea069e9147344282a1da15ebe654320593dbc46e6210b6fc",
+      "xgrammar/kernels/apply_token_bitmask_inplace_cuda.cu": "91805d13f404e4668c48051432719cd88b84c0630403ca2c657a0905d4d145b6",
+      "xgrammar/kernels/apply_token_bitmask_inplace_cuda.py": "d890d4a5d967b726dab4b503d6774ccd337d0d69e35e781836db848616379626",
+      "xgrammar/kernels/apply_token_bitmask_inplace_torch.py": "14956986896b0efc52cbce893a098e6bbed4d75561918014abef308147f9ae6c",
+      "xgrammar/kernels/apply_token_bitmask_inplace_torch_compile.py": "a8274a98f934e5506ed4933ca82aab3ce94972575c9c302224a2dba8a206f204",
+      "xgrammar/kernels/apply_token_bitmask_inplace_triton.py": "3e517df264f70884203c9907e7ea191bfa146adc3d7b36c440128cd611260e22",
+      "xgrammar/kernels/apply_token_bitmask_mlx.py": "e563c82fa8650c4295b76c8bce49a90d978d65e2bcc0b3ba42808eb0d90e5d00",
+      "xgrammar/libxgrammar_bindings.so": "b1fa9fb58179fa49cb6cd25690a9c53cfb15391f9c6481fa146ac133289c847a",
+      "xgrammar/load_binding.py": "f35966016b2efff541b81ed94d8e74201e9b5c325bf043396974d22d99964d4d",
+      "xgrammar/matcher.py": "33159a0994724cc186203eb8d2792cf66d9df9197029632bbc674852dcb50990",
+      "xgrammar/openai_tool_call_schema.py": "81f2de14005133b298f5969268bfc6b1b94d0810cf5e9f0dab4e1fabb9cbb58c",
+      "xgrammar/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "xgrammar/structural_tag.py": "5495d4b2ed22d1e5a9471eea04cca47804f89be39d1a5590d738374412f80893",
+      "xgrammar/testing.py": "30ae431fea2b76c289e67ca7d32bca36bf7cc8af6bb7723feedfbfc9536332d8",
+      "xgrammar/tokenizer_info.py": "b6efbd2103e39c980f7660543b998adb504e306b7dd67aae5a9d0e89284a4b28",
+      "xgrammar/tvm_ffi_binding/__init__.py": "153d446f150093172f8364468a7f3a09716e22eaf2282c469d40da9699181cd4",
+      "xgrammar/tvm_ffi_binding/_ffi_api.py": "2e5ed586f8c410df4343c3f90b9135708f53c0ca7a4d1a60af50134b541c84d6",
+      "xgrammar/tvm_ffi_binding/config/__init__.py": "615e9623d99c0144801950646f35c92ca84019e859c126aa13436d6cfc792d02",
+      "xgrammar/tvm_ffi_binding/config/_ffi_api.py": "db5b24e5e5bd99fbae507e1a63182a2cd56d4dfb2d8b466fbbcae1deed87996c",
+      "xgrammar/tvm_ffi_binding/kernels/__init__.py": "c7038a1ee259b3531cfd8798ba062b2273d433db3c62db89dea3975145a4d64f",
+      "xgrammar/tvm_ffi_binding/kernels/_ffi_api.py": "39e8de26835da5d1c1d1e70390e8d914ec93733ffa2232cca2ddc325116c11fd",
+      "xgrammar/tvm_ffi_binding/testing/__init__.py": "a78697f4d44872d2eb7f1ebddfb0769c3c479522c55704f7d75c9eafffe62f50",
+      "xgrammar/tvm_ffi_binding/testing/_ffi_api.py": "645c6416b3b86d82c13a9351fb906ff77ab698748be0194d88e5f90e2d2262af",
+      "xgrammar/tvm_ffi_binding/testing/grammar_functor/__init__.py": "ef6966198e61297b7d65fabc99f1e74f580e662c3d9b4689d75edfac201deefd",
+      "xgrammar/tvm_ffi_binding/testing/grammar_functor/_ffi_api.py": "c85be1c82504bc2d37ee6e0165103c7989dcd007fe1e6de417833a666cff94ea"
+    },
+    "artifact_policy": "Install this already tested wheel without rebuilding and without dependency resolution. Source replay is not a byte-reproducible wheel claim."
+  },
+  "boundary": "Source/provenance preparation only. Actual final-image CPU/CLI/native/Mooncake and scoped production acceptance remain separate.",
+  "qualified_product_tree": "d7101e799b4d0c2c77de6a0ab2992d6a8f2ca0e9"
+}

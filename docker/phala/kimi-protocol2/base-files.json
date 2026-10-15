@@ -1,0 +1,9 @@
+{
+  "python/sglang/srt/constrained/reasoner_grammar_backend.py": "5e52a1818cd208e43a6144e6cf67bdc2e9a22a47d94e124fc9c95466c4a9a377",
+  "python/sglang/srt/constrained/kimik3_json_schema.py": null,
+  "python/sglang/srt/constrained/json_schema_validation.py": "8da5eed88d8dc2338681f216f39446e02ad833438dfe0139f9f3f9fa5c9212c6",
+  "python/sglang/srt/function_call/kimik3_structural_tag.py": "c708f60a62598b49ea9ba6e88a1578eba540f1cd48d8b7e28a7523c792f4a415",
+  "python/sglang/srt/entrypoints/openai/serving_chat.py": "50591b8d419bf345be5e8c0c8ef7712d8606a8894cec40d95d740f8bec86c79e",
+  "python/sglang/srt/entrypoints/openai/serving_responses.py": "ed490a69c960cafa7fc97129e585d176993fb63dbda66468ac9b86770813a00d",
+  "python/sglang/srt/parser/reasoning_parser.py": "55360b73acfaac21db2ff4644bfc38ff6d744eb4371b15581a2b08e84673dc5e"
+}
