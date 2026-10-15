@@ -8,7 +8,7 @@ maybe_stub_sgl_kernel()
 
 from sglang.srt.managers.io_struct import GetInternalStateReq
 from sglang.srt.managers.scheduler import Scheduler
-from sglang.srt.runtime_context import get_context
+from sglang.srt.runtime_context import get_context, get_parallel
 from sglang.srt.server_args import compute_world_size
 
 register_cpu_ci(est_time=12, suite="base-a-test-cpu")
@@ -55,6 +55,7 @@ class TestComputeWorldSize(unittest.TestCase):
 class TestSchedulerInternalStateWorldSize(unittest.TestCase):
     def _get_internal_state(self, shape: dict) -> dict:
         scheduler = Scheduler.__new__(Scheduler)
+        scheduler.grammar_manager = SimpleNamespace(grammar_backend=None)
         scheduler.metrics_reporter = SimpleNamespace(
             last_gen_throughput=1.0,
             spec_total_num_forward_ct=0,
@@ -81,7 +82,7 @@ class TestSchedulerInternalStateWorldSize(unittest.TestCase):
         # Set by maybe_init_rust_server in a real boot; None = no embedded Rust server.
         scheduler.rust_server = None
 
-        with get_context().override_server_args(**shape):
+        with get_context().override_server_args(**shape), get_parallel().override(tp_rank=0):
             output = scheduler.get_internal_state(recv_req=GetInternalStateReq())
 
         return output.internal_state

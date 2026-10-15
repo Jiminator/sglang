@@ -5330,6 +5330,13 @@ class Scheduler(
             draft_graph_memory_usage=draft_graph_memory_usage,
         )
         ret["memory_usage"] = memory_usage
+        grammar_backend = self.grammar_manager.grammar_backend
+        ret["grammar_budget"] = (
+            {"available": False, "reason": "backend_disabled"}
+            if grammar_backend is None
+            else grammar_backend.budget_snapshot()
+        )
+        ret["grammar_budget"]["tp_rank"] = get_parallel().tp_rank
         ret["startup_time"] = self.startup_time
         ret["effective_max_running_requests_per_dp"] = self.max_running_requests
         # PD role switch: report this instance's role and the decode CUDA graph
