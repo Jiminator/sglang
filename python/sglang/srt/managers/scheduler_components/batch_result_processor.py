@@ -357,9 +357,8 @@ class SchedulerBatchResultProcessor:
                         # req output_ids are set here
                         req.output_ids.append(next_token_id)
 
-                        self._maybe_update_reasoning_tokens(req, next_token_id)
-
                         req.update_finish_state()
+                        self._maybe_update_retained_reasoning_tokens(req, 1)
                     # A mixed spec tail committed its pending bonus token; advance
                     # so the next spec prepare_for_decode reserves from the right base.
                     if (
@@ -1014,8 +1013,9 @@ class SchedulerBatchResultProcessor:
             else:
                 req.output_ids.extend(next_token_id)
                 new_accept_len = len(next_token_id)
-                self._maybe_update_reasoning_tokens(req, next_token_id)
             req.update_finish_state(new_accept_len)
+            if sampling_mask_finish_reason is None:
+                self._maybe_update_retained_reasoning_tokens(req, new_accept_len)
 
             if sampling_mask_finish_reason is not None:
                 self._handle_sampling_mask_abort(req)
@@ -1355,6 +1355,26 @@ class SchedulerBatchResultProcessor:
 
         self._maybe_collect_customized_info(i, req, logits_output)
 
+    def _maybe_update_retained_reasoning_tokens(
+        self,
+        req: Req,
+        new_accepted_len: int,
+    ):
+        if not req.require_reasoning or req._is_reasoning_over:
+            return
+        # Finish checks can trim a verified speculative run at a stop or length
+        # boundary. Count only its retained prefix, including the stop token,
+        # exactly as output_ids_through_stop does for completion usage. Do not
+        # feed discarded think-end markers into the persistent matcher state.
+        start = len(req.output_ids) - new_accepted_len
+        end = len(req.output_ids)
+        if req.finished_len is not None:
+            end = min(end, req.finished_len)
+        if end <= start:
+            return
+        next_token_ids = list(req.output_ids[start:end])
+        self._maybe_update_reasoning_tokens(req, next_token_ids)
+
     def _maybe_update_reasoning_tokens(
         self,
         req: Req,
@@ -1362,7 +1382,13 @@ class SchedulerBatchResultProcessor:
     ):
         if not req.require_reasoning:
             return
+        if req._is_reasoning_over:
+            return
         think_end_ids = self.model_config.think_end_ids
+        reasoning_end_sequences = getattr(self.model_config, "reasoning_end_id_sequences", None)
+        if reasoning_end_sequences is not None:
+            req.update_reasoning_tokens(next_token_id, think_end_ids, reasoning_end_sequences)
+            return
         if req._think_end_matcher is None:
             request_think_end_ids = get_request_reasoning_end_token_ids(
                 req.sampling_params.custom_params,

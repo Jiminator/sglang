@@ -24,7 +24,7 @@ class ThinkingMode(str, Enum):
 
 import jinja2
 import orjson
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 try:
     from mistral_common.exceptions import MistralCommonException
@@ -152,18 +152,40 @@ class _CloseOnExitStreamingResponse(StreamingResponse):
     def __init__(self, *args, close_iterators=(), **kwargs):
         super().__init__(*args, **kwargs)
         self._close_iterators = tuple(close_iterators)
+        self._closed = False
+
+    async def aclose(self):
+        if self._closed:
+            return
+        self._closed = True
+        first_error = None
+        for iterator in (self.body_iterator, *self._close_iterators):
+            close = getattr(iterator, "aclose", None)
+            if close is not None:
+                try:
+                    await close()
+                except BaseException as error:
+                    if first_error is None:
+                        first_error = error
+        if first_error is not None:
+            raise first_error
 
     async def __call__(self, scope, receive, send) -> None:
         import anyio
 
+        propagating = False
         try:
             await super().__call__(scope, receive, send)
+        except BaseException:
+            propagating = True
+            raise
         finally:
             with anyio.CancelScope(shield=True):
-                for iterator in (self.body_iterator, *self._close_iterators):
-                    close = getattr(iterator, "aclose", None)
-                    if close is not None:
-                        await close()
+                try:
+                    await self.aclose()
+                except BaseException:
+                    if not propagating:
+                        raise
 
 
 def normalize_tool_content(role: str, content):
@@ -2012,8 +2034,13 @@ class OpenAIServingChat(OpenAIServingBase):
         # a proper HTTP 400 error response instead of streaming it as SSE payload.
         try:
             first_chunk = await generator.__anext__()
+        except HTTPException as e:
+            return self.create_error_response(
+                str(e.detail), err_type=getattr(e, "error_type", str(e.status_code)),
+                status_code=e.status_code,
+            )
         except ValueError as e:
-            return self.create_error_response(str(e))
+            return self.create_error_response(str(e), err_type=getattr(e, "error_type", "BadRequestError"))
 
         async def prepend_first_chunk():
             try:
@@ -2158,13 +2185,17 @@ class OpenAIServingChat(OpenAIServingBase):
                     # to the normal chunk path, matching the non-stream behavior
                     # in tokenizer_manager._handle_abort_finish_reason.
                     if finish_reason_type == "abort" and isinstance(
-                        finish_reason.get("status_code"), HTTPStatus
-                    ):
-                        code = finish_reason["status_code"]
+                        finish_reason.get("status_code"), int
+                    ) and 400 <= finish_reason["status_code"] <= 599:
+                        code = int(finish_reason["status_code"])
+                        message = finish_reason.get("message", "Generation aborted.")
+                        error_type = finish_reason.get("err_type") or str(code)
+                        if not stream_started:
+                            failure = HTTPException(status_code=code, detail=message)
+                            failure.error_type = error_type
+                            raise failure
                         error = self.create_streaming_error_response(
-                            finish_reason.get("message", "Generation aborted."),
-                            code.name,
-                            code.value,
+                            message, error_type, code,
                         )
                         yield f"data: {error}\n\n"
                         error_aborted = True
@@ -2377,6 +2408,13 @@ class OpenAIServingChat(OpenAIServingBase):
                 )
                 yield f"data: {usage_chunk.model_dump_json()}\n\n"
 
+        except HTTPException as e:
+            if not stream_started:
+                propagating_exception = True
+                raise
+            stream_error = self.create_streaming_error_response(
+                str(e.detail), getattr(e, "error_type", str(e.status_code)), e.status_code
+            )
         except _KimiK3ToolCallValidationError as e:
             if not stream_started:
                 propagating_exception = True
@@ -2388,15 +2426,21 @@ class OpenAIServingChat(OpenAIServingBase):
             if not stream_started:
                 propagating_exception = True
                 raise
-            stream_error = self.create_streaming_error_response(str(e))
-        except Exception:
+            stream_error = self.create_streaming_error_response(str(e), err_type=getattr(e, "error_type", "BadRequestError"))
+        except Exception as e:
+            if not stream_started:
+                propagating_exception = True
+                raise HTTPException(
+                    status_code=504 if isinstance(e, TimeoutError) else 500,
+                    detail="Chat stream generation failed.",
+                ) from None
             # Exception messages can contain generated text or request data.
             # A failed stream must be explicit, never a synthesized successful stop.
             if not error_aborted:
                 stream_error = self.create_streaming_error_response(
                     "Chat stream generation failed.",
-                    err_type="InternalServerError",
-                    status_code=500,
+                    err_type="TimeoutError" if isinstance(e, TimeoutError) else "InternalServerError",
+                    status_code=504 if isinstance(e, TimeoutError) else 500,
                 )
         except BaseException:
             # Preserve cancellation and GeneratorExit; neither permits more yields.
@@ -2438,7 +2482,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 adapted_request, raw_request
             ).__anext__()
         except ValueError as e:
-            return self.create_error_response(str(e))
+            return self.create_error_response(str(e), err_type=getattr(e, "error_type", "BadRequestError"))
 
         if not isinstance(ret, list):
             ret = [ret]

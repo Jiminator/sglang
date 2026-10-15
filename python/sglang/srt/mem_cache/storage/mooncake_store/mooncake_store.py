@@ -678,27 +678,102 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
         warmup_key = "sglang_mooncake_store_warmup_key" + uuid.uuid4().hex
         warmup_value = bytes(4 * 1024)  # 4 KB
 
-        # Retry logic to handle Transfer Engine startup race condition
-        max_retries = 10
-        retry_delay = 1.0  # seconds
+        max_attempts = 10
+        started = time.monotonic()
+        deadline = started + 10.0
+        stage = "put"
+        failed = True
 
-        for attempt in range(max_retries):
-            ret = self.store.put(warmup_key, warmup_value)
-            if ret == 0:
-                break
-            logger.warning(
-                f"[TP{self.local_rank}] Warmup put failed (attempt {attempt + 1}/{max_retries}), "
-                f"ret={ret}, retrying in {retry_delay}s..."
-            )
-            time.sleep(retry_delay)
-        else:
+        def check_budget():
+            # Synchronous native calls use their own deadlines. This bounds
+            # retries, not total wall time or an already running native call.
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"[TP{self.local_rank}] Mooncake warmup retry budget exhausted "
+                    f"at stage={stage}"
+                )
+
+        try:
+            for attempt in range(1, max_attempts + 1):
+                stage = "put"
+                check_budget()
+                # Native Put treats OBJECT_ALREADY_EXISTS as success without
+                # overwriting it. Reuse one key, but always verify its value.
+                ret = self.store.put(warmup_key, warmup_value)
+                check_budget()
+                if type(ret) is not int:
+                    raise RuntimeError("Mooncake warmup invalid put result type")
+                if ret == 0:
+                    stage = "is_exist"
+                    ret = self.store.is_exist(warmup_key)
+                    check_budget()
+                    if type(ret) is not int:
+                        raise RuntimeError(
+                            "Mooncake warmup invalid existence result type"
+                        )
+                    if ret == 1:
+                        stage = "get"
+                        value = self.store.get(warmup_key)
+                        if type(value) is not bytes:
+                            raise RuntimeError(
+                                "Mooncake warmup invalid get result type"
+                            )
+                        if value == warmup_value:
+                            check_budget()
+                            failed = False
+                            return
+                        if value:
+                            raise RuntimeError(
+                                "Mooncake warmup nonempty value mismatch"
+                            )
+                        check_budget()
+                        # The native bytes API folds misses, not-ready replicas,
+                        # allocation and transfer errors into empty bytes.
+                        stage = "get_ambiguous_empty"
+                        ret = 0
+                logger.warning(
+                    "[TP%d] Mooncake warmup stage=%s ret=%d attempt=%d/%d elapsed=%.3fs",
+                    self.local_rank,
+                    stage,
+                    ret,
+                    attempt,
+                    max_attempts,
+                    time.monotonic() - started,
+                )
+                if attempt < max_attempts:
+                    check_budget()
+                    time.sleep(max(0.0, min(1.0, deadline - time.monotonic())))
             raise RuntimeError(
-                f"[TP{self.local_rank}] Warmup put failed after {max_retries} attempts, "
-                "Transfer Engine might not be ready"
+                f"[TP{self.local_rank}] Mooncake warmup failed after "
+                f"{max_attempts} attempts at stage={stage}"
             )
-
-        assert self.store.is_exist(warmup_key) == 1
-        assert self.store.get(warmup_key) == warmup_value
+        finally:
+            # One best-effort, non-force removal: never bypass lease/replication
+            # guards. Do not add a cleanup RPC if its timer is explicitly off.
+            try:
+                rpc_timeout_ms = int(os.environ.get("MC_RPC_TIMEOUT_MS", "30000"))
+            except ValueError:
+                rpc_timeout_ms = -1
+            if rpc_timeout_ms < 0:
+                logger.warning(
+                    "Mooncake warmup cleanup skipped: RPC deadline unavailable"
+                )
+            else:
+                try:
+                    cleanup_ret = self.store.remove(warmup_key)
+                    if type(cleanup_ret) is not int or cleanup_ret != 0:
+                        logger.warning(
+                            "Mooncake warmup cleanup failed ret=%s",
+                            cleanup_ret if type(cleanup_ret) is int else "invalid_type",
+                        )
+                except BaseException as exc:
+                    # Ordinary cleanup failures are diagnostic only; preserve
+                    # an original failure/cancellation over cleanup failures.
+                    if not failed and not isinstance(exc, Exception):
+                        raise
+                    logger.warning(
+                        "Mooncake warmup cleanup raised; original outcome preserved"
+                    )
 
     def register_mem_pool_host(self, mem_pool_host: HostKVCache):
         super().register_mem_pool_host(mem_pool_host)

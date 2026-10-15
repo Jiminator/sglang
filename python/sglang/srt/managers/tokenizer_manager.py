@@ -1805,7 +1805,9 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             and finish_reason.get("status_code") == HTTPStatus.BAD_REQUEST
         ):
             if not is_stream:
-                raise ValueError(finish_reason["message"])
+                error = ValueError(finish_reason["message"])
+                error.error_type = finish_reason.get("err_type") or "invalid_request_error"
+                raise error
             return out
 
         if finish_reason.get("type") == "abort" and finish_reason.get(
@@ -1813,6 +1815,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         ) in (
             HTTPStatus.SERVICE_UNAVAILABLE,
             HTTPStatus.INTERNAL_SERVER_ERROR,
+            HTTPStatus.GATEWAY_TIMEOUT,
         ):
             # Delete the key to prevent resending abort request to the scheduler and
             # to ensure aborted request state is cleaned up.
@@ -1823,10 +1826,12 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             if self.enable_lora and state.obj.lora_path:
                 await self.lora_registry.release(state.obj.lora_id)
             if not is_stream:
-                raise fastapi.HTTPException(
+                error = fastapi.HTTPException(
                     status_code=finish_reason["status_code"],
                     detail=finish_reason["message"],
                 )
+                error.error_type = finish_reason.get("err_type") or str(error.status_code)
+                raise error
             return out
 
         return None

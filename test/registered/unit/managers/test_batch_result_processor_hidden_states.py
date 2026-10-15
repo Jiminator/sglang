@@ -332,7 +332,7 @@ class TestDecodeWithoutLogits(CustomTestCase):
 
         with (
             patch.object(
-                SchedulerBatchResultProcessor, "_maybe_update_reasoning_tokens"
+                SchedulerBatchResultProcessor, "_maybe_update_retained_reasoning_tokens"
             ),
             patch.object(
                 SchedulerBatchResultProcessor, "_handle_finish_state_updated_req"
@@ -427,7 +427,7 @@ class TestDecodeHiddenStateRetention(CustomTestCase):
             ),
             patch.object(
                 SchedulerBatchResultProcessor,
-                "_maybe_update_reasoning_tokens",
+                "_maybe_update_retained_reasoning_tokens",
             ),
             patch.object(
                 SchedulerBatchResultProcessor,
