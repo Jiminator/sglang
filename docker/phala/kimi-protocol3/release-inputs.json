@@ -1,0 +1,510 @@
+{
+  "schema": "phala.sglang.k3-feedback-release-inputs.v1",
+  "status": "source-bytes-frozen",
+  "upstream": {
+    "repository": "https://github.com/sgl-project/sglang",
+    "tag": "v0.5.21",
+    "commit": "e00930c5489053f26d86b179cee0d087f846acbb"
+  },
+  "base_engine_commit": "350852e6b384c1881431b0e8ec59e73cd5be3107",
+  "base_engine_tree": "ef9cef2c85ab76e55e5d49d43cc2359a21addf30",
+  "base_image": "ghcr.io/phala-network/sglang:v0.5.21-phala-3-k3protocol1@sha256:31d5b201dd88b46210b13cee50d87d328aff2c41432beb5e897a5d478b3874f4",
+  "base_serving_patches_commit": "9a94bcb3c396fcad116f3178af180eab83c4d5ab",
+  "mooncake_commit": "ca92aced630aed918a7512026e8511d2ccc19ac5",
+  "mooncake": {
+    "source_commit": "ca92aced630aed918a7512026e8511d2ccc19ac5",
+    "build_entrypoint": "BUILD_JOBS=4 GOMAXPROCS=4 bash /work/source/phala/recovery/build-native.sh; /opt/sglang/bin/python /work/source/phala/recovery/export-runtime.py",
+    "qualification_receipt": "C:\\Users\\zozyo\\Downloads\\phala\\phala-models-compose\\phala-models-compose\\tmp\\kimi-protocol2-incident-20261015\\mooncake-native-qualification.json",
+    "qualification_sha256": "7c92c89e3338692695fb35ea1029c6e92b71239abd974e42c3615d4ae91615e7",
+    "artifacts": [
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/engine.so",
+        "sha256": "2777151cd085cc7041594fff688fcee3b32fbc721c3eb6a12e9cdbd96dabd58b",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/engine.so",
+        "mode": "0755"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/mooncake_client",
+        "sha256": "90c59dd856fb990140ba510090d8cb97011565a63614d2388fdd633c657471d0",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/mooncake_client",
+        "mode": "0755"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/mooncake_master",
+        "sha256": "5e1f560d4f2243793bd7c6ad778753a9dc4c2af2bb34ef0f71e812321a210069",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/mooncake_master",
+        "mode": "0755"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libasio.so",
+        "sha256": "97bdd5537bd1bc0e6b3671b83c16b03786770bfd200b0a52e92268c356aefb4c",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libasio.so",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libbrotlicommon.so.1",
+        "sha256": "0bfea7e41f85346ad911596934a9d25a0a86871dfea83250e7c659ed54d669b5",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libbrotlicommon.so.1",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libbrotlidec.so.1",
+        "sha256": "b42bcbb9fbc051592b5ad56240f7879cf1e2e30da5aa46fc7c1a57c8466f9ad0",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libbrotlidec.so.1",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libcom_err.so.2",
+        "sha256": "2f726282ae1f00adc584e6a613ddb444a9b86a367c682761f3a4c66d7a238b37",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libcom_err.so.2",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libcrypto.so.3",
+        "sha256": "96e5d3a063d080f451d186e0704464f49b06e2bdf005203ea49da20648fec24b",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libcrypto.so.3",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libcurl.so.4",
+        "sha256": "bf8aeb2b3cba96a9e263173cd93b39f72b7d5b178ef9b7b15ae81d972eff6701",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libcurl.so.4",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libetcd_wrapper.so",
+        "sha256": "934d5d5c9771c2cb0cf45c0186a3790396312954ea202c2f936cba9d21efdad3",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libetcd_wrapper.so",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libffi.so.8",
+        "sha256": "4d44cee47d157221120e3448f6b30368adff662dbed02575aaed73c640da41b2",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libffi.so.8",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libgflags.so.2.2",
+        "sha256": "c6a0b91ac7ecaa9c8993ff2825897e1660ec15db82b37bddff1e9c59f4b0edf9",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libgflags.so.2.2",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libglog.so.1",
+        "sha256": "5ef3e5cbdfbaae554146a3e93afec7c5b705e8c463f2429128764d776b275c47",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libglog.so.1",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libgmp.so.10",
+        "sha256": "93195c6885bca28f11ccc50c496adf2164899d64d1f36389f50c6721b513670d",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libgmp.so.10",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libgnutls.so.30",
+        "sha256": "419c7a6646e6524b109302c9c0361f2c6396a3560f0ec6aee7c7dfcca8d4249e",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libgnutls.so.30",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libgssapi_krb5.so.2",
+        "sha256": "6d68a9e35ea5e2a13065a2375a20668838b0bd2996504893e6d5c4f86f997d1c",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libgssapi_krb5.so.2",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libhogweed.so.6",
+        "sha256": "55ac11ec1810e6674d7864a9be70858678e7c8be98d69660c578a7810fa36423",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libhogweed.so.6",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libibverbs.so.1",
+        "sha256": "d3eb62fbd8a01fe61ee503a1209f61fa84e7cc15dbd7772f83b18cf13bc1e12d",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libibverbs.so.1",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libidn2.so.0",
+        "sha256": "6c848f58121ac47bb3dfb92ad4d0202cb34edb6c669f0b0a6ad59b512c188a05",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libidn2.so.0",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libjsoncpp.so.25",
+        "sha256": "dde0a0ee27f71e70f3a35f889a0cbcf2a12abf25286bf5fc049ee4ac08002990",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libjsoncpp.so.25",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libk5crypto.so.3",
+        "sha256": "15cd5f22f1312e093e8818dfcbdee93d639224dddd185fd75ab6381587effbc4",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libk5crypto.so.3",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libkeyutils.so.1",
+        "sha256": "1a8a87dcd9c6a14445d05367d36a6857287a0a698498be4151df231b2af6735f",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libkeyutils.so.1",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libkrb5.so.3",
+        "sha256": "0623bd905d4b077a4ae7c23c5b1b0f6270df9a8de71794a13fc2a6fb558a258c",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libkrb5.so.3",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libkrb5support.so.0",
+        "sha256": "a106be9b99ef474a88ed2cc0400b7733d27dd7c2394d33d043a5da2128b808dd",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libkrb5support.so.0",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/liblber.so.2",
+        "sha256": "e8bf33d4f4685c9759469e8837c17175c883ba7cb0e9f2f9a782737bd64433e2",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/liblber.so.2",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libldap.so.2",
+        "sha256": "a3840bed5992a7179093d030047cc09f98333c838dcd0908be0940df540db607",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libldap.so.2",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/liblzma.so.5",
+        "sha256": "93f286dff699c18a7779f052f967d72e6f3b423a4e83644abf1b6f39141bd8f9",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/liblzma.so.5",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libmlx5.so.1",
+        "sha256": "1c1f7a47286e218e23c535f18a3270a357bf17d4355e12596ba4f7aa7a52bbd6",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libmlx5.so.1",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libnettle.so.8",
+        "sha256": "490666e7baa0bbf943b04b268dec212a2040cc183ef4ac4bb34305228dc0ecd9",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libnettle.so.8",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libnghttp2.so.14",
+        "sha256": "747088a43dbe6b0bc7a4488245ac7a32356f8d954505d9a3b0c7b7bc3064d657",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libnghttp2.so.14",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libnl-3.so.200",
+        "sha256": "dd4bdd3042210a4e12a752a95dabf16b07067c3d71fd305937657839e8f5a749",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libnl-3.so.200",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libnl-route-3.so.200",
+        "sha256": "4cc4c8633effff1d743638ab240bb373330443c897c859f5f600b257fd212455",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libnl-route-3.so.200",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libnuma.so.1",
+        "sha256": "dd54bfc2a38befb043805786c0d3c917cbfa1e484996530308e2aa7fc7a8758b",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libnuma.so.1",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libp11-kit.so.0",
+        "sha256": "b3cbe07cb4a6748cd9a24b15c447ef1966895dc6c115f96e3dd4852e23b606a1",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libp11-kit.so.0",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libpsl.so.5",
+        "sha256": "1b6d618ff3153e7a87be39ce2d299b248fc4b70624a37a0889246c2c68df1225",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libpsl.so.5",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libresolv.so.2",
+        "sha256": "71a2502baf624b1c5b299dfff9140068e5dfcf498d60ecc69313739439a5eee1",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libresolv.so.2",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/librtmp.so.1",
+        "sha256": "9e051b9ef963050af8ac1f87cc49e45b18edd1ff1b94da7a7595f819bd101517",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/librtmp.so.1",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libsasl2.so.2",
+        "sha256": "a43f7da9bb1ccc4bd1736e85ea1ca5761bc7a62a3072303c85520a5696c83454",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libsasl2.so.2",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libssh.so.4",
+        "sha256": "c51c51eaf4af27fdd864a53f48a666e4d00936121651991a91c2b14140c9bf9a",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libssh.so.4",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libssl.so.3",
+        "sha256": "fe99b12b29e6dcab81a3ddf7564065a7d5284a6ea0145b0d772f0620af338062",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libssl.so.3",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libtasn1.so.6",
+        "sha256": "0c7dbb672634388930dfffd198b4d273d746bb9098b02b1f8984065b2276a9ba",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libtasn1.so.6",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libunistring.so.5",
+        "sha256": "bc81e03f190357dd393347160ce240b8c62846338f24a9b97fb93df50486f5fa",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libunistring.so.5",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libunwind.so.8",
+        "sha256": "2815a4efb05be60cf420f9965891369c8080561158bcccefb867b3af51a9e768",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libunwind.so.8",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/liburing.so.2",
+        "sha256": "321b675f84ae355a7ae7cbbab70a8ec665d8592623f437f4ee02c7575231f52e",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/liburing.so.2",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libxxhash.so.0",
+        "sha256": "9c20b3d7355801d60eaa7390d4eb2847ec5c84f85a6185afc35b1111d49fee26",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libxxhash.so.0",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libyaml-cpp.so.0.8",
+        "sha256": "421145e0442a4ec914b761769e1e6be69fbb22a6a946f5b62352e2d89ed18b7c",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libyaml-cpp.so.0.8",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libz.so.1",
+        "sha256": "49804fe77e5c8b9f638a4fea110bd4c1a4ad9de41eb7ca0e186204954af5cb07",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libz.so.1",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-libs/libzstd.so.1",
+        "sha256": "f1a0de1d83a75acaed7642f447e0108a037696a883f26f7296124f278c2346c2",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-libs/libzstd.so.1",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/recovery-manifest.json",
+        "sha256": "b746b75bdf41be4effb1f6380e7465dccad87002550807a577a61e364f2348db",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/recovery-manifest.json",
+        "mode": "0644"
+      },
+      {
+        "source_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/artifacts/runtime/store.so",
+        "sha256": "fce8e628c2b98e96723356d818f804a41a486038ce4ca73621649d32537cfa18",
+        "install_path": "/opt/sglang/lib/python3.12/site-packages/mooncake/store.so",
+        "mode": "0755"
+      }
+    ],
+    "builder_task_root": "/opt/dstack/models/mooncake-native-ca92aced-20261016",
+    "manifest_path": "C:\\Users\\zozyo\\Downloads\\phala\\phala-models-compose\\phala-models-compose\\tmp\\kimi-protocol2-incident-20261015\\mooncake-native-formal-manifest.json",
+    "manifest_sha256": "54801de0307ba5c5829eb9883f3ef5d6a54d1c1f7c3ba9e1ea09cd9b1eba7d9a",
+    "builder_manifest_path": "/opt/dstack/models/mooncake-native-ca92aced-20261016/formal-manifest.json",
+    "source_tag": "phala-kimi-recovery-20261016",
+    "source_release": "https://github.com/Phala-Network/Mooncake/releases/tag/phala-kimi-recovery-20261016"
+  },
+  "external_governor": "Existing separately pinned external PIG; no embedded Governor or PIG change in this image.",
+  "qualified_product_commit": "18a023124fbfe36316bfee76794037d94ea776a5",
+  "product_files": [
+    {
+      "path": "python/sglang/srt/constrained/base_grammar_backend.py",
+      "sha256": "86033d1f558f75e25f958f3ed3b9261508d2258744bf21fc55192966afbf4721",
+      "size": 26641
+    },
+    {
+      "path": "python/sglang/srt/constrained/grammar_manager.py",
+      "sha256": "551b243b4f4176bb2de8496347f589d6287f837a7ed0b9f13de012ace03c9a3f",
+      "size": 18232
+    },
+    {
+      "path": "python/sglang/srt/constrained/json_schema_dialect.py",
+      "sha256": "cb4bc56675b80cea7675d42e81de85e45579d61e37a63397cfaf13e9417fed1b",
+      "size": 6309
+    },
+    {
+      "path": "python/sglang/srt/constrained/json_schema_intersections.py",
+      "sha256": "950fb87e9bb9fb3171b7ca137a0d226a50a14c4a77fce989b869e587e1cc21e9",
+      "size": 8982
+    },
+    {
+      "path": "python/sglang/srt/constrained/json_schema_validation.py",
+      "sha256": "4fdf8ceb282cb7047653d3d38e4006957aeab86f362df8b83dc11a8a65444e00",
+      "size": 25948
+    },
+    {
+      "path": "python/sglang/srt/constrained/kimik3_json_schema.py",
+      "sha256": "5f3ea313ee12c8b0b4c8ebb84502bd1fcaebb3866922ed044e5d58c23b78ddec",
+      "size": 2329
+    },
+    {
+      "path": "python/sglang/srt/constrained/reasoner_grammar_backend.py",
+      "sha256": "dc0daa6f5d0b697cd2887fa7a41d9ed6e1e97362080dc431ba691eef34531b4a",
+      "size": 29972
+    },
+    {
+      "path": "python/sglang/srt/constrained/xgrammar_backend.py",
+      "sha256": "58ec537cbac2afb2813a8d474bc18c157c04af773c4a70f21dd2478b0c3f5d06",
+      "size": 20412
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_base.py",
+      "sha256": "48d71ea1c021d7b8594f69a74d946ffa8cde72897c6dafe86b048cfde6632a72",
+      "size": 12563
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_chat.py",
+      "sha256": "f52e35d02706ccf24fb421089224b547af9db5f05098fdc50de305535efe361e",
+      "size": 153322
+    },
+    {
+      "path": "python/sglang/srt/entrypoints/openai/serving_responses.py",
+      "sha256": "462bd452ceb0477124a97b71a5c59018c52e2896411fb5fd4718a4014750070e",
+      "size": 121763
+    },
+    {
+      "path": "python/sglang/srt/environ.py",
+      "sha256": "24c8b6248ba1c86e1cd0bb58298a3cb9ffe5c9d9b055dcbd3f3f6ec5b18e1343",
+      "size": 108498
+    },
+    {
+      "path": "python/sglang/srt/function_call/kimik3_root_constraints.py",
+      "sha256": "8bb59002dde8d82744a05bef6c77d6618b937bbb7678a76ab23401ae8bee6ee9",
+      "size": 12395
+    },
+    {
+      "path": "python/sglang/srt/function_call/kimik3_structural_tag.py",
+      "sha256": "0a46df7414bed4ea3c757daefe38e8640f8fee7b445418c602b5485356c11e8b",
+      "size": 42398
+    },
+    {
+      "path": "python/sglang/srt/managers/schedule_batch.py",
+      "sha256": "a6a550543e572ed3f8964b0a4c07b9eccc56b6c4e1cb0f20f335573e52ad2348",
+      "size": 170989
+    },
+    {
+      "path": "python/sglang/srt/managers/scheduler.py",
+      "sha256": "184e2cc9d19e465324948d323b90e98b95a61c2bae4a9429da81daf4ea6466fc",
+      "size": 271893
+    },
+    {
+      "path": "python/sglang/srt/managers/scheduler_components/batch_result_processor.py",
+      "sha256": "7138d7a105e7ceb2415cb1b76afe5f917cb2e1b58c0df2efaa68171c0fe1d5af",
+      "size": 66119
+    },
+    {
+      "path": "python/sglang/srt/managers/tokenizer_manager.py",
+      "sha256": "98b8d87ea11856ef27c2452ddfd81432660eb0942089dfcb73171ce9f7aabbb2",
+      "size": 168211
+    },
+    {
+      "path": "python/sglang/srt/mem_cache/storage/mooncake_store/mooncake_store.py",
+      "sha256": "a48bbd5e278e91dfc890677c5c8dd92613b547cab88ddcddef9c63d69965bfa4",
+      "size": 65051
+    },
+    {
+      "path": "python/sglang/srt/parser/reasoning_parser.py",
+      "sha256": "819a01c1845560889b91d4101037ad1f7ccec48703289b0cc62cbaf070bb6572",
+      "size": 104229
+    }
+  ],
+  "qualification_references": [
+    {
+      "name": "integration-source-identity.json",
+      "sha256": "8b69b52c14addeeaef87e34540303002ae9204e4a3c8c4736dcebcb897296c40"
+    },
+    {
+      "name": "GRAMMAR-BUDGET-SOURCE-FREEZE.json",
+      "sha256": "4114ca1cecc34f89703b561c0161b3b7124e7bfc42721316f812739b517b0c67"
+    },
+    {
+      "name": "v2-native-commit.json",
+      "sha256": "57a0270c71f92180646ec81d454d0a186593813848ef65300532f1b1e32747fd"
+    },
+    {
+      "name": "mooncake-native-qualification.json",
+      "sha256": "7c92c89e3338692695fb35ea1029c6e92b71239abd974e42c3615d4ae91615e7"
+    }
+  ],
+  "xgrammar": {
+    "version": "0.2.6rc2+phala.feedback.20261016.p5",
+    "upstream_repository": "https://github.com/mlc-ai/xgrammar",
+    "upstream_tag": "v0.2.6rc2",
+    "upstream_commit": "8d9679cc4b2b7eb314f7840fbf3989e2a989f880",
+    "base_source_commit": "8d9679cc4b2b7eb314f7840fbf3989e2a989f880",
+    "source_commit": "4a9ee7da45a2282207f53b0e4615d3dbda773a73",
+    "source_tree": "ea22ec9b2000b52bdde2d1084db6c8105218babe",
+    "patch": "xgrammar/native-source.patch",
+    "patch_sha256": "63a131c24a34f7ec359e8ee101f6e208d9892e33eb1e6bae53d226475af8bc15",
+    "source_replay_verified": true,
+    "notices": {
+      "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "NOTICE": "769c6907073c65801bfcfe3ce1c0e80bf0ae4e124e2769d4f026c038ad583c0f"
+    },
+    "wheel_asset": "xgrammar-0.2.6rc2+phala.feedback.20261016.p5-cp312-cp312-linux_x86_64.whl",
+    "wheel_sha256": "9ad7ebe992ec692bfc26fa8fc6286d8430d6964c0d69ce818d50221c283a83f5",
+    "wheel_bytes": 1507230,
+    "wheel_package_members": {
+      "xgrammar/__init__.py": "1ed05da12db21c4aeb36daa1fd1c6b70bc5d8ffb45cdabbbf384c60c8b04ac43",
+      "xgrammar/base.py": "889935d4e0dd8b1fdafa008a21c69c8eb08f06bb55f1e37227a26d2f41c1f70e",
+      "xgrammar/builtin_structural_tag.py": "8ac13f9ed53d012859e88479123d73554a1197f32c7887e216fd66535c4384c8",
+      "xgrammar/compiler.py": "67e2154127ac14c7f9afde0761755124f2a981f7b0c5a11a1fb96092b6fd109c",
+      "xgrammar/config.py": "a5e71e4e2a2fd7908611d6d31031432993d656f39cdfbcff2563b7ffbea92640",
+      "xgrammar/contrib/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "xgrammar/contrib/hf.py": "7bb8c3853a94daacc51aff867d170c28e500ebef00095fc687962e7b2a9a37bf",
+      "xgrammar/contrib/mlxlm.py": "608c1f724144ce59a743220dabda21734edacec4263e6fa5e3b2a578d00bdb6e",
+      "xgrammar/exception.py": "3c3baeea3855169cb50d5312bf93d389c2df9a58ce67181a1687bd9a6431cf62",
+      "xgrammar/grammar.py": "2a26827c5cfbaa1e6625b3732e49d0bb3a8d790df288bfb66a73a7d118c9045d",
+      "xgrammar/kernels/__init__.py": "46675d969427ce7c2e47886b6575c8f9ad0fcb99b497213250a0812e7b449da5",
+      "xgrammar/kernels/apply_token_bitmask_inplace_cpu.py": "0d9dd747303b877bea069e9147344282a1da15ebe654320593dbc46e6210b6fc",
+      "xgrammar/kernels/apply_token_bitmask_inplace_cuda.cu": "91805d13f404e4668c48051432719cd88b84c0630403ca2c657a0905d4d145b6",
+      "xgrammar/kernels/apply_token_bitmask_inplace_cuda.py": "d890d4a5d967b726dab4b503d6774ccd337d0d69e35e781836db848616379626",
+      "xgrammar/kernels/apply_token_bitmask_inplace_torch.py": "14956986896b0efc52cbce893a098e6bbed4d75561918014abef308147f9ae6c",
+      "xgrammar/kernels/apply_token_bitmask_inplace_torch_compile.py": "a8274a98f934e5506ed4933ca82aab3ce94972575c9c302224a2dba8a206f204",
+      "xgrammar/kernels/apply_token_bitmask_inplace_triton.py": "3e517df264f70884203c9907e7ea191bfa146adc3d7b36c440128cd611260e22",
+      "xgrammar/kernels/apply_token_bitmask_mlx.py": "e563c82fa8650c4295b76c8bce49a90d978d65e2bcc0b3ba42808eb0d90e5d00",
+      "xgrammar/libxgrammar_bindings.so": "1fa1b71b4066d892d88223de12f848326591b5454505579f9201c88e599f6bdf",
+      "xgrammar/load_binding.py": "f35966016b2efff541b81ed94d8e74201e9b5c325bf043396974d22d99964d4d",
+      "xgrammar/matcher.py": "33159a0994724cc186203eb8d2792cf66d9df9197029632bbc674852dcb50990",
+      "xgrammar/openai_tool_call_schema.py": "81f2de14005133b298f5969268bfc6b1b94d0810cf5e9f0dab4e1fabb9cbb58c",
+      "xgrammar/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "xgrammar/structural_tag.py": "ce1da0da1931ba320fc5bb7456214dcd4095188478a05f26e7254bb79c86eaec",
+      "xgrammar/testing.py": "30ae431fea2b76c289e67ca7d32bca36bf7cc8af6bb7723feedfbfc9536332d8",
+      "xgrammar/tokenizer_info.py": "b6efbd2103e39c980f7660543b998adb504e306b7dd67aae5a9d0e89284a4b28",
+      "xgrammar/tvm_ffi_binding/__init__.py": "153d446f150093172f8364468a7f3a09716e22eaf2282c469d40da9699181cd4",
+      "xgrammar/tvm_ffi_binding/_ffi_api.py": "d3b4ac9b76254948ebbc26c13a4d90ee97da6033a63ec4ec5964c5d120de7d57",
+      "xgrammar/tvm_ffi_binding/config/__init__.py": "615e9623d99c0144801950646f35c92ca84019e859c126aa13436d6cfc792d02",
+      "xgrammar/tvm_ffi_binding/config/_ffi_api.py": "db5b24e5e5bd99fbae507e1a63182a2cd56d4dfb2d8b466fbbcae1deed87996c",
+      "xgrammar/tvm_ffi_binding/kernels/__init__.py": "c7038a1ee259b3531cfd8798ba062b2273d433db3c62db89dea3975145a4d64f",
+      "xgrammar/tvm_ffi_binding/kernels/_ffi_api.py": "39e8de26835da5d1c1d1e70390e8d914ec93733ffa2232cca2ddc325116c11fd",
+      "xgrammar/tvm_ffi_binding/testing/__init__.py": "a78697f4d44872d2eb7f1ebddfb0769c3c479522c55704f7d75c9eafffe62f50",
+      "xgrammar/tvm_ffi_binding/testing/_ffi_api.py": "645c6416b3b86d82c13a9351fb906ff77ab698748be0194d88e5f90e2d2262af",
+      "xgrammar/tvm_ffi_binding/testing/grammar_functor/__init__.py": "ef6966198e61297b7d65fabc99f1e74f580e662c3d9b4689d75edfac201deefd",
+      "xgrammar/tvm_ffi_binding/testing/grammar_functor/_ffi_api.py": "c85be1c82504bc2d37ee6e0165103c7989dcd007fe1e6de417833a666cff94ea"
+    },
+    "artifact_policy": "Install this already tested wheel without rebuilding and without dependency resolution. Source replay is not a byte-reproducible wheel claim."
+  },
+  "boundary": "Source/provenance preparation only. Actual final-image CPU/CLI/native/Mooncake and scoped production acceptance remain separate.",
+  "qualified_product_tree": "dfa1afeb9f127569d14619791f052796b75e9410"
+}

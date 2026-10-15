@@ -9,3 +9,6 @@ python/sglang/srt/function_call/kimik3_detector.py -text
 python/sglang/srt/function_call/kimik3_structural_tag.py -text
 # Patch context blank lines and original serialization are intentional.
 docker/phala/kimi-protocol1/xgrammar/*.diff -text -whitespace
+
+# Preserve serialized native patch context as an artifact.
+docker/phala/kimi-protocol3/xgrammar/*.patch -text -whitespace
