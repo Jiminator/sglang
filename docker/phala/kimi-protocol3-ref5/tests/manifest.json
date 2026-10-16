@@ -1,0 +1,47 @@
+{
+  "schema": "phala.ref5.native-fixtures.v1",
+  "native_source_commit": "d645e9d0dbaf6cc85c2ca27acc8f9b4a4b83cbdc",
+  "wheel_sha256": "ee7d54fb8b77e712e8d5e8b9f7aee59f4ead18409d6f00a4c0fb5e63ca5b7832",
+  "status": "Critical fixtures frozen; overall native dynamic qualification separate",
+  "fixtures": [
+    {
+      "path": "tests/probe.py",
+      "sha256": "b902a9a002580f03ed1a3c75a01254222a822985260ae5eb8742e65f7b55835e"
+    },
+    {
+      "path": "tests/probe_prod_controls.py",
+      "sha256": "2a744bb793deb0575be78ea260799002a2e639c4642c1524b4543836f21ed884"
+    },
+    {
+      "path": "tests/check_legacy_blob.py",
+      "sha256": "e27151991d44e9f1bb135bae03ccac1c8b3edcaf519c0926c0975c079be6f95b"
+    },
+    {
+      "path": "tests/upstream943_cases.py",
+      "sha256": "a03ac6482b68d25295dc5d07b8415e687344e3ed318293a0493974c2c0cbf33b"
+    },
+    {
+      "path": "tests/legacy-p5-compiled.json",
+      "sha256": "c51b60edc94aa4ff36b5502cbdd988bcc369277bcf75bfcfa7bd789eaab9c3a1"
+    },
+    {
+      "path": "tests/cpu_943_lifecycle_probe.py",
+      "sha256": "853ae57114d6b871dc994d1f36b69df50b460ed7638af39a0411938c315f2452"
+    },
+    {
+      "path": "tests/cpu_943_prereserved_probe.py",
+      "sha256": "d36b0496c7c475b6aa58a00cb0fa7b6888b0837e1090ec099c750c140f436f0c"
+    }
+  ],
+  "expected_controls": {
+    "original_cases": 10,
+    "order_controls": 20,
+    "finite_clear_controls": 30,
+    "lifecycle_controls": 18,
+    "prereserved_controls": 6,
+    "mask_differences": 0,
+    "p5_compiled_blob_rejected": true,
+    "p6_roundtrip_passed": true
+  },
+  "boundary": "Synthetic fixtures only. Final image must use installed product/native with no product or wheel overlays."
+}

@@ -1,0 +1,2 @@
+xgrammar/*.patch -text -whitespace
+tests/** -text -whitespace

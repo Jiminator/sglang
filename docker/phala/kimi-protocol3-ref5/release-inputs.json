@@ -1,0 +1,80 @@
+{
+  "schema": "phala.sglang.ref5-native-inputs.v1",
+  "identity_status": "source-and-wheel-frozen; dynamic-and-final-image-qualification-separate",
+  "engine_base_commit": "25e599af56f659ea8cd5720169b64c554a686299",
+  "product_python_subtree": "05ca454376faaeae5eba3b4d36385fd7c27d086a",
+  "base_image": "ghcr.io/phala-network/sglang:v0.5.21-phala-3-k3protocol3-ref4@sha256:dea82d95eacb380041e465735d32056cda0d145866cec04381d6dd46c5039447",
+  "xgrammar": {
+    "version": "0.2.6rc2+phala.feedback.20261017.p6",
+    "upstream_repository": "https://github.com/mlc-ai/xgrammar",
+    "upstream_commit": "8d9679cc4b2b7eb314f7840fbf3989e2a989f880",
+    "p5_source_commit": "4a9ee7da45a2282207f53b0e4615d3dbda773a73",
+    "p5_source_tree": "ea22ec9b2000b52bdde2d1084db6c8105218babe",
+    "p5_source_patch": "docker/phala/kimi-protocol3/xgrammar/native-source.patch",
+    "p5_source_patch_sha256": "63a131c24a34f7ec359e8ee101f6e208d9892e33eb1e6bae53d226475af8bc15",
+    "source_commit": "d645e9d0dbaf6cc85c2ca27acc8f9b4a4b83cbdc",
+    "source_tree": "908cc3af608ca4072717aece838d64273482b51e",
+    "delta_patch": "xgrammar/p5-to-p6.patch",
+    "delta_patch_sha256": "958d3f1178fc37c961d98f8200932201f31d417053acbfdbecd079dfeed5d7de",
+    "serialization_version": "v21-phala-unordered-constraints-v3",
+    "old_p5_compiled_blobs": "Reject v2 identity and recompile original grammar; never relabel old masks",
+    "wheel_asset": "xgrammar-0.2.6rc2+phala.feedback.20261017.p6-cp312-cp312-linux_x86_64.whl",
+    "wheel_sha256": "ee7d54fb8b77e712e8d5e8b9f7aee59f4ead18409d6f00a4c0fb5e63ca5b7832",
+    "wheel_bytes": 1507100,
+    "native_library_sha256": "03b6b083f1a488c7154870bc70b4317eef21ce5d036664cf6893a7c3e91c38eb",
+    "build_source_and_commit_line_endings": "All changed files byte-bound to build raw input; committed source differs only by CRLF normalization",
+    "changed_source_bindings": [
+      {
+        "path": "cpp/grammar.cc",
+        "raw_sha256": "cacbb0631c589e8525e162c0fafcca60cbbe04a2b1e6026143c96e90975bd144",
+        "committed_blob_sha256": "30246f21cbf23c208c8b282a1d6651fd76bfa92bb9498b9dd82325bc85a31ae7",
+        "raw_vs_commit_line_endings_only": true
+      },
+      {
+        "path": "cpp/grammar_compiler.cc",
+        "raw_sha256": "d54ace6989e48cf2a45dabc2c51438a17eb6d25897c085f43a7afa5ba26eda79",
+        "committed_blob_sha256": "383ef6b921e626013cf973c440826ea46d7340c890976ae5ec563de1155cf0a5",
+        "raw_vs_commit_line_endings_only": true
+      },
+      {
+        "path": "cpp/grammar_functor.cc",
+        "raw_sha256": "e23c0a0a2ae9db0390b6211e51e1807136d1a2c78c10c4ced0c3b15a3a019f51",
+        "committed_blob_sha256": "17ed75f0f851f07b6d3a5ef57a0fb7fdea0bc9954b120009d990abb5c0907f50",
+        "raw_vs_commit_line_endings_only": true
+      },
+      {
+        "path": "cpp/grammar_impl.h",
+        "raw_sha256": "b71cc116a56d9dde521e1ff21e1d4b8789367c617f51774493f42e7cab945bbd",
+        "committed_blob_sha256": "d9068b3a631f9981ca0bf574ac93058f0ca16e66aa1af1c493610750f598dff8",
+        "raw_vs_commit_line_endings_only": true
+      },
+      {
+        "path": "cpp/support/json_serializer.h",
+        "raw_sha256": "d58e307c3ba2b9e0cd82a7d2c8de899704173fa82ea4cb70f52e9337ce6eaf04",
+        "committed_blob_sha256": "1597d577ce4a1ff410ce51e6cbeac958b004d34e50735161cf1dcbbf85cacaaa",
+        "raw_vs_commit_line_endings_only": true
+      },
+      {
+        "path": "pyproject.toml",
+        "raw_sha256": "0b5538a33f6f77dccc2d3ea8931a9f4441fd0d12d61639c119dd872e0bc39303",
+        "committed_blob_sha256": "f2942c8f0540b2bf75265049668a89b40677c04bdae7a3872eaecce51fdca60b",
+        "raw_vs_commit_line_endings_only": true
+      },
+      {
+        "path": "tests/python/test_grammar_compiler.py",
+        "raw_sha256": "c1c342dd15ad439d95bea3d398cd0ddac539f81cbb7efb8724da2a353eb96177",
+        "committed_blob_sha256": "f94453899b3dc40917fbf81fd7b4e8f8b1f3bb4eef49fcdf24dfc612e3d21a58",
+        "raw_vs_commit_line_endings_only": true
+      },
+      {
+        "path": "tests/python/test_serialization.py",
+        "raw_sha256": "57b30abdd1933139b5a1254062e1ab9bf79a8290dedfb0ce5c995a26eaf6d13c",
+        "committed_blob_sha256": "ea81b910b96c4dd6877d487a5d0645c71bb2da0d6274fb0d14271f9f2be8b7c7",
+        "raw_vs_commit_line_endings_only": true
+      }
+    ]
+  },
+  "unchanged_components": "Other native dependencies, model, parameters, customer strict declarations and shared services remain outside this change",
+  "artifact_policy": "Install the fixed wheel without dependency resolution or native rebuild; final installed-image qualification remains mandatory",
+  "verification_fixtures": "tests/manifest.json"
+}

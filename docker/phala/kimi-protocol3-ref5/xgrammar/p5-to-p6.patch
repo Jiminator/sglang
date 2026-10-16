@@ -1,0 +1,371 @@
+diff --git a/cpp/grammar.cc b/cpp/grammar.cc
+index c558002e7beb66f2e181eee9304062c7e91a8301..c2398c845f60b09b05c29ae110028cf70d6667f9 100644
+--- a/cpp/grammar.cc
++++ b/cpp/grammar.cc
+@@ -30,7 +30,7 @@ std::size_t MemorySize(const Grammar::Impl& impl) {
+          impl.suffix_stop_infos_.size() * sizeof(Grammar::Impl::SuffixStopInfo) +
+          MemorySize(impl.grammar_expr_data_) + MemorySize(impl.grammar_expr_indptr_) +
+          MemorySize(impl.complete_fsm) + MemorySize(impl.per_rule_fsms) +
+-         MemorySize(impl.allow_empty_rule_ids);
++         MemorySize(impl.allow_empty_rule_ids) + MemorySize(impl.per_rule_fsm_hash_is_partial);
+ }
+ 
+ /******************* Grammar *******************/
+diff --git a/cpp/grammar_compiler.cc b/cpp/grammar_compiler.cc
+index 1f259c3b30cdd261a630a4cc394df7b206463595..6598a003fe92d820fcc7cab9f843f7e17bd7f9d7 100644
+--- a/cpp/grammar_compiler.cc
++++ b/cpp/grammar_compiler.cc
+@@ -3444,9 +3444,13 @@ AdaptiveTokenMask GrammarMatcherForTokenMaskCache::GetAdaptiveTokenMask(bool is_
+     return std::move(*direct_local_completion_mask);
+   }
+ 
+-  // Try to get the crossing cache.
+-  bool rule_level_cache_is_available = !has_char_budget_rules_ && rule_level_cache_.has_value() &&
+-                                       grammar_->per_rule_fsm_hashes[init_rule_id_].has_value();
++  // A partial hash omits a rule referenced at the start state, whose tokens are included in
++  // that state's mask. Keep both cache reads and writes disabled for this state.
++  bool rule_level_cache_is_available =
++      !has_char_budget_rules_ && rule_level_cache_.has_value() &&
++      grammar_->per_rule_fsm_hashes[init_rule_id_].has_value() &&
++      !(grammar_->per_rule_fsm_hash_is_partial[init_rule_id_] &&
++        initial_state_.element_id == grammar_->per_rule_fsms[init_rule_id_]->GetFsm().GetStart());
+   std::optional<uint64_t> fsm_hash = std::nullopt;
+   int32_t new_state_id = -1;
+   std::optional<AdaptiveTokenMask> crossing_cache = std::nullopt;
+diff --git a/cpp/grammar_functor.cc b/cpp/grammar_functor.cc
+index 67299f80bc549a02ddc3d9a4c289aae206368fbb..f06fd2ac69b6914eabf575c1f32c26158d6e7a09 100644
+--- a/cpp/grammar_functor.cc
++++ b/cpp/grammar_functor.cc
+@@ -4146,6 +4146,7 @@ void GrammarFSMHasherImpl::Apply(Grammar* grammar) {
+   grammar_ = grammar;
+   grammar->ImplPtr()->per_rule_fsm_hashes =
+       std::vector<std::optional<uint64_t>>((*grammar)->NumRules());
++  grammar->ImplPtr()->per_rule_fsm_hash_is_partial = std::vector<bool>((*grammar)->NumRules());
+   grammar->ImplPtr()->per_rule_fsm_new_state_ids.resize((*grammar)->NumRules());
+   ref_graph_from_referee_to_referrer_.clear();
+   ref_graph_from_referrer_to_referee_.clear();
+@@ -4265,6 +4266,7 @@ void GrammarFSMHasherImpl::Apply(Grammar* grammar) {
+   }
+   for (const auto& [rule_id, hash_value] : partial_hashed_list) {
+     grammar->ImplPtr()->per_rule_fsm_hashes[rule_id] = hash_value;
++    grammar->ImplPtr()->per_rule_fsm_hash_is_partial[rule_id] = true;
+   }
+ }
+ 
+@@ -4335,7 +4337,9 @@ std::pair<bool, uint64_t> GrammarFSMHasherImpl::IsPartialHashable(int fsm_index)
+                                    std::optional<std::pair<int32_t, int32_t>> repeat_bounds) {
+       uint64_t edge_hash;
+       if (ref_rule_id == fsm_index) {
+-        edge_hash = kSelfRecursionFlag;
++        // A self-reference can reach the omitted start-state rule from any state, so no
++        // state of this rule is safe to identify by a partial hash.
++        return false;
+       } else if (!grammar_->ImplPtr()->per_rule_fsm_hashes[ref_rule_id].has_value()) {
+         if (!is_start) {
+           return false;
+@@ -4523,7 +4527,8 @@ std::optional<uint64_t> GrammarFSMHasherImpl::HashSequence(
+         break;
+       }
+       case (GrammarExprType::kRuleRef): {
+-        if (grammar->per_rule_fsm_hashes[expr[0]].has_value()) {
++        if (grammar->per_rule_fsm_hashes[expr[0]].has_value() &&
++            !grammar->per_rule_fsm_hash_is_partial[expr[0]]) {
+           hash_result = HashCombine(hash_result, grammar->per_rule_fsm_hashes[expr[0]].value());
+         } else {
+           return std::nullopt;
+@@ -4531,7 +4536,8 @@ std::optional<uint64_t> GrammarFSMHasherImpl::HashSequence(
+         break;
+       }
+       case (GrammarExprType::kRepeat): {
+-        if (grammar->per_rule_fsm_hashes[expr[0]].has_value()) {
++        if (grammar->per_rule_fsm_hashes[expr[0]].has_value() &&
++            !grammar->per_rule_fsm_hash_is_partial[expr[0]]) {
+           hash_result = HashCombine(hash_result, grammar->per_rule_fsm_hashes[expr[0]].value());
+         } else {
+           return std::nullopt;
+diff --git a/cpp/grammar_impl.h b/cpp/grammar_impl.h
+index 0396295f4f27a5dcea02c1abcf2cdc6ab200d1f5..560d29a7122d7b1e8308e51c6ad4705e9f8098fd 100644
+--- a/cpp/grammar_impl.h
++++ b/cpp/grammar_impl.h
+@@ -478,6 +478,13 @@ class Grammar::Impl {
+    */
+   std::vector<std::optional<uint64_t>> per_rule_fsm_hashes;
+ 
++  /*!
++   * \brief Whether a rule's hash omits an unknown rule referenced at its start state.
++   * A partial hash does not identify the rule's full language. This is derived compile-time
++   * metadata, like per_rule_fsm_hashes, and is not serialized.
++   */
++  std::vector<bool> per_rule_fsm_hash_is_partial;
++
+   /*!
+    * \brief The new state ids of each FSM's states.
+    */
+diff --git a/cpp/support/json_serializer.h b/cpp/support/json_serializer.h
+index ac704502c50e78caa18724b22ad1740a0ef8f3b1..17cb25234519e6f77231ceb0c6af5a2ef1a20ea4 100644
+--- a/cpp/support/json_serializer.h
++++ b/cpp/support/json_serializer.h
+@@ -62,7 +62,9 @@ class SerializeVersion {
+    * \brief The current serialization version. When the serialization result of any object in
+    * XGrammar is changed, this version should be bumped.
+    */
+-  static constexpr const char kXGrammarSerializeVersion[] = "v21-phala-unordered-constraints-v2";
++  // Older compiled grammars may contain masks built with unsafe partial-hash cache reuse.
++  // Their stored masks cannot be repaired by clearing the compiler cache after deserialization.
++  static constexpr const char kXGrammarSerializeVersion[] = "v21-phala-unordered-constraints-v3";
+ };
+ 
+ /*!
+diff --git a/pyproject.toml b/pyproject.toml
+index bb94df6580ba4dc934f307cc83951d2f1413e1eb..46731db952d295975fcd4ef5fa9e664377168daf 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "xgrammar"
+-version = "0.2.6rc2+phala.feedback.20261016.p5"
++version = "0.2.6rc2+phala.feedback.20261017.p6"
+ description = "Efficient, Flexible and Portable Structured Generation"
+ authors = [{ name = "MLC Team" }]
+ readme = "README.md"
+diff --git a/tests/python/test_grammar_compiler.py b/tests/python/test_grammar_compiler.py
+index 6553652cef03010ae74aa467cf9c7cc3a79e771b..edc0bc4c88e1cd4c46b9ec73a11cfef306c03e97 100644
+--- a/tests/python/test_grammar_compiler.py
++++ b/tests/python/test_grammar_compiler.py
+@@ -4,7 +4,7 @@ import sys
+ import threading
+ import time
+ from concurrent.futures import ThreadPoolExecutor
+-from typing import Dict, List, Tuple
++from typing import Dict, List, Tuple, Union
+ 
+ import pytest
+ import torch
+@@ -523,7 +523,9 @@ def test_regex_fsm_cache_distinguishes_json_string_mode():
+             assert not _compiled_accepts(compiled, value)
+ 
+ 
+-def _mask_trace(compiled_grammar: xgr.CompiledGrammar, input_str: str):
++def _mask_trace(
++    compiled_grammar: xgr.CompiledGrammar, input_str: Union[str, List[Union[str, int]]]
++):
+     matcher = xgr.GrammarMatcher(compiled_grammar, terminate_without_stop_token=True)
+     bitmask = xgr.allocate_token_bitmask(1, compiled_grammar.tokenizer_info.vocab_size)
+     trace = []
+@@ -531,7 +533,10 @@ def _mask_trace(compiled_grammar: xgr.CompiledGrammar, input_str: str):
+         xgr.reset_token_bitmask(bitmask)
+         need_apply = matcher.fill_next_token_bitmask(bitmask)
+         trace.append((need_apply, bitmask.clone()))
+-        assert matcher.accept_string(char)
++        if isinstance(char, int):
++            assert matcher.accept_token(char)
++        else:
++            assert matcher.accept_string(char)
+     assert matcher.is_terminated()
+     return trace
+ 
+@@ -640,5 +645,95 @@ def test_limited_compiler_cache_evicts_value_that_crosses_limit():
+     assert _compiled_accepts(compiled, '{"a": 1}')
+ 
+ 
++CROSSING_CACHE_DIFFERENT_FSM_CASES = [
++    (
++        'root ::= "(" r ")"\nr ::= [0-3] "x" | "y"',
++        'root ::= "(" r ")"\nr ::= [1-t] "x" | "y"',
++        "(ax)",
++    ),
++    (
++        'root ::= "(" s ")"\ns ::= "\\"" [^"\\\\\\r\\n]{0,64} "\\""',
++        'root ::= "(" s ")"\ns ::= "\\"" [^"\\\\\\r\\n]{1,129} "\\""',
++        '("a")',
++    ),
++    (
++        'root ::= "(" r [0-9a-z] ")" | "(" r "y" ")"\nr ::= ("x" | "yy") (=[0-3])',
++        'root ::= "(" r [0-9a-z] ")" | "(" r "y" ")"\nr ::= ("x" | "yy") (=[1-t])',
++        "(xa)",
++    ),
++    (
++        'root ::= "(" r ")"\nr ::= s | "x" s | "x0y"\ns ::= "a" | "yy" | "a" s',
++        'root ::= "(" r ")"\nr ::= s | "x0" s | "x0y"\ns ::= "a" | "yy" | "a" s',
++        "(x0a)",
++    ),
++    (
++        'root ::= "(" r ")"\nr ::= "a" Token(4) | "0"',
++        'root ::= "(" r ")"\nr ::= "a" Token(5) | "0"',
++        ["(", "a", 5, ")"],
++    ),
++    (
++        'root ::= "(" r "x" [c-d] ")"\nr ::= "q" (="x" [c-d])',
++        'root ::= "(" r "x\\x01\\x00\\x63\\x64" ")"\nr ::= "q" (="x\\x01\\x00\\x63\\x64")',
++        ["(", 11, "\x00", "c", "d", ")"],
++    ),
++    (
++        'root ::= "(" r z ")"\nr ::= "q" (=z)\n'
++        'v ::= "[" w "]" | "a"\nw ::= v | "{" z "}"\nz ::= w | "b"',
++        'root ::= "(" r z ")"\nr ::= "q" (=z)\n'
++        'v ::= "[" w "]" | "0"\nw ::= v | "{" z "}"\nz ::= w | "b"',
++        "(q0)",
++    ),
++    ('root ::= "(" r ")"\nr ::= [a-x]* "x"', 'root ::= "(" r ")"\nr[lazy] ::= [a-x]* "x"', "(ax)"),
++    (
++        'root ::= "(" r ")"\nr ::= z | "qx"\n'
++        'v ::= "q" w "]" | "a"\nw ::= v | "{" z "}"\nz ::= w | "b"',
++        'root ::= "(" r ")"\nr ::= z | "qx"\n'
++        'v ::= "q" w "]" | "0"\nw ::= v | "{" z "}"\nz ::= w | "b"',
++        "(q0])",
++    ),
++    (
++        'root ::= "(" r ")"\nr ::= x "b" | "aq" r | "az"\nx ::= r "c" | y\ny ::= x "d" | "a"',
++        'root ::= "(" r ")"\nr ::= x "b" | "aq" r | "az"\nx ::= r "c" | y\ny ::= x "d" | "0"',
++        "(aq0b)",
++    ),
++]
++
++CROSSING_CACHE_DIFFERENT_FSM_CASE_IDS = ['character-range', 'repeat-bounds', 'lookahead', 'rule-edge-source', 'token-edge', 'lookahead-expr-boundary', 'lookahead-rule-ref', 'lazy', 'partial-hash-start-state', 'partial-hash-self-reference']
++
++@pytest.mark.parametrize(
++    "grammar_a,grammar_b,input_str",
++    CROSSING_CACHE_DIFFERENT_FSM_CASES,
++    ids=CROSSING_CACHE_DIFFERENT_FSM_CASE_IDS,
++)
++def test_grammar_compiler_crossing_cache_different_fsm(
++    grammar_a: str, grammar_b: str, input_str: Union[str, List[Union[str, int]]]
++):
++    """A grammar must not reuse the token masks of another grammar whose rule differs only in
++    small integers (character ranges, repetition bounds), in the state a rule reference leaves,
++    in the tokens of a token edge, or in where one lookahead element ends: their FSM hashes used to
++    collide. Nor may it reuse them for a lookahead that references a rule with a partial hash, which
++    leaves out a rule referenced at its start state, or for a rule that differs only in being lazy.
++    The start state of a rule with a partial hash must not reuse them either: its mask includes the
++    tokens of that left-out rule, and so do the masks of every state of such a rule that references
++    itself."""
++    tokenizer_info = xgr.TokenizerInfo(
++        ["(", ")", "a", "0", "x", "y", '"', '""', "xa", "x0", "q", "qx\x01", "qa", "q0"]
++    )
++    compiler = xgr.GrammarCompiler(tokenizer_info, max_threads=1, cache_enabled=True)
++    compiler.compile_grammar(grammar_a)
++    cached = compiler.compile_grammar(grammar_b)
++    fresh = xgr.GrammarCompiler(tokenizer_info, max_threads=1, cache_enabled=False).compile_grammar(
++        grammar_b
++    )
++
++    expected_trace = _mask_trace(fresh, input_str)
++    actual_trace = _mask_trace(cached, input_str)
++    for (expected_apply, expected_mask), (actual_apply, actual_mask) in zip(
++        expected_trace, actual_trace
++    ):
++        assert actual_apply == expected_apply
++        torch.testing.assert_close(actual_mask, expected_mask, rtol=0, atol=0)
++
++
+ if __name__ == "__main__":
+     pytest.main(sys.argv)
+diff --git a/tests/python/test_serialization.py b/tests/python/test_serialization.py
+index 9eb40d9cc4453bdce172e6a7c38613629234f6fd..d95e19602ea59fa5995f1efdf8363303265a7267 100644
+--- a/tests/python/test_serialization.py
++++ b/tests/python/test_serialization.py
+@@ -44,7 +44,7 @@ def construct_compiled_grammar():
+ 
+ def test_get_serialization_version():
+     """Test the version of the serialized JSON string."""
+-    assert xgr.get_serialization_version() == "v21-phala-unordered-constraints-v2"
++    assert xgr.get_serialization_version() == "v21-phala-unordered-constraints-v3"
+ 
+ 
+ def test_serialize_grammar():
+@@ -69,7 +69,7 @@ def test_serialize_grammar():
+         "per_rule_fsms": [],
+         "allow_empty_rule_ids": [],
+         "optimized": False,
+-        "__VERSION__": "v21-phala-unordered-constraints-v2",
++        "__VERSION__": "v21-phala-unordered-constraints-v3",
+     }
+     # The fsms are the same one, but the start state and end states are different.
+     assert json.loads(serialized) == expected_json
+@@ -94,14 +94,14 @@ def test_serialize_grammar_exception():
+         "allow_empty_rule_ids": [],
+         "complete_fsm": None,
+         "per_rule_fsms": [],
+-        "__VERSION__": "v21-phala-unordered-constraints-v2",
++        "__VERSION__": "v21-phala-unordered-constraints-v3",
+     }
+ 
+     expected_json["__VERSION__"] = "v1"  # Change version to trigger error
+     with pytest.raises(xgr.DeserializeVersionError):
+         xgr.Grammar.deserialize_json(json.dumps(expected_json))
+ 
+-    expected_json["__VERSION__"] = "v21-phala-unordered-constraints-v2"
++    expected_json["__VERSION__"] = "v21-phala-unordered-constraints-v3"
+     expected_json.pop("rules")  # Remove required field to trigger error
+     with pytest.raises(xgr.DeserializeFormatError):
+         xgr.Grammar.deserialize_json(json.dumps(expected_json))
+@@ -143,10 +143,10 @@ def test_serialize_pattern_length_metadata_roundtrip():
+ 
+ 
+ def test_serialize_byte_regex_flags_and_legacy_version_boundary():
+-    """Byte flags round-trip in v21-phala-unordered-constraints-v2, while older data is rejected before interpreting them."""
++    """Byte flags round-trip in v21-phala-unordered-constraints-v3, while older data is rejected before interpreting them."""
+     grammar = xgr.Grammar.from_ebnf(r'root ::= Regex("\\x80", byte_mode=true)')
+     serialized_object = json.loads(grammar.serialize_json())
+-    assert serialized_object["__VERSION__"] == "v21-phala-unordered-constraints-v2"
++    assert serialized_object["__VERSION__"] == "v21-phala-unordered-constraints-v3"
+     assert serialized_object["grammar_expr_data"] == [12, 5, 2, 92, 120, 56, 48]
+ 
+     restored = xgr.Grammar.deserialize_json(json.dumps(serialized_object))
+@@ -161,14 +161,14 @@ def test_serialize_byte_regex_flags_and_legacy_version_boundary():
+     # A pre-byte v16 reader treated every nonzero Regex flag as json_string=true, v17 does not
+     # carry no-forcing metadata, v18 predates EOS expressions, and v19 predates the combined
+     # EOS and JSON string length layout. All older layouts must hit the version gate first.
+-    for legacy_version in ["v16", "v17", "v18", "v19", "v21", "v21-phala-unordered-constraints-v1"]:
++    for legacy_version in ["v16", "v17", "v18", "v19", "v21", "v21-phala-unordered-constraints-v1", "v21-phala-unordered-constraints-v2"]:
+         for regex_flags in [2, 3]:
+             legacy_object = dict(serialized_object)
+             legacy_object["__VERSION__"] = legacy_version
+             legacy_object["grammar_expr_data"] = list(serialized_object["grammar_expr_data"])
+             legacy_object["grammar_expr_data"][2] = regex_flags
+             with pytest.raises(
+-                xgr.DeserializeVersionError, match=f"Got {legacy_version}, expected v21-phala-unordered-constraints-v2"
++                xgr.DeserializeVersionError, match=f"Got {legacy_version}, expected v21-phala-unordered-constraints-v3"
+             ):
+                 xgr.Grammar.deserialize_json(json.dumps(legacy_object))
+ 
+@@ -207,7 +207,7 @@ def test_serialize_tokenizer_info():
+         '"decoded_vocab":["1","212","a","A","b","\\u00e4\\u00b8\\u0080","-","aBc","abc"],'
+         '"sorted_decoded_vocab":[[6,"-"],[3,"A"],[2,"a"],[7,"aBc"],[8,"abc"],[4,"b"],[5,"\\u00e4\\u00b8\\u0080"]],'
+         '"trie_subtree_nodes_range":[1,2,5,4,5,6,7],'
+-        '"__VERSION__":"v21-phala-unordered-constraints-v2"}'
++        '"__VERSION__":"v21-phala-unordered-constraints-v3"}'
+     )
+     assert json.loads(serialized) == json.loads(expected_json)
+ 
+@@ -327,7 +327,7 @@ def test_serialize_compiled_grammar():
+             "add_prefix_space": True,
+             "stop_token_ids": [0, 1],
+         },
+-        "__VERSION__": "v21-phala-unordered-constraints-v2",
++        "__VERSION__": "v21-phala-unordered-constraints-v3",
+     }
+ 
+     class AdaptiveTokenMask(BaseModel):
+@@ -368,10 +368,20 @@ def test_deserialize_compiled_grammar_rejects_legacy_version_before_layout():
+         "adaptive_token_mask_cache": [],
+     }
+ 
+-    with pytest.raises(xgr.DeserializeVersionError, match="Got v17, expected v21-phala-unordered-constraints-v2"):
++    with pytest.raises(xgr.DeserializeVersionError, match="Got v17, expected v21-phala-unordered-constraints-v3"):
+         xgr.CompiledGrammar.deserialize_json(json.dumps(legacy_v17_object), tokenizer_info)
+ 
+ 
++@pytest.mark.parametrize("legacy_version", ["v21-phala-unordered-constraints-v1", "v21-phala-unordered-constraints-v2"])
++def test_deserialize_compiled_grammar_rejects_pre_partial_hash_fix_masks(legacy_version):
++    """The old stored mask is not repaired by clearing a new compiler's cache."""
++    compiled_grammar, tokenizer_info = construct_compiled_grammar()
++    old_blob = json.loads(compiled_grammar.serialize_json())
++    old_blob["__VERSION__"] = legacy_version
++    with pytest.raises(xgr.DeserializeVersionError, match=f"Got {legacy_version}, expected v21-phala-unordered-constraints-v3"):
++        xgr.CompiledGrammar.deserialize_json(json.dumps(old_blob), tokenizer_info)
++
++
+ def test_deserialize_compiled_grammar_rejects_malformed_token_mask_cache():
+     """A malformed token-mask cache must not be silently restored as an empty cache."""
+     compiled_grammar, tokenizer_info = construct_compiled_grammar()
