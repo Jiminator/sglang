@@ -10,6 +10,7 @@ from collections import OrderedDict
 from collections.abc import AsyncGenerator
 from enum import Enum
 from http import HTTPStatus
+from time import monotonic as _stream_progress_clock
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union
 
 from sglang.srt.runtime_context import get_model, get_serving
@@ -130,6 +131,7 @@ logger = logging.getLogger(__name__)
 
 _MEDIA_CONTENT_PART_TYPES = frozenset({"image_url", "video_url", "audio_url"})
 _CHAT_TEMPLATE_CACHE_MAX_SIZE = 128
+_KIMI_TOOL_STREAM_PROGRESS_INTERVAL = 15.0
 
 
 class _KimiK3ToolCallValidationError(Exception):
@@ -2091,6 +2093,8 @@ class OpenAIServingChat(OpenAIServingBase):
         output_ids: dict[int, list[int]] = {}
 
         stream_started = False
+        tool_progress_enabled = self.chat_encoding_spec == "kimi_k3" and bool(request.tools)
+        last_wire_progress = 0.0
         error_aborted = False
         stream_error = None
         generation_closed = False
@@ -2113,6 +2117,7 @@ class OpenAIServingChat(OpenAIServingBase):
             )
             async for content in generation:
                 index = content.get("index", 0)
+                previous_completion_tokens = completion_tokens.get(index, 0)
 
                 prompt_tokens[index] = self._reported_prompt_tokens(
                     content["meta_info"]
@@ -2214,6 +2219,8 @@ class OpenAIServingChat(OpenAIServingBase):
                         content="",
                     )
                     stream_started = True
+                    if tool_progress_enabled:
+                        last_wire_progress = _stream_progress_clock()
 
                 # Generate streaming content (override in subclass for custom behavior)
                 async for chunk in self._generate_stream_content(
@@ -2232,6 +2239,22 @@ class OpenAIServingChat(OpenAIServingBase):
                     completion_tokens=completion_tokens,
                 ):
                     yield chunk
+                    if tool_progress_enabled:
+                        last_wire_progress = _stream_progress_clock()
+
+                # K3 buffers a tool call until its native closing marker. Keep
+                # an already-started SSE transport alive only while generation
+                # really advances; never hide a stalled generator or pre-header
+                # error with a timer task. Comments carry no model output.
+                if (
+                    tool_progress_enabled
+                    and not finish_reason_type
+                    and completion_tokens[index] > previous_completion_tokens
+                    and _stream_progress_clock() - last_wire_progress
+                    >= _KIMI_TOOL_STREAM_PROGRESS_INTERVAL
+                ):
+                    yield ": keep-alive\n\n"
+                    last_wire_progress = _stream_progress_clock()
 
                 self._validate_kimi_k3_tool_call_completion(
                     request.tool_choice,
