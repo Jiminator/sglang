@@ -1158,6 +1158,139 @@ def drop_checkpoint_cache_after_model_load(
         )
 
 
+def coordinated_safetensors_weights_iterator(
+    hf_weights_files: List[str],
+    max_workers: int,
+    batch_shards: int,
+    nnodes: int = 1,
+    timeout_seconds: float = 300.0,
+) -> Generator[Tuple[str, torch.Tensor], None, None]:
+    """Load identical single-node TP file batches before advising their cache.
+
+    Files still mapped by any rank are deferred. This bounds completed cache
+    only when consumers release their CPU tensor references; model-end release
+    remains necessary. No collective is attempted during generator close.
+    """
+    from datetime import timedelta
+
+    if type(batch_shards) is not int or batch_shards < 1:
+        raise ValueError("checkpoint_cache_batch_shards must be a positive integer")
+    if nnodes != 1:
+        raise ValueError("Coordinated checkpoint cache release requires one node")
+    group, rank, size = None, 0, 1
+    if torch.distributed.is_initialized():
+        parallel = get_parallel()
+        world = parallel.world_group
+        if world.world_size != parallel.tp_size:
+            raise ValueError(
+                "Coordinated checkpoint cache release requires TP-only ranks"
+            )
+        group, rank, size = world.cpu_group, world.rank_in_group, world.world_size
+        if torch.distributed.get_backend(group) != "gloo":
+            raise ValueError(
+                "Coordinated checkpoint cache release requires a Gloo CPU group"
+            )
+
+    def exchange(values):
+        local = torch.tensor(values, dtype=torch.int64, device="cpu")
+        if group is None:
+            return [values]
+        received = [torch.empty_like(local) for _ in range(size)]
+        work = torch.distributed.all_gather(received, local, group=group, async_op=True)
+        work.wait(timeout=timedelta(seconds=timeout_seconds))
+        return [item.tolist() for item in received]
+
+    paths = [os.path.realpath(path) for path in hf_weights_files]
+    manifest, manifest_error = [], None
+    try:
+        for path in paths:
+            stat = os.stat(path)
+            manifest.append((path, stat.st_dev, stat.st_ino, stat.st_size))
+        if len(set(paths)) != len(paths):
+            raise ValueError(
+                "Repeated checkpoint files are not supported in coordinated mode"
+            )
+    except Exception as exc:
+        manifest_error = exc
+    digest = hashlib.sha256(json.dumps([batch_shards, manifest]).encode()).digest()
+    headers = exchange([int(manifest_error is not None), *digest])
+    if any(header[0] for header in headers):
+        raise RuntimeError(
+            "A rank could not validate the checkpoint manifest"
+        ) from manifest_error
+    if any(header != headers[0] for header in headers):
+        raise RuntimeError(
+            "Checkpoint file order or batch size differs across TP ranks"
+        )
+
+    identities = [
+        (os.major(dev), os.minor(dev), inode) for _, dev, inode, _ in manifest
+    ]
+    advised = set()
+
+    def checkpoint(completed, load_error):
+        error = load_error
+        mapped = [1] * len(paths)
+        if error is None:
+            try:
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                mapped_inodes = set()
+                with open("/proc/self/maps", "rb") as stream:
+                    for line in stream:
+                        columns = line.split(None, 5)
+                        major, minor = columns[3].split(b":")
+                        mapped_inodes.add(
+                            (int(major, 16), int(minor, 16), int(columns[4]))
+                        )
+                for index, (path, dev, inode, length) in enumerate(manifest):
+                    stat = os.stat(path)
+                    if (stat.st_dev, stat.st_ino, stat.st_size) != (dev, inode, length):
+                        raise RuntimeError("Checkpoint identity changed during loading")
+                    mapped[index] = int(identities[index] in mapped_inodes)
+            except Exception as exc:
+                error = exc
+        states = exchange([completed * 2, int(error is not None), *mapped])
+        if any(state[0] != completed * 2 or state[1] for state in states):
+            raise RuntimeError(
+                "Coordinated checkpoint load or map validation failed"
+            ) from error
+        eligible = [
+            index
+            for index in range(completed)
+            if index not in advised and not any(state[index + 2] for state in states)
+        ]
+        for index in eligible:
+            if index % size == rank:
+                _drop_file_cache_after_load(paths[index])
+        # Do not let another batch allocate until all advisory calls returned.
+        acknowledgements = exchange([completed * 2 + 1, 0, *([0] * len(paths))])
+        if any(state[0] != completed * 2 + 1 for state in acknowledgements):
+            raise RuntimeError("Checkpoint cache release phase differs across TP ranks")
+        advised.update(eligible)
+
+    for start in range(0, len(paths), batch_shards):
+        end = min(start + batch_shards, len(paths))
+        error = None
+        try:
+            yield from buffered_multi_thread_safetensors_weights_iterator(
+                paths[start:end],
+                max_workers=max_workers,
+                disable_mmap=False,
+                prefetch=False,
+                drop_cache_after_load=False,
+            )
+        except Exception as exc:
+            error = exc
+        checkpoint(end, error)
+    if rank == 0:
+        logger.info(
+            "Coordinated checkpoint cache release advised for %d/%d files; mapped files defer to model completion",
+            len(advised),
+            len(paths),
+        )
+
+
 def safetensors_weights_iterator(
     hf_weights_files: List[str],
     disable_mmap: bool = False,
@@ -1806,9 +1939,9 @@ class KVCacheQuantSchema(BaseModel):
                     f"{len(layer_maps)}."
                 )
             for i in range(tp_size):
-                assert i in self.scaling_factor, (
-                    f"KV cache scales map for TP rank {i} not found."
-                )
+                assert (
+                    i in self.scaling_factor
+                ), f"KV cache scales map for TP rank {i} not found."
         return self
 
     @model_validator(mode="after")
@@ -1956,9 +2089,9 @@ def pad_loaded_weight(loaded_weight, output_dim, output_sizes):
             int(output_size / total_output_size * raw_output_size)
             for output_size in output_sizes
         ]
-        assert sum(weight_split_size) == raw_output_size, (
-            f"Padding the loaded weight failed due to sizes are not divisible cleanly from {output_sizes} to {raw_output_size}"
-        )
+        assert (
+            sum(weight_split_size) == raw_output_size
+        ), f"Padding the loaded weight failed due to sizes are not divisible cleanly from {output_sizes} to {raw_output_size}"
 
         split_weight = loaded_weight.split_with_sizes(weight_split_size, dim=output_dim)
         for i, output_size in enumerate(output_sizes):

@@ -109,6 +109,7 @@ from sglang.srt.model_loader.weight_utils import (
     CheckpointFilePrefetchHandle,
     _prefetch_all_checkpoints,
     buffered_multi_thread_safetensors_weights_iterator,
+    coordinated_safetensors_weights_iterator,
     download_safetensors_index_file_from_hf,
     download_weights_from_hf,
     drop_checkpoint_cache_after_model_load,
@@ -362,6 +363,7 @@ def _validate_default_loader_extra_config(
         "enable_multithread_load",
         "num_threads",
         "drop_checkpoint_cache_after_model_load",
+        "checkpoint_cache_batch_shards",
     }
     release_model_cache = extra_config.get(
         "drop_checkpoint_cache_after_model_load", False
@@ -375,6 +377,13 @@ def _validate_default_loader_extra_config(
         raise ValueError(
             "Model-level checkpoint cache release requires auto or safetensors loading"
         )
+    batch_shards = extra_config.get("checkpoint_cache_batch_shards", 0)
+    if type(batch_shards) is not int or batch_shards < 0:
+        raise ValueError("checkpoint_cache_batch_shards must be a nonnegative integer")
+    if batch_shards and not release_model_cache:
+        raise ValueError("Coordinated cache release requires model-end cache release")
+    if batch_shards and not extra_config.get("enable_multithread_load", True):
+        raise ValueError("Coordinated cache release requires the buffered mmap loader")
     if load_format == LoadFormat.FASTSAFETENSORS:
         allowed_keys.add("enable_gds")
         if "enable_gds" in extra_config and not isinstance(
@@ -703,7 +712,25 @@ class DefaultModelLoader(BaseModelLoader):
                 )
                 use_multithread = False
 
-            if self.load_config.load_format == LoadFormat.FASTSAFETENSORS:
+            batch_shards = extra_config.get("checkpoint_cache_batch_shards", 0)
+            if batch_shards:
+                if (
+                    weight_loader_disable_mmap
+                    or concurrent_prefetch_active
+                    or not use_multithread
+                ):
+                    raise ValueError(
+                        "Coordinated cache release requires buffered mmap loading without checkpoint prefetch"
+                    )
+                weights_iterator = coordinated_safetensors_weights_iterator(
+                    hf_weights_files,
+                    max_workers=extra_config.get(
+                        "num_threads", self.DEFAULT_NUM_THREADS
+                    ),
+                    batch_shards=batch_shards,
+                    nnodes=get_parallel().nnodes,
+                )
+            elif self.load_config.load_format == LoadFormat.FASTSAFETENSORS:
                 enable_gds = extra_config.get("enable_gds", True)
                 weights_iterator = fastsafetensors_weights_iterator(
                     hf_weights_files,
