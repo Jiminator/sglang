@@ -111,6 +111,7 @@ from sglang.srt.model_loader.weight_utils import (
     buffered_multi_thread_safetensors_weights_iterator,
     download_safetensors_index_file_from_hf,
     download_weights_from_hf,
+    drop_checkpoint_cache_after_model_load,
     fastsafetensors_weights_iterator,
     filter_duplicate_safetensors_files,
     filter_files_not_needed_for_inference,
@@ -357,7 +358,23 @@ class BaseModelLoader(ABC):
 def _validate_default_loader_extra_config(
     *, extra_config: dict, load_format: LoadFormat
 ) -> None:
-    allowed_keys = {"enable_multithread_load", "num_threads"}
+    allowed_keys = {
+        "enable_multithread_load",
+        "num_threads",
+        "drop_checkpoint_cache_after_model_load",
+    }
+    release_model_cache = extra_config.get(
+        "drop_checkpoint_cache_after_model_load", False
+    )
+    if not isinstance(release_model_cache, bool):
+        raise ValueError("drop_checkpoint_cache_after_model_load must be a boolean")
+    if release_model_cache and load_format not in (
+        LoadFormat.AUTO,
+        LoadFormat.SAFETENSORS,
+    ):
+        raise ValueError(
+            "Model-level checkpoint cache release requires auto or safetensors loading"
+        )
     if load_format == LoadFormat.FASTSAFETENSORS:
         allowed_keys.add("enable_gds")
         if "enable_gds" in extra_config and not isinstance(
@@ -436,9 +453,16 @@ class DefaultModelLoader(BaseModelLoader):
 
     def __init__(self, load_config: LoadConfig):
         super().__init__(load_config)
+        self._files_to_drop_after_load: List[str] = []
         _validate_default_loader_extra_config(
             extra_config=load_config.model_loader_extra_config,
             load_format=load_config.load_format,
+        )
+
+    @property
+    def drop_checkpoint_cache_after_model_load(self) -> bool:
+        return self.load_config.model_loader_extra_config.get(
+            "drop_checkpoint_cache_after_model_load", False
         )
 
     def _maybe_download_from_modelscope(
@@ -620,6 +644,11 @@ class DefaultModelLoader(BaseModelLoader):
             hf_weights_files = list(resolved_source.weight_files)
             use_safetensors = resolved_source.use_safetensors
 
+        if self.drop_checkpoint_cache_after_model_load and not use_safetensors:
+            raise ValueError(
+                "Model-level checkpoint cache release requires safetensors files"
+            )
+
         if self.load_config.load_format == LoadFormat.NPCACHE:
             # Currently np_cache only support *.bin checkpoints
             assert use_safetensors is False
@@ -641,7 +670,10 @@ class DefaultModelLoader(BaseModelLoader):
             prefetch_num_threads = get_model().weight_loader_prefetch_num_threads
             weight_loader_drop_cache_after_load = (
                 get_model().weight_loader_drop_cache_after_load
+                and not self.drop_checkpoint_cache_after_model_load
             )
+            if self.drop_checkpoint_cache_after_model_load:
+                self._files_to_drop_after_load.extend(hf_weights_files)
 
             # Prefetch and multi-threaded loading both read the same shards,
             # competing for I/O on shared/network storage. When prefetch is
@@ -984,6 +1016,10 @@ class DefaultModelLoader(BaseModelLoader):
     ) -> nn.Module:
 
         if hasattr(model_config, "modelopt_quant") and model_config.modelopt_quant:
+            if self.drop_checkpoint_cache_after_model_load:
+                raise ValueError(
+                    "Model-level checkpoint cache release is not supported for ModelOpt loading"
+                )
             # Load base model using shared method
             model = self._load_modelopt_base_model(model_config)
             # Note: DefaultModelLoader doesn't do additional quantization processing
@@ -1000,9 +1036,14 @@ class DefaultModelLoader(BaseModelLoader):
                     quant_config,
                 )
 
+            self._files_to_drop_after_load: List[str] = []
             self.load_weights_and_postprocess(
                 model, self._get_all_weights(model_config, model), target_device
             )
+            if self.drop_checkpoint_cache_after_model_load:
+                drop_checkpoint_cache_after_model_load(
+                    self._files_to_drop_after_load, get_parallel().nnodes
+                )
 
         self.counter_after_loading_weights = time.perf_counter()
         return model.eval()

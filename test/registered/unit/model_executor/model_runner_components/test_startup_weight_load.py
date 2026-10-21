@@ -205,6 +205,17 @@ class TestStartupWeightLoadSelector(CustomTestCase):
             StartupWeightLoadManager,
         )
 
+    def test_model_cache_release_rejected_for_overlap(self):
+        self.load_config.model_loader_extra_config[
+            "drop_checkpoint_cache_after_model_load"
+        ] = False
+        self.assertIsInstance(self._create(), StartupWeightLoadManager)
+        self.load_config.model_loader_extra_config[
+            "drop_checkpoint_cache_after_model_load"
+        ] = True
+        with self.assertRaisesRegex(ValueError, "dropping the page cache"):
+            self._create()
+
     def test_options_accept_current_server_args_schema(self):
         """Removed server options must not break overlap startup initialization."""
         server_args = ServerArgs(

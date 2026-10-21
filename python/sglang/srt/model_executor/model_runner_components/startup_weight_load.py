@@ -390,7 +390,10 @@ class StartupWeightLoadManager:
                 "safetensors mmap must be enabled",
             ),
             (
-                options.weight_loader_drop_cache_after_load,
+                options.weight_loader_drop_cache_after_load
+                or load_config.model_loader_extra_config.get(
+                    "drop_checkpoint_cache_after_model_load", False
+                ),
                 "dropping the page cache during load is not supported",
             ),
             (
