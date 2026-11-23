@@ -113,6 +113,26 @@ def _decode_partials(
     tl.store(OPartial + stat[:, None] * D + d[None, :], acc, head_mask[:, None])
 
 
+# The wave rule was measured on the 170- and 188-SM RTX 5090 and RTX PRO 6000.
+_WAVE_SPLITS_MIN_SMS = 170
+
+
+def _launch_config(*, batch, heads_k, qlen, span, windowed, sms, sm12x, wave_splits):
+    ctas = batch * heads_k
+    if wave_splits and sm12x and sms >= _WAVE_SPLITS_MIN_SMS and batch <= 4:
+        if windowed:
+            block_n = 64 if qlen == 1 else 128
+            tiles = triton.cdiv(span, block_n)
+            if ctas * tiles <= sms:
+                return block_n, tiles, 4, 3 if qlen == 1 else 2
+        elif qlen > 1:
+            return 128, max(1, min(sms // max(1, ctas), MAX_SPLITS)), 4, 2
+    max_splits = max(1, min(2 * sms // max(1, ctas), MAX_SPLITS))
+    block_n = 128 if qlen == 1 and span >= 128 * max_splits else 32
+    splits = min(triton.cdiv(span, block_n), max_splits)
+    return block_n, splits, 4, 2 if qlen == 1 else 3
+
+
 def decode_partials(
     q,
     k_cache,
@@ -123,6 +143,7 @@ def decode_partials(
     softmax_scale,
     *,
     window_size_left=None,
+    wave_splits=False,
 ):
     """q (tokens, heads_q, d) with tokens = batch * qlen, the last qlen positions
     of each sequence, attending causally; k/v cache (pages, page_size, heads_k, d);
@@ -140,10 +161,16 @@ def decode_partials(
         if window_size_left is not None
         else page_table.shape[1] * page_size
     )
-    sms = torch.cuda.get_device_properties(q.device).multi_processor_count
-    max_splits = max(1, min(2 * sms // max(1, batch * heads_k), MAX_SPLITS))
-    block_n = 128 if qlen == 1 and span >= 128 * max_splits else 32
-    splits = min(triton.cdiv(span, block_n), max_splits)
+    block_n, splits, num_warps, num_stages = _launch_config(
+        batch=batch,
+        heads_k=heads_k,
+        qlen=qlen,
+        span=span,
+        windowed=window_size_left is not None,
+        sms=torch.cuda.get_device_properties(q.device).multi_processor_count,
+        sm12x=torch.cuda.get_device_capability(q.device)[0] == 12,
+        wave_splits=wave_splits,
+    )
     o = torch.empty(
         (splits, tokens, 1, heads_q, head_dim), dtype=torch.float32, device=q.device
     )
@@ -178,8 +205,8 @@ def decode_partials(
         rel_bias.shape[-1],
         -1 if window_size_left is None else window_size_left,
         block_n,
-        num_warps=4,
-        num_stages=2 if qlen == 1 else 3,
+        num_warps=num_warps,
+        num_stages=num_stages,
         launch_pdl=True,
     )
     return o, m, l

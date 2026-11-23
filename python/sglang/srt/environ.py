@@ -2347,6 +2347,9 @@ class Envs:
     # decode kernel, all draft tokens of a sequence in one launch; changes the
     # softmax reduction order.
     SGLANG_OPT_INKLING2_VERIFY_REL_BIAS_KERNEL = EnvBool(False)
+    # Relative-bias decode kernel: size the splits of 1-4 sequences by CTA waves,
+    # on SM12x GPUs with at least 170 SMs; changes the softmax reduction order.
+    SGLANG_OPT_SM12X_WAVE_DECODE_SPLITS = EnvBool(False)
     # Decode and MTP verify attention all-reduce through the push all-reduce
     # (rank-order FP32 sum) instead of the multimem one-shot.
     SGLANG_OPT_INKLING2_ATTN_PUSH_ALL_REDUCE = EnvBool(True)

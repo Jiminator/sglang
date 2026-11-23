@@ -198,6 +198,7 @@ def rel_bias_partials(
     *,
     window_size_left,
     verify,
+    wave_splits=False,
 ):
     """Split-KV partials of paged attention with the compact relative bias, for
     combine_gate_sink; verify: several queries per sequence (MTP verify)."""
@@ -240,6 +241,7 @@ def rel_bias_partials(
         rel_bias,
         softmax_scale,
         window_size_left=window_size_left,
+        wave_splits=wave_splits,
     )
 
 

@@ -22,6 +22,7 @@ from sglang.kernels.ops.attention.trtllm_mha_page_table import (
 )
 from sglang.kernels.ops.attention.utils import assert_buffer_fits
 from sglang.srt.configs.model_config import AttentionArch
+from sglang.srt.environ import envs
 from sglang.srt.layers.attention.base_attn_backend import (
     AttentionBackend,
 )
@@ -230,6 +231,7 @@ class FlashAttentionBackend(AttentionBackend):
         self.kv_cache_dtype_str = model_runner.kv_cache_dtype_str
         self.kv_cache_is_mxfp8 = self.kv_cache_dtype_str == "mxfp8"
         self.page_size = model_runner.page_size
+        self.sm12x_wave_decode_splits = envs.SGLANG_OPT_SM12X_WAVE_DECODE_SPLITS.get()
         # Static page-table width (upper bound). The device-side page-table build
         # sizes to this constant, so no runtime host max is needed.
         self.max_num_pages = (
@@ -2059,6 +2061,7 @@ class FlashAttentionBackend(AttentionBackend):
                             window_size[0] if window_size[0] >= 0 else None
                         ),
                         verify=True,
+                        wave_splits=self.sm12x_wave_decode_splits,
                     )
                 )
             else:
@@ -2606,6 +2609,7 @@ class FlashAttentionBackend(AttentionBackend):
                                 window_size[0] if window_size[0] >= 0 else None
                             ),
                             verify=False,
+                            wave_splits=self.sm12x_wave_decode_splits,
                         )
                     )
                 else:
