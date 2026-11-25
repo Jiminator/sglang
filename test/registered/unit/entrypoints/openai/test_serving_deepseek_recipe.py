@@ -1558,9 +1558,10 @@ class TestNativeToolLoading(CustomTestCase):
 
     def test_messages_blocks_take_effect_where_they_stand(self):
         """A tool a tool_addition block defines by value renders as the same tool
-        declared deferred and added by reference; an exact repeat adds nothing, and
-        a reference before the definition is a client error. A `clear_at:
-        "next_user_message"` system message renders until a user message follows,
+        declared deferred and added by reference; an exact repeat adds nothing,
+        while turning `1` into `true` or `1.0` changes the definition,
+        and a reference before the definition is a client error.
+        A `clear_at: "next_user_message"` system message renders until a user turn,
         and is rejected where it could not be dropped cleanly. A search result
         block, given directly or in a tool result, reads as its Chat path text, and
         count_tokens counts the prompt Messages sends."""
@@ -1590,6 +1591,25 @@ class TestNativeToolLoading(CustomTestCase):
         self.assertEqual(
             prompt([ASK_TICKET, ADD_TICKET, *again, DEFINE_TICKET]), by_reference
         )
+
+        def define(order):
+            definition = {
+                **DEFINE_TICKET["content"][0]["tool"]["definition"],
+                "input_schema": {
+                    **TICKET_TOOL["input_schema"],
+                    "properties": {"order": order},
+                },
+            }
+            return _addition({"type": "tool_definition", "definition": definition})
+
+        once = define({"const": 1})
+        for changed_const in (True, 1.0):
+            with self.subTest(const=changed_const):
+                with self.assertRaisesRegex(ValueError, "with a different definition"):
+                    prompt(
+                        [ASK_TICKET, once, *again, define({"const": changed_const})],
+                        tools=[SEARCH_DOCS_TOOL],
+                    )
         early = self._messages_request(
             [ASK_TICKET, ADD_TICKET, *again, DEFINE_TICKET], tools=[SEARCH_DOCS_TOOL]
         )

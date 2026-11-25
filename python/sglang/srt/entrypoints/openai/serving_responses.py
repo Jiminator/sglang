@@ -71,6 +71,7 @@ from sglang.srt.entrypoints.harmony_utils import (
     parse_response_input,
     render_for_completion,
 )
+from sglang.srt.entrypoints.openai.chat_encoding_adapters import json_identity
 from sglang.srt.entrypoints.openai.protocol import (
     ChatCompletionMessageParam,
     ChatCompletionRequest,
@@ -167,18 +168,6 @@ NAMESPACE_MEMBERS_ERROR = (
 )
 
 
-def _json_identity(value: Any) -> Any:
-    """`value` so that equality is recipe's for tool definitions: `true` is not
-    `1` and `1` is not `1.0`, while key order and the sign of a zero do not count."""
-    if isinstance(value, BaseModel):
-        value = value.model_dump()
-    if isinstance(value, dict):
-        return {key: _json_identity(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_json_identity(item) for item in value]
-    return type(value), value
-
-
 def _definition_matcher() -> Callable[[Function, Function], bool]:
     # Keep each operand beside its cached identity so its id() cannot be reused.
     identities: dict[int, tuple[Function, Any]] = {}
@@ -192,7 +181,7 @@ def _definition_matcher() -> Callable[[Function, Function], bool]:
         if pair not in same:
             for obj_id, obj in ((left_id, left), (right_id, right)):
                 if obj_id not in identities:
-                    identities[obj_id] = (obj, _json_identity(obj))
+                    identities[obj_id] = (obj, json_identity(obj))
             same[pair] = identities[left_id][1] == identities[right_id][1]
         return same[pair]
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Protocol, Union
 
 import msgspec
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from sglang.srt.entrypoints.openai.protocol import (
@@ -180,6 +181,18 @@ OPENAI_CHAT_WIRE = _OpenAIChatWire()
 
 def reported_prompt_tokens(meta_info: dict[str, Any], uncounted: int) -> int:
     return max(0, meta_info.get("prompt_tokens", 0) - uncounted)
+
+
+def json_identity(value: Any) -> Any:
+    """`value` with JSON typing: `true` is not `1` and `1` is not `1.0`,
+    while key order and the sign of a zero do not count."""
+    if isinstance(value, BaseModel):
+        value = value.model_dump()
+    if isinstance(value, dict):
+        return {key: json_identity(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [json_identity(item) for item in value]
+    return type(value), value
 
 
 class ResponsesOutputStream(Protocol):

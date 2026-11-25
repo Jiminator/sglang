@@ -49,6 +49,7 @@ from sglang.srt.entrypoints.anthropic.protocol import (
     ToolUseBlock,
     is_server_tool,
 )
+from sglang.srt.entrypoints.openai.chat_encoding_adapters import json_identity
 from sglang.srt.entrypoints.openai.protocol import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -264,9 +265,9 @@ def _declare_inline_tools(
                 earlier = declared.setdefault(tool.name, tool)
                 if earlier is tool:
                     tools.append(tool)
-                elif is_server_tool(earlier) or _definition(earlier) != _definition(
-                    tool
-                ):
+                elif is_server_tool(earlier) or json_identity(
+                    _definition(earlier)
+                ) != json_identity(_definition(tool)):
                     raise ValueError(
                         f"{where}: tool_definition "
                         f"reuses the name {tool.name!r} with a different "
