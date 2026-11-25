@@ -1098,7 +1098,8 @@ class TestNativeToolLoading(CustomTestCase):
         `1.0` for `1`, but not `0.0` for `-0.0`) or another member, or a definition
         that lost its name, is a client error before generation, also through a
         background response that has not run. A member really named like a numbered
-        version replays, as a call to a dropped tool once the request drops it."""
+        version replays, also after editing its sole definition,
+        and still replays once the request drops it."""
 
         def x(const):
             return _function("x", a={"const": const})
@@ -1139,6 +1140,14 @@ class TestNativeToolLoading(CustomTestCase):
             ("another member", [x(1)], found, "x", [numbered], f"{gives} to crm.x_1"),
             ("lost its name", [x(1)], found, "x", [], lost),
             ("numbered member", [x(1), numbered], ask, "x_1", [x(1), numbered], None),
+            (
+                "one definition edited",
+                [numbered],
+                ask,
+                "x_1",
+                [{**numbered, "description": "Edited"}],
+                None,
+            ),
             ("numbered member dropped", [x(1), numbered], ask, "x_1", [x(1)], None),
         ):
             with self.subTest(name):
@@ -1176,6 +1185,81 @@ class TestNativeToolLoading(CustomTestCase):
         )
         self.assertEqual(continued(respond, stored, item, []).status, "completed")
         self.assertIn('"const": 0.0', engine.prompts[-1])
+
+    def test_responses_stored_namespace_call_reanchors_until_versioned(self):
+        """A single-version edit re-anchors a stored call;
+        versioning (even via tool_choice=none) or a multi-name swap rejects drift."""
+        v1 = _crm(_function("x", a=STRING))
+        edited = _crm({**_function("x", a=STRING), "description": "Edited"})
+        v2 = _crm(_function("x", b=STRING))
+        called_name = "crm::x"
+
+        def start_call():
+            respond, engine, _ = self._responses()
+            first = respond(
+                _dsml_call(called_name, a="1"),
+                tools=[v1, SEARCH_TOOL],
+                input=[{"role": "user", "content": "Call it"}],
+            )
+            (item,) = first.output
+            return respond, engine, first.id, _result(item.call_id)
+
+        # Turn 2 edits and calls the sole version,
+        # and turn 3 adds a second under tool_choice=none.
+        respond, engine, stored, result = start_call()
+        turn2 = respond(
+            _dsml_call(called_name, a="2"),
+            previous_response_id=stored,
+            tools=[edited, SEARCH_TOOL],
+            input=[result],
+        )
+        self.assertEqual(turn2.status, "completed")
+        (turn2_item,) = turn2.output
+        turn3 = respond(
+            "Done.",
+            previous_response_id=turn2.id,
+            tools=[edited, SEARCH_TOOL],
+            tool_choice="none",
+            input=[_result(turn2_item.call_id), *_search_history([v2], "again")[1:]],
+        )
+        self.assertEqual(turn3.status, "completed")
+        turn4_kept = respond(
+            "Done.",
+            previous_response_id=turn3.id,
+            tools=[edited, SEARCH_TOOL],
+            input="Keep going",
+        )
+        self.assertEqual(turn4_kept.status, "completed")
+        turn4_dropped = respond(
+            "Done.",
+            previous_response_id=turn3.id,
+            tools=[SEARCH_TOOL],
+            input="Drop declaration",
+        )
+        self._assert_rejected(
+            turn4_dropped,
+            "input",
+            f"as {called_name!r}, which this request's tools and search results "
+            "give a different definition",
+        )
+        self.assertEqual(len(engine.requests), 4)
+
+        # Swapping the sole declaration beside a second version rejects up front,
+        # so the stored call cannot bind to v2.
+        respond, engine, stored, result = start_call()
+        swapped = respond(
+            "Done.",
+            previous_response_id=stored,
+            tools=[v2, SEARCH_TOOL],
+            input=[result, *_search_history([edited], "again")[1:]],
+        )
+        self._assert_rejected(
+            swapped,
+            "input",
+            f"as {called_name!r}, which this request's tools and search results "
+            "give a different definition",
+        )
+        self.assertEqual(len(engine.requests), 1)
 
     def test_responses_stored_calls_are_those_of_the_stored_history(self):
         """A stored response replays the history its prompt read. A background
@@ -1226,7 +1310,11 @@ class TestNativeToolLoading(CustomTestCase):
         ):
             with self.subTest(name):
                 continued = respond(
-                    "Done.", previous_response_id=stored, tools=[changed], input="Go on"
+                    "Done.",
+                    previous_response_id=stored,
+                    # Two definitions of the member: a call record left behind fails.
+                    tools=[changed, CRM_NAMESPACE],
+                    input="Go on",
                 )
                 self.assertEqual(continued.status, "completed")
                 self.assertNotIn('invoke name="crm::create_ticket"', engine.prompts[-1])

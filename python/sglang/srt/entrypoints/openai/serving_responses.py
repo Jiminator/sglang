@@ -8,9 +8,18 @@ import asyncio
 import json
 import logging
 import time
+from collections import Counter
 from contextlib import AsyncExitStack
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Any, AsyncGenerator, AsyncIterator, Optional, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncGenerator,
+    AsyncIterator,
+    Callable,
+    Optional,
+    Union,
+)
 
 import jinja2
 import msgspec
@@ -138,13 +147,16 @@ class _ReplayedCallError(ValueError):
 
 
 class _StoredCall(msgspec.Struct, frozen=True, kw_only=True):
-    """What a stored call to a namespace member was made against."""
+    """What a stored call to a namespace member last stood for."""
 
     name: str
     """The name the model called the member by."""
     member: tuple[str, str]
     """Its namespace and the name the request gave it there."""
+    versioned: bool
+    """Whether the member had several names when called or on any replay."""
     definition: Function
+    """The member definition the call was made against or last re-anchored to."""
 
 
 TOOL_SEARCH = "tool_search"
@@ -165,6 +177,26 @@ def _json_identity(value: Any) -> Any:
     if isinstance(value, list):
         return [_json_identity(item) for item in value]
     return type(value), value
+
+
+def _definition_matcher() -> Callable[[Function, Function], bool]:
+    # Keep each operand beside its cached identity so its id() cannot be reused.
+    identities: dict[int, tuple[Function, Any]] = {}
+    same: dict[tuple[int, int], bool] = {}
+
+    def matches(left: Function, right: Function) -> bool:
+        if left is right:
+            return True
+        left_id, right_id = id(left), id(right)
+        pair = (left_id, right_id) if left_id <= right_id else (right_id, left_id)
+        if pair not in same:
+            for obj_id, obj in ((left_id, left), (right_id, right)):
+                if obj_id not in identities:
+                    identities[obj_id] = (obj, _json_identity(obj))
+            same[pair] = identities[left_id][1] == identities[right_id][1]
+        return same[pair]
+
+    return matches
 
 
 def _holds_function_tools(members: Any) -> bool:
@@ -1670,9 +1702,14 @@ class OpenAIServingResponses(OpenAIServingChat):
         prompt = self.prepare_native_prompt(
             chat_request, protocol="responses", body=body
         )
-        replay_error = self._stored_calls_error(calls, prompt)
+        same_definition = _definition_matcher()
+        replay_error = self._stored_calls_error(
+            calls, prompt, same_definition=same_definition
+        )
         if replay_error is not None:
             raise _ReplayedCallError(replay_error)
+        if self.enable_response_store and request.store:
+            request._same_definition = same_definition
         tools = prompt.tools
         request._tool_state = msgspec.structs.replace(
             request._tool_state,
@@ -1777,26 +1814,33 @@ class OpenAIServingResponses(OpenAIServingChat):
 
     @staticmethod
     def _stored_calls_error(
-        calls: dict[str, _StoredCall], prompt: NativePrompt
+        calls: dict[str, _StoredCall],
+        prompt: NativePrompt,
+        *,
+        same_definition: Callable[[Function, Function], bool],
     ) -> Optional[str]:
         """Why a stored namespace member call no longer stands for what the model
         called: recipe names a member's definitions in conversion order, so other
         tools can move a name. A call the client sends back carries no such record
         and binds by its name alone."""
         definitions = {tool.function.name: tool.function for tool in prompt.tools}
-        offered = set(prompt.namespace_names.values())
+        member_counts = Counter(prompt.namespace_names.values())
         for call in calls.values():
             member = prompt.namespace_names.get(call.name)
             if member is None:
                 # The member is gone like any tool a continuation stops offering.
-                if call.member not in offered:
+                if call.member not in member_counts:
                     continue
                 problem = "no longer load under that name"
             elif member != call.member:
                 problem = f"give to {'.'.join(member)}"
-            elif _json_identity(
-                definitions.get(call.name, call.definition)
-            ) != _json_identity(call.definition):
+            # Only an unversioned single-registration member may edit its definition,
+            # as a plain function may.
+            elif (
+                call.versioned or member_counts[call.member] > 1
+            ) and not same_definition(
+                definitions.get(call.name, call.definition), call.definition
+            ):
                 problem = "give a different definition"
             else:
                 continue
@@ -1808,10 +1852,10 @@ class OpenAIServingResponses(OpenAIServingChat):
         return None
 
     def _store_history(self, request: ResponsesRequest, output: list) -> None:
-        """Store what a continuation of the response replays: the history and
-        stored calls the request continued, as it first read them, and `output`.
-        A response it continued while that one ran adds nothing on completing, and
-        an earlier response of the same id leaves nothing behind."""
+        """Store what a continuation replays: the continued history as first read,
+        its stored calls updated for this turn's tool bindings, and `output`.
+        A background parent completing later adds nothing,
+        and reusing an id leaves no prior calls behind."""
         if request._continued is None:
             request._continued = (
                 self._response_input_history(request),
@@ -1823,11 +1867,39 @@ class OpenAIServingResponses(OpenAIServingChat):
             tool.function.name: tool.function
             for tool in request._tool_state.chat_tools or []
         }
+        member_counts = Counter(
+            (entry["namespace"], entry["name"])
+            for entry in request._tool_state.names.values()
+            if "namespace" in entry
+        )
+        same_definition = request._same_definition or _definition_matcher()
+        request._same_definition = same_definition
+        # A replayed call re-anchors only when its definition changes,
+        # and stays versioned once its member has had several names.
+        for call_id, call in calls.items():
+            entry = request._tool_state.names.get(call.name)
+            if entry is None or (entry.get("namespace"), entry["name"]) != call.member:
+                continue
+            versioned = call.versioned or member_counts[call.member] > 1
+            current = definitions.get(call.name)
+            if current is not None and not same_definition(current, call.definition):
+                definition = current
+            else:
+                if current is not None:
+                    # Share the retained definition with new calls made this turn.
+                    definitions[call.name] = call.definition
+                definition = call.definition
+            if versioned != call.versioned or definition is not call.definition:
+                calls[call_id] = msgspec.structs.replace(
+                    call, versioned=versioned, definition=definition
+                )
         for call_id, name in request._called_tool_names.items():
-            member = request._tool_state.names[name]
+            entry = request._tool_state.names[name]
+            member = (entry["namespace"], entry["name"])
             calls[call_id] = _StoredCall(
                 name=name,
-                member=(member["namespace"], member["name"]),
+                member=member,
+                versioned=member_counts[member] > 1,
                 definition=definitions[name],
             )
         self.msg_store[request.request_id] = history + self._replayed_output_items(

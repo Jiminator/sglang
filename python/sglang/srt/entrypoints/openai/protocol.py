@@ -2101,6 +2101,10 @@ class ResponsesRequest(PDRoutingFields):
     _called_tool_names: Dict[str, str] = PrivateAttr(default_factory=dict)
     # The history and stored namespace calls the request continues, as first read.
     _continued: Optional[Tuple[list, Dict[str, Any]]] = PrivateAttr(default=None)
+    # Per-request typed equality cache shared by replay validation and storage.
+    _same_definition: Optional[Callable[[Function, Function], bool]] = PrivateAttr(
+        default=None
+    )
     _response_parser_prefix: str = PrivateAttr(default="")
     _response_parser_grammar_start: Optional[str] = PrivateAttr(default=None)
     _response_parser_json_response_format: bool = PrivateAttr(default=False)
