@@ -12,11 +12,20 @@ import uuid
 from types import ModuleType
 from typing import Any, Optional, Union
 
+from packaging.specifiers import SpecifierSet
+from packaging.version import InvalidVersion
+
+# The version python/pyproject*.toml pins.
+DEEPSEEK_RECIPE_VERSION = "0.2.1"
+_DEEPSEEK_RECIPE_SPEC = SpecifierSet(f"=={DEEPSEEK_RECIPE_VERSION}")
 DEEPSEEK_RECIPE_INSTALL_HINT = (
-    "Serving DeepSeek-V4 / V4.1 requires the `sgl-deepseek-recipe` package "
+    "Serving DeepSeek-V4 / V4.1 requires "
+    f"sgl-deepseek-recipe=={DEEPSEEK_RECIPE_VERSION} "
     "(SGLang's build of DeepSeek's reference encoder and parser; wheels for Linux "
-    "and macOS). Install it with `pip install sgl-deepseek-recipe`. Do not also "
-    "install `deepseek-recipe`: both provide the `deepseek_recipe` module."
+    "and macOS). It replaces deepseek-recipe, which installs the same "
+    "`deepseek_recipe` module, so removing either breaks the other: run `pip "
+    "uninstall -y deepseek-recipe sgl-deepseek-recipe && pip install "
+    f"sgl-deepseek-recipe=={DEEPSEEK_RECIPE_VERSION}`."
 )
 
 logger = logging.getLogger(__name__)
@@ -48,6 +57,20 @@ def load_deepseek_recipe() -> ModuleType:
         import deepseek_recipe
     except ImportError as exc:
         raise ImportError(DEEPSEEK_RECIPE_INSTALL_HINT) from exc
+    try:
+        version = deepseek_recipe.__version__
+    except AttributeError as exc:
+        raise ImportError(
+            f"Found deepseek_recipe without __version__. {DEEPSEEK_RECIPE_INSTALL_HINT}"
+        ) from exc
+    try:
+        matches = isinstance(version, str) and _DEEPSEEK_RECIPE_SPEC.contains(version)
+    except InvalidVersion:
+        matches = False
+    if not matches:
+        raise ImportError(
+            f"Found deepseek_recipe {version}. {DEEPSEEK_RECIPE_INSTALL_HINT}"
+        )
     return deepseek_recipe
 
 

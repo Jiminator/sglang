@@ -164,6 +164,8 @@ else
   docker exec "$CI_CONTAINER_NAME" pip uninstall sgl-kernel -y || true
   docker exec "$CI_CONTAINER_NAME" pip uninstall sglang-kernel -y || true
   docker exec "$CI_CONTAINER_NAME" pip uninstall sglang -y || true
+  # Both own the deepseek_recipe module files; removing one alone breaks the other.
+  docker exec "$CI_CONTAINER_NAME" pip uninstall deepseek-recipe sgl-deepseek-recipe -y || true
   # Clear Python cache in the checkout so the latest code is used. The uninstalls
   # above already removed the old sglang files from /opt/venv, so walking all of
   # site-packages there (~6 s) only made every job recompile torch's bytecode.

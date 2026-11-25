@@ -118,6 +118,51 @@ class TestEffortBudget(CustomTestCase):
                 renderer.parse_effort_budget(value)
 
 
+class TestLoadDeepSeekRecipe(CustomTestCase):
+    def test_load_deepseek_recipe_checks_pinned_version(self):
+        """load_deepseek_recipe accepts PEP 440 ==0.2.1 versions;
+        other, malformed, or missing versions fail with the reinstall hint."""
+        import re
+        import sys
+        from types import ModuleType
+        from unittest import mock
+
+        missing = object()
+        self.addCleanup(renderer.load_deepseek_recipe.cache_clear)
+        for version in ("0.2.1", "0.2.1+x"):
+            with self.subTest(accepted=version):
+                renderer.load_deepseek_recipe.cache_clear()
+                fake = ModuleType("deepseek_recipe")
+                fake.__version__ = version
+                with mock.patch.dict(sys.modules, {"deepseek_recipe": fake}):
+                    self.assertIs(renderer.load_deepseek_recipe(), fake)
+        for version in (
+            "0.2.0",
+            "0.2.1.post1",
+            "0.2.1rc1",
+            "0.2.2",
+            "invalid",
+            None,
+            missing,
+        ):
+            with self.subTest(rejected=version):
+                renderer.load_deepseek_recipe.cache_clear()
+                fake = ModuleType("deepseek_recipe")
+                if version is not missing:
+                    fake.__version__ = version
+                with (
+                    mock.patch.dict(sys.modules, {"deepseek_recipe": fake}),
+                    self.assertRaisesRegex(
+                        ImportError,
+                        re.escape(
+                            "`pip uninstall -y deepseek-recipe sgl-deepseek-recipe "
+                            "&& pip install sgl-deepseek-recipe==0.2.1`"
+                        ),
+                    ),
+                ):
+                    renderer.load_deepseek_recipe()
+
+
 class TestDeepSeekRecipe(CustomTestCase):
     @classmethod
     def setUpClass(cls):

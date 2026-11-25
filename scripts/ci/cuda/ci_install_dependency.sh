@@ -469,6 +469,8 @@ setup_pip_toolchain() {
     # resolving the pyproject pin. They own the same deep_ep module files, so
     # leaving either installed can make pip preserve a mixed installation.
     $PIP_UNINSTALL_CMD deep-ep sgl-deep-ep $PIP_UNINSTALL_SUFFIX || true
+    # The same holds for the deepseek_recipe module files.
+    $PIP_UNINSTALL_CMD deepseek-recipe sgl-deepseek-recipe $PIP_UNINSTALL_SUFFIX || true
 
     # sglang-kernel stays: install_sglang_kernel version-gates and reinstalls it.
     $PIP_UNINSTALL_CMD sgl-kernel sglang sgl-fa4 flash-attn-4 $PIP_UNINSTALL_SUFFIX || true
