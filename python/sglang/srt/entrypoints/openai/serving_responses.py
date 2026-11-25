@@ -188,6 +188,18 @@ def _definition_matcher() -> Callable[[Function, Function], bool]:
     return matches
 
 
+def _is_namespaced_function_call(item: Any) -> bool:
+    if isinstance(item, dict):
+        if item.get("type") != "function_call":
+            return False
+        namespace = item.get("namespace")
+    elif isinstance(item, ResponseFunctionToolCall):
+        namespace = item.model_dump().get("namespace")
+    else:
+        return False
+    return isinstance(namespace, str) and bool(namespace)
+
+
 def _holds_function_tools(members: Any) -> bool:
     return isinstance(members, list) and all(
         isinstance(member, dict)
@@ -1588,7 +1600,7 @@ class OpenAIServingResponses(OpenAIServingChat):
 
     def _renders_natively(self, request: ResponsesRequest) -> bool:
         """Whether the served encoding renders the request in its own wire form,
-        which tool search, namespace tools and deferred tools take."""
+        used for tool search, namespaces, deferred tools, and namespaced calls."""
         return self.native_tool_loading and (
             any(
                 tool.type in (TOOL_SEARCH, "namespace")
@@ -1596,7 +1608,8 @@ class OpenAIServingResponses(OpenAIServingChat):
                 for tool in request.tools
             )
             or any(
-                isinstance(item, dict) and item.get("type") in TOOL_SEARCH_ITEMS
+                (isinstance(item, dict) and item.get("type") in TOOL_SEARCH_ITEMS)
+                or _is_namespaced_function_call(item)
                 for item in self._history_items(request)
             )
         )

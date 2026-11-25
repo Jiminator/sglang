@@ -1319,6 +1319,39 @@ class TestNativeToolLoading(CustomTestCase):
                 self.assertEqual(continued.status, "completed")
                 self.assertNotIn('invoke name="crm::create_ticket"', engine.prompts[-1])
 
+    def test_responses_manual_namespaced_call_replay_keeps_namespace(self):
+        """Replaying a dict or typed namespaced function_call takes the native path;
+        crm::create_ticket stays distinct from plain create_ticket."""
+        plain = {**WEATHER_TOOL, "name": "create_ticket"}
+        ask = {"role": "user", "content": "Open A-1"}
+        respond, engine, _ = self._responses()
+        first = respond(
+            _dsml_call("crm::create_ticket", order="A-1"),
+            tools=[CRM_NAMESPACE, plain],
+            input=[ask],
+        )
+        (call_item,) = first.output
+        out = _result(call_item.call_id)
+        for label, replayed in (
+            ("dict", call_item.model_dump(exclude_none=True)),
+            ("typed", call_item),
+        ):
+            with self.subTest(label):
+                reply = respond(
+                    _dsml_call("create_ticket", city="Paris"),
+                    store=False,
+                    tools=[plain],
+                    input=[ask, replayed, out],
+                )
+                self.assertIn(
+                    '<｜DSML｜ invoke name="crm::create_ticket">', engine.prompts[-1]
+                )
+                (plain_call,) = reply.output
+                self.assertEqual(
+                    (plain_call.model_dump().get("namespace"), plain_call.name),
+                    (None, "create_ticket"),
+                )
+
     def test_responses_deferred_tools_load_by_name_and_replay_as_loaded(self):
         """A search result naming a deferred tool loads its declaration where the
         result stands, and the stored result keeps that definition: a continuation
