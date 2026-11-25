@@ -1619,25 +1619,15 @@ class OpenAIServingResponses(OpenAIServingChat):
 
     def _native_tools_error(self, request: ResponsesRequest) -> Optional[str]:
         # A name keeps the kind it first has, which its calls are reported as.
-        kinds = {
-            tool.name: tool.type
-            for tool in request.tools
-            if tool.type in ("function", "custom")
-        }
-        deferred: dict[str, ResponseTool] = {}
+        kinds: dict[str, str] = {}
         for tool in request.tools:
             if tool.type in ("custom", "namespace") and not tool.name:
                 return f"{tool.type} tools must have a name"
-            if (
-                tool.type in ("function", "custom")
-                and tool.defer_loading
-                and _json_identity(deferred.setdefault(tool.name, tool))
-                != _json_identity(tool)
-            ):
-                return (
-                    f"tools defers {tool.name!r} more than once, with different "
-                    "definitions"
-                )
+            if tool.type in ("function", "custom"):
+                # recipe's unique-name check never sees the tools that defer loading.
+                if tool.name in kinds:
+                    return f"tools declares {tool.name!r} more than once"
+                kinds[tool.name] = tool.type
             if (
                 tool.type == TOOL_SEARCH
                 and tool.model_extra.get("execution") != "client"

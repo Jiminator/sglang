@@ -1463,9 +1463,9 @@ class TestNativeToolLoading(CustomTestCase):
         self.assertEqual(len(engine.prompts), 3)
 
     def test_responses_malformed_tools_are_client_errors(self):
-        """A tool declaration or search result that is malformed, that the encoding
-        cannot render, or that gives one name two kinds or two deferred definitions
-        is a client error before generation, not a server error or a silent pick."""
+        """A malformed or unrenderable declaration or search result,
+        or one giving a name two kinds or two declarations,
+        is a client error before generation, not a server error or silent pick."""
         function = {**WEATHER_TOOL, "name": "apply_patch"}
         nameless = {"type": "custom", "defer_loading": True}
         unnamed = {**WEATHER_TOOL, "name": {"get": "weather"}}
@@ -1473,8 +1473,8 @@ class TestNativeToolLoading(CustomTestCase):
             {**DEFERRED_WEATHER, "parameters": {"properties": {"q": {"const": const}}}}
             for const in (True, 1)
         ]
-        respond, engine, _ = self._responses()
-        for tools, found, error in (
+        duplicate_weather = "declares 'get_weather' more than once"
+        cases = (
             ([], 42, "must be a list"),
             ([nameless], [], "custom tools must have a name"),
             ([DEFERRED_WEATHER], [unnamed], "each with a name"),
@@ -1482,11 +1482,23 @@ class TestNativeToolLoading(CustomTestCase):
             ([], [SHELL_TOOL], "only the 'apply_patch' custom tool"),
             ([APPLY_PATCH_TOOL], [function], "'apply_patch' as a function tool"),
             ([], [function, APPLY_PATCH_TOOL], "'apply_patch' as a custom tool"),
-            (twice, [NAMED_WEATHER], "defers 'get_weather' more than once"),
-        ):
-            with self.subTest(error):
+            (twice, [NAMED_WEATHER], duplicate_weather),
+            ([WEATHER_TOOL, DEFERRED_WEATHER], None, duplicate_weather),
+            ([DEFERRED_WEATHER, WEATHER_TOOL], None, duplicate_weather),
+            ([DEFERRED_WEATHER, DEFERRED_WEATHER], None, duplicate_weather),
+            (
+                [APPLY_PATCH_TOOL, {**function, "defer_loading": True}],
+                [APPLY_PATCH_TOOL],
+                "declares 'apply_patch' more than once",
+            ),
+        )
+        respond, engine, _ = self._responses()
+        for index, (tools, found, error) in enumerate(cases):
+            with self.subTest(index=index, error=error):
                 rejected = respond(
-                    "", tools=[SEARCH_TOOL, *tools], input=_search_history(found)
+                    "",
+                    tools=[SEARCH_TOOL, *tools],
+                    input="hi" if found is None else _search_history(found),
                 )
                 self._assert_rejected(rejected, "tools", error)
         self.assertEqual(engine.requests, [])
