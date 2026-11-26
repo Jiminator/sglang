@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from collections import Counter
 from contextlib import AsyncExitStack
@@ -166,6 +167,15 @@ APPLY_PATCH = "apply_patch"
 NAMESPACE_MEMBERS_ERROR = (
     "namespace tools must list function tools, each with a type and a name"
 )
+
+
+def _invalid_tool_name_error(name: str) -> Optional[str]:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", name):
+        return (
+            f"Invalid tool name {name!r}: expected 1-128 characters "
+            "matching '^[a-zA-Z0-9_-]+$'"
+        )
+    return None
 
 
 def _deferred_identity(tool: Union[ResponseTool, dict[str, Any]]) -> Any:
@@ -1649,6 +1659,9 @@ class OpenAIServingResponses(OpenAIServingChat):
                 # recipe's unique-name check never sees the tools that defer loading.
                 if tool.name in kinds:
                     return f"tools declares {tool.name!r} more than once"
+                if tool.defer_loading:
+                    if error := _invalid_tool_name_error(tool.name):
+                        return error
                 kinds[tool.name] = tool.type
             if (
                 tool.type == TOOL_SEARCH
@@ -1662,13 +1675,17 @@ class OpenAIServingResponses(OpenAIServingChat):
                 if not _holds_function_tools(tool.tools):
                     return NAMESPACE_MEMBERS_ERROR
                 seen: set[str] = set()
+                has_visible = False
                 for member in tool.tools:
                     member_name = member["name"]
                     if member_name in seen:
                         return "Tool names within a namespace must be unique."
                     seen.add(member_name)
                     if not (tool.defer_loading or member.get("defer_loading")):
+                        has_visible = True
                         continue
+                    if error := _invalid_tool_name_error(member_name):
+                        return error
                     earlier_ns = deferred_namespaces.setdefault(tool.name, tool)
                     if not _same_deferred(earlier_ns, tool):
                         return (
@@ -1683,6 +1700,9 @@ class OpenAIServingResponses(OpenAIServingChat):
                             f"tools defers {tool.name}.{member_name} more than once "
                             "with different definitions"
                         )
+                if not has_visible:
+                    if error := _invalid_tool_name_error(tool.name):
+                        return error
         for item in self._history_items(request):
             if not isinstance(item, dict) or item.get("type") != "tool_search_output":
                 continue
