@@ -168,6 +168,24 @@ NAMESPACE_MEMBERS_ERROR = (
 )
 
 
+def _deferred_identity(tool: Union[ResponseTool, dict[str, Any]]) -> Any:
+    if isinstance(tool, ResponseTool):
+        fields = tool.model_dump(exclude_none=True, exclude={"tools", "defer_loading"})
+        if fields.get("description") == "":
+            fields.pop("description")
+        return json_identity(fields)
+    return json_identity(
+        {k: v for k, v in tool.items() if k != "defer_loading" and v is not None}
+    )
+
+
+def _same_deferred(
+    left: Union[ResponseTool, dict[str, Any]],
+    right: Union[ResponseTool, dict[str, Any]],
+) -> bool:
+    return left is right or _deferred_identity(left) == _deferred_identity(right)
+
+
 def _definition_matcher() -> Callable[[Function, Function], bool]:
     # Keep each operand beside its cached identity so its id() cannot be reused.
     identities: dict[int, tuple[Function, Any]] = {}
@@ -1622,6 +1640,8 @@ class OpenAIServingResponses(OpenAIServingChat):
     def _native_tools_error(self, request: ResponsesRequest) -> Optional[str]:
         # A name keeps the kind it first has, which its calls are reported as.
         kinds: dict[str, str] = {}
+        deferred_members: dict[tuple[str, str], dict[str, Any]] = {}
+        deferred_namespaces: dict[str, ResponseTool] = {}
         for tool in request.tools:
             if tool.type in ("custom", "namespace") and not tool.name:
                 return f"{tool.type} tools must have a name"
@@ -1638,8 +1658,31 @@ class OpenAIServingResponses(OpenAIServingChat):
                     'tool_search requires execution "client": this server runs no '
                     "searches"
                 )
-            if tool.type == "namespace" and not _holds_function_tools(tool.tools):
-                return NAMESPACE_MEMBERS_ERROR
+            if tool.type == "namespace":
+                if not _holds_function_tools(tool.tools):
+                    return NAMESPACE_MEMBERS_ERROR
+                seen: set[str] = set()
+                for member in tool.tools:
+                    member_name = member["name"]
+                    if member_name in seen:
+                        return "Tool names within a namespace must be unique."
+                    seen.add(member_name)
+                    if not (tool.defer_loading or member.get("defer_loading")):
+                        continue
+                    earlier_ns = deferred_namespaces.setdefault(tool.name, tool)
+                    if not _same_deferred(earlier_ns, tool):
+                        return (
+                            f"tools defers namespace {tool.name!r} more than once "
+                            "with different definitions"
+                        )
+                    earlier = deferred_members.setdefault(
+                        (tool.name, member_name), member
+                    )
+                    if not _same_deferred(earlier, member):
+                        return (
+                            f"tools defers {tool.name}.{member_name} more than once "
+                            "with different definitions"
+                        )
         for item in self._history_items(request):
             if not isinstance(item, dict) or item.get("type") != "tool_search_output":
                 continue
