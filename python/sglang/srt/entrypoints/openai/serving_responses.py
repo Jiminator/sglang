@@ -1810,10 +1810,34 @@ class OpenAIServingResponses(OpenAIServingChat):
         return name
 
     @classmethod
+    def _native_content_part(cls, part: Any, text_type: str = "input_text") -> Any:
+        if isinstance(part, BaseModel):
+            part = part.model_dump(exclude_none=True)
+        part_type = part.get("type") if isinstance(part, dict) else None
+        if part_type in ("text", "output_text"):
+            return {**part, "type": text_type}
+        if part_type == "image_url" or (
+            part_type == "input_image" and isinstance(part.get("image_url"), dict)
+        ):
+            img = cls._normalize_response_content_part_for_chat(part)["image_url"]
+            url = img.get("url") if isinstance(img, dict) else None
+            if isinstance(url, str):
+                return {
+                    **part,
+                    "type": "input_image",
+                    "image_url": url,
+                    "detail": img["detail"] or "auto",
+                }
+        return part
+
+    @classmethod
     def _native_input_item(cls, item: Any) -> Any:
         if isinstance(item, BaseModel):
             item = item.model_dump(exclude_none=True)
-        if isinstance(item, dict) and item.get("type") == "reasoning":
+        if not isinstance(item, dict):
+            return item
+        item_type = item.get("type")
+        if item_type == "reasoning":
             # recipe reads only `content`; keep the text SGLang replays from a
             # summary or a store=false client's state.
             message = cls._normalize_response_message_for_chat(item)
@@ -1825,8 +1849,16 @@ class OpenAIServingResponses(OpenAIServingChat):
                     {"type": "reasoning_text", "text": message["reasoning_content"]}
                 ],
             }
-        if isinstance(item, dict) and item.get("role") == "developer":
-            return {**item, "content": label_developer_content(item.get("content"))}
+        if item.get("role") == "developer":
+            item = {**item, "content": label_developer_content(item.get("content"))}
+        if item_type in (None, "message") and isinstance(item.get("content"), list):
+            kind = "output_text" if item.get("role") == "assistant" else "input_text"
+            parts = [cls._native_content_part(p, kind) for p in item["content"]]
+            return {**item, "content": parts}
+        if item_type in ("function_call_output", "custom_tool_call_output"):
+            if isinstance(item.get("output"), list):
+                parts = [cls._native_content_part(p) for p in item["output"]]
+                return {**item, "output": parts}
         return item
 
     @staticmethod
