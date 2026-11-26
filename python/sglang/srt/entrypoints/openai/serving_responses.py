@@ -1825,6 +1825,8 @@ class OpenAIServingResponses(OpenAIServingChat):
                     {"type": "reasoning_text", "text": message["reasoning_content"]}
                 ],
             }
+        if isinstance(item, dict) and item.get("role") == "developer":
+            return {**item, "content": label_developer_content(item.get("content"))}
         return item
 
     @staticmethod
