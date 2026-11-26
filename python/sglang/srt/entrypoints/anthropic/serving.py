@@ -386,10 +386,14 @@ def _native_block(block: dict[str, Any]) -> Optional[dict[str, Any]]:
     return block
 
 
-def _native_message(message: AnthropicMessage) -> dict[str, Any]:
+def _native_message(message: AnthropicMessage) -> Optional[dict[str, Any]]:
     data = message.model_dump(exclude_none=True)
     if isinstance(data["content"], list):
         data["content"] = _native_blocks(data["content"])
+        if not data["content"]:
+            if message.role != "assistant":
+                return None
+            data["content"] = ""
     return data
 
 
@@ -965,7 +969,9 @@ class AnthropicServing:
         become the ones the history has loaded."""
         body = {
             "messages": [
-                _native_message(message) for message in anthropic_request.messages
+                native
+                for native in map(_native_message, anthropic_request.messages)
+                if native is not None
             ],
             # recipe reads a tool with a `type` as a server tool.
             "tools": [
